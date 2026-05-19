@@ -1,0 +1,159 @@
+@import "tailwindcss";
+
+/* ============================================================================
+ * Archivos que Tailwind escanea para detectar clases utilitarias.
+ * - templates/ : todos los .html del proyecto (base + apps)
+ * - apps/      : .py donde definimos clases vía CharField choices o helpers
+ * ============================================================================ */
+@source "../../../templates/**/*.html";
+@source "../../../apps/**/templates/**/*.html";
+@source "../../../apps/**/*.py";
+
+/* ============================================================================
+ * Design tokens — reflejan EXACTAMENTE las CSS vars de
+ * reference/runfoto-design/index.html (paleta, tipografía, radios).
+ *
+ * Convención de naming:
+ *   --color-ink-0/1/2 : background + surfaces (no chocan con utility bg-bg)
+ *   --color-text-1/2/3: jerarquía de texto
+ *   --color-brand     : naranja Strava-like, solo CTAs
+ *   --color-data      : cyan para números/dorsales/timestamps
+ *   --color-success/warning/danger : estados
+ * ============================================================================ */
+@theme {
+  /* Backgrounds + surfaces */
+  --color-ink-0: #0a0a0b;
+  --color-ink-1: #17171a;
+  --color-ink-2: #1f1f23;
+  --color-border: #2a2a2e;
+
+  /* Texto */
+  --color-text-1: #fafafa;
+  --color-text-2: #a1a1a6;
+  --color-text-3: #6b6b70;
+
+  /* Brand + data */
+  --color-brand: #fc5200;
+  --color-data: #00d4ff;
+
+  /* Estados */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+
+  /* Tipografía */
+  --font-display: "Space Grotesk", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Radios */
+  --radius-hero: 24px;
+  --radius-card: 12px;
+  --radius-control: 8px;
+  --radius-badge: 6px;
+}
+
+/* ============================================================================
+ * Fuentes auto-hospedadas (NO usamos Google Fonts CDN).
+ * Archivos viven en static/fonts/, copiados desde @fontsource en build time.
+ * Pesos cargados:
+ *   Inter:           400 / 500 / 600
+ *   Space Grotesk:   500 / 600 / 700  (la familia oficial NO tiene 800;
+ *                                       si pedís 800 el browser sintetiza)
+ *   JetBrains Mono:  500 / 600
+ * ============================================================================ */
+@layer base {
+  @font-face {
+    font-family: "Inter";
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("/static/fonts/inter-latin-400-normal.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Inter";
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("/static/fonts/inter-latin-500-normal.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Inter";
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url("/static/fonts/inter-latin-600-normal.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Space Grotesk";
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("/static/fonts/space-grotesk-latin-500-normal.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Space Grotesk";
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url("/static/fonts/space-grotesk-latin-600-normal.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Space Grotesk";
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url("/static/fonts/space-grotesk-latin-700-normal.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "JetBrains Mono";
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("/static/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "JetBrains Mono";
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url("/static/fonts/jetbrains-mono-latin-600-normal.woff2") format("woff2");
+  }
+
+  html,
+  body {
+    background: var(--color-ink-0);
+    color: var(--color-text-1);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* ============================================================================
+ * Components — réplica EXACTA de los del design system
+ * (reference/runfoto-design/shared.jsx).
+ *
+ * Hoy (Fase 0) sólo necesitamos el Wordmark. Pill, Bib, CTA, Ghost, etc.
+ * se agregan en las fases que los usen.
+ * ============================================================================ */
+@layer components {
+  .rf-wordmark {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0;
+    font-family: var(--font-display);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--color-text-1);
+    line-height: 1;
+  }
+  .rf-wordmark__dot {
+    display: inline-block;
+    width: 0.18em;
+    height: 0.18em;
+    background: var(--color-brand);
+    margin-left: 0.08em;
+    transform: translateY(0.02em);
+  }
+}

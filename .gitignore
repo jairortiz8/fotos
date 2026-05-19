@@ -1,0 +1,73 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+
+# ---- Virtual envs ----
+.venv/
+venv/
+env/
+ENV/
+
+# ---- Test / lint caches ----
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.cache/
+
+# ---- Django ----
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+/media/
+/staticfiles/
+/static_collected/
+
+# ---- Tailwind / Node (django-tailwind crea theme/static_src/) ----
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+theme/static_src/.parcel-cache/
+
+# Compilado por Tailwind (lo regeneramos en cada build)
+theme/static/css/dist/
+
+# ---- Secrets / entorno ----
+.env
+.env.*
+!.env.example
+
+# ---- IDE / editor ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+.cursor/
+.windsurf/
+
+# ---- macOS / Windows ----
+.DS_Store
+Thumbs.db
+
+# ---- Documentación local del autor (no parte del repo) ----
+README-PROMPTS.md
+
+# ---- Misc ----
+*.bak
+*.tmp
+.python-cache/

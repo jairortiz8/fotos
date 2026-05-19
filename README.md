@@ -1,0 +1,196 @@
+# RunFoto
+
+> Plataforma web **gratuita** de fotos de carreras deportivas para
+> Centroamérica. Búsqueda por dorsal (OCR) o por selfie (reconocimiento
+> facial). Sin cuenta, sin pago.
+
+## Stack
+
+- **Backend**: Django 5 + Python 3.12 (DRF para JSON puntual)
+- **Frontend (SSR)**: HTMX + Alpine.js + Tailwind CSS v4
+- **DB**: PostgreSQL 16 + pgvector
+- **Async**: Celery + Redis
+- **ML**: PaddleOCR + EasyOCR (dorsales) · InsightFace `buffalo_l` (caras)
+- **Storage**: Cloudflare R2 (boto3, S3-compatible)
+- **Hosting**: Railway
+- **Monitoring**: Sentry (free tier)
+
+Más detalle en [`docs/adr/0001-stack-selection.md`](docs/adr/0001-stack-selection.md).
+
+## Cómo levantar el proyecto localmente
+
+Requiere macOS o Linux con `brew` (o equivalente), y los siguientes
+binarios disponibles antes de empezar:
+
+```bash
+# Una sola vez en tu máquina
+brew install python@3.12 postgresql@16 pgvector redis
+
+# pgvector que brew distribuye sólo trae el bottle para pg17/pg18.
+# Para pg16 hay que compilar desde fuente:
+git clone --depth 1 --branch v0.8.0 https://github.com/pgvector/pgvector.git /tmp/pgvector
+cd /tmp/pgvector
+PG_CONFIG=/opt/homebrew/opt/postgresql@16/bin/pg_config make
+PG_CONFIG=/opt/homebrew/opt/postgresql@16/bin/pg_config make install
+cd -
+
+brew services start postgresql@16
+brew services start redis
+```
+
+Después, dentro del repo:
+
+```bash
+# Crear DB y extensión vector
+/opt/homebrew/opt/postgresql@16/bin/createuser -s runfoto || true
+/opt/homebrew/opt/postgresql@16/bin/psql -d postgres \
+    -c "ALTER USER runfoto WITH PASSWORD 'runfoto';"
+/opt/homebrew/opt/postgresql@16/bin/createdb -O runfoto runfoto || true
+/opt/homebrew/opt/postgresql@16/bin/psql -d runfoto \
+    -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+# Variables de entorno
+cp .env.example .env
+# Generá un SECRET_KEY real:
+python3.12 -c "import secrets; print(secrets.token_urlsafe(50))"
+# Pegalo en .env como SECRET_KEY=...
+
+# Venv + deps
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+
+# Migrations
+python manage.py migrate
+
+# Tailwind (una sola vez para instalar deps de Node):
+python manage.py tailwind install
+python manage.py tailwind build
+
+# Levantar el server
+python manage.py runserver
+```
+
+Abrí http://localhost:8000/ → debería ver la landing temporal.
+Health check: http://localhost:8000/healthz → `{"status":"ok",...}`
+
+### Alternativa: Docker Compose
+
+Si tenés Docker Desktop instalado:
+
+```bash
+docker compose up
+```
+
+Levanta `db` (pgvector/pgvector:pg16), `redis`, `web` (Django con autoreload),
+`worker` y `beat` (Celery). El primer build tarda unos minutos.
+
+## Cómo correr los tests + linter
+
+```bash
+# Tests
+pytest -v
+
+# Linter + formateador + types (lo que corre CI también)
+ruff check .
+ruff format --check .
+black --check .
+mypy .
+```
+
+Pre-commit hooks (ejecutan ruff + black + mypy en cada commit local):
+
+```bash
+pre-commit install
+```
+
+## Cómo deployar
+
+Hoy todavía no está conectado Railway al repo. Cuando se conecte:
+
+1. Mergeás PR en `main`.
+2. GitHub Actions corre lint + tests (verde antes de mergear).
+3. Railway detecta el push, builda con el `Dockerfile` multi-stage
+   y deploya 3 servicios: `web` (gunicorn), `worker` (celery worker),
+   `beat` (celery beat).
+4. Postgres + Redis se aprovisionan desde el dashboard de Railway,
+   no desde código.
+
+Más detalle en [`docs/runbook.md`](docs/runbook.md).
+
+## Estructura de carpetas
+
+```
+runfoto/
+├── manage.py                 # entrada CLI Django
+├── pyproject.toml            # deps + config ruff/black/mypy/pytest
+├── Dockerfile                # multi-stage (Tailwind + Python + runtime)
+├── docker-compose.yml        # stack local (db + redis + web + workers)
+├── railway.toml              # config compartida del build en Railway
+├── .pre-commit-config.yaml   # hooks (ruff + black + mypy)
+├── .github/workflows/ci.yml  # CI: lint + types + tests
+│
+├── config/                   # Django project
+│   ├── __init__.py           # importa Celery
+│   ├── celery.py
+│   ├── urls.py
+│   ├── wsgi.py
+│   ├── asgi.py
+│   └── settings/
+│       ├── base.py           # comunes a dev y prod
+│       ├── dev.py            # debug toolbar, autoreload
+│       └── prod.py           # security headers, Sentry, WhiteNoise
+│
+├── apps/                     # apps de negocio
+│   ├── core/                 # health, landing, utils, context_processor
+│   ├── events/               # modelo Event + admin
+│   ├── photos/               # Photo, Bib, FaceEmbedding
+│   ├── photographers/        # PhotographerLink (token)
+│   ├── search/               # búsqueda por dorsal y por selfie
+│   ├── downloads/            # generación de ZIPs
+│   ├── ml/                   # OCR + face recognition pipelines
+│   ├── notifications/        # Notifier abstracto (WhatsApp manual hoy)
+│   ├── privacy/              # delete-my-data, retention crons
+│   └── dashboard/            # custom admin (no Django admin)
+│
+├── theme/                    # django-tailwind app
+│   ├── apps.py
+│   ├── static_src/           # source CSS + package.json (Tailwind v4)
+│   └── static/css/dist/      # styles.css compilado (gitignored)
+│
+├── static/                   # archivos estáticos del proyecto
+│   ├── fonts/                # .woff2 auto-hospedados
+│   ├── css/                  # extra (no Tailwind)
+│   └── js/                   # HTMX + Alpine + custom
+│
+├── templates/                # templates Django globales
+│   ├── base.html
+│   ├── public/               # landing + galerías + búsqueda
+│   ├── photographer/         # portal de upload
+│   ├── dashboard/            # admin custom
+│   └── _partials/            # HTMX fragments + wordmark, etc.
+│
+├── locale/                   # .po files (es activo, en placeholder)
+│
+├── tests/                    # pytest
+│   ├── conftest.py
+│   ├── factories.py          # vacío en Fase 0
+│   └── test_*.py
+│
+├── docs/
+│   ├── adr/                  # Architecture Decision Records
+│   └── runbook.md            # operaciones (deploy, rollback, etc.)
+│
+└── reference/
+    └── runfoto-design/       # zip de Claude Design (referencia visual)
+```
+
+## Estado actual
+
+**Fase 0 — Setup** completada.
+
+Fase 1 (modelos + admin) arranca cuando se dé OK explícito.
+
+## Licencia
+
+Proprietary. Todos los derechos reservados.

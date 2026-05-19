@@ -1,0 +1,7 @@
+{# Wordmark: nombre del site + cuadradito naranja después de la última "o".
+   Replica reference/runfoto-design/shared.jsx · `Wordmark`. #}
+{% load i18n %}
+<span class="rf-wordmark" style="font-size: {{ size|default:'22px' }};" aria-label="{{ site_name }}">
+  <span>{{ site_name }}</span>
+  <span class="rf-wordmark__dot" aria-hidden="true"></span>
+</span>

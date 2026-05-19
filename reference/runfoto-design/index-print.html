@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>RunFoto — Print</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800;900&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap" />
+<style>
+  :root {
+    --bg: #0A0A0B;
+    --surface: #17171A;
+    --surface-2: #1F1F23;
+    --border: #2A2A2E;
+    --text-1: #FAFAFA;
+    --text-2: #A1A1A6;
+    --text-3: #6B6B70;
+    --orange: #FC5200;
+    --cyan: #00D4FF;
+    --green: #10B981;
+    --amber: #F59E0B;
+    --red: #EF4444;
+    --display: 'Space Grotesk', system-ui, sans-serif;
+    --body: 'Inter', system-ui, sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  html, body { margin: 0; padding: 0; background: #0a0a0b; color: var(--text-1); font-family: var(--body); }
+  * { box-sizing: border-box; }
+  .rf { font-family: var(--body); color: var(--text-1); background: var(--bg); }
+  .rf, .rf * { -webkit-font-smoothing: antialiased; }
+
+  @page { size: 11in 8.5in; margin: 0.5cm; }
+
+  .print-root { display: flex; flex-direction: column; align-items: stretch; }
+
+  .print-page {
+    width: 11in;
+    height: 8.5in;
+    padding: 14mm 14mm 14mm 14mm;
+    background: #0A0A0B;
+    color: #FAFAFA;
+    overflow: hidden;
+    page-break-after: always;
+    break-after: page;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .print-page:last-child { page-break-after: auto; break-after: auto; }
+
+  .print-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10mm;
+    padding-bottom: 6mm;
+    border-bottom: 1px solid #2A2A2E;
+  }
+
+  .print-frame {
+    flex-shrink: 0;
+    transform-origin: top left;
+    /* JS sets transform: scale(...) and width/height after mount */
+  }
+
+  .print-frame-wrap {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .print-cover {
+    align-items: flex-start;
+    justify-content: center;
+    padding: 28mm 28mm;
+  }
+
+  /* On-screen preview: stack pages with breathing room so user can scroll
+     through before printing. */
+  @media screen {
+    body { padding: 24px 0; }
+    .print-page { margin: 0 auto 24px; box-shadow: 0 1px 0 rgba(255,255,255,0.04); }
+  }
+
+  @media print {
+    body { padding: 0; }
+    .print-page { margin: 0; box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script>
+(async () => {
+  const token = new URL(location.href).searchParams.get('t');
+  const tq = token ? '?t=' + token : '';
+  // NOTE: we skip design-canvas + main, and use main-print instead.
+  const files = [
+    'shared.jsx',
+    'public-screens.jsx',
+    'photographer-screen.jsx',
+    'admin-screens.jsx',
+    'main-print.jsx',
+  ];
+  for (const f of files) {
+    try {
+      const r = await fetch(f + tq);
+      if (!r.ok) throw new Error(f + ': ' + r.status);
+      const src = await r.text();
+      const code = Babel.transform(src, { presets: ['react'], filename: f }).code;
+      (0, eval)(code + '\n//# sourceURL=' + f);
+    } catch (e) {
+      console.error('Failed loading', f, e);
+      document.body.insertAdjacentHTML('beforeend',
+        '<pre style="color:#EF4444;padding:24px;font-family:monospace;white-space:pre-wrap;">'
+        + 'Error in ' + f + ':\n' + (e.stack || e.message) + '</pre>');
+      return;
+    }
+  }
+
+  // After render, fit each .print-frame to its page
+  const fit = () => {
+    document.querySelectorAll('.print-page').forEach((page) => {
+      const frame = page.querySelector('.print-frame');
+      if (!frame) return;
+      const w = parseFloat(frame.style.width);
+      const h = parseFloat(frame.style.height);
+      if (!w || !h) return;
+      // Wrap frame inside a centering wrap if not already
+      if (!frame.parentElement.classList.contains('print-frame-wrap')) {
+        const wrap = document.createElement('div');
+        wrap.className = 'print-frame-wrap';
+        frame.parentNode.insertBefore(wrap, frame);
+        wrap.appendChild(frame);
+      }
+      const wrap = frame.parentElement;
+      const aw = wrap.clientWidth;
+      const ah = wrap.clientHeight;
+      const s = Math.min(aw / w, ah / h);
+      frame.style.transform = `translate(${(aw - w*s)/2}px, ${(ah - h*s)/2}px) scale(${s})`;
+    });
+  };
+  // Wait for React to render, fonts to load, then fit each page
+  await document.fonts.ready;
+  await new Promise(r => setTimeout(r, 200));
+  fit();
+  // Run again after potential reflows
+  setTimeout(fit, 400);
+  setTimeout(fit, 1200);
+  window.addEventListener('resize', fit);
+  window.__printAppReady = true;
+
+  // Auto-trigger print dialog (after fonts + layout + reflow + safety delay)
+  setTimeout(() => {
+    fit();
+    setTimeout(() => window.print(), 500);
+  }, 1500);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,52 @@
+# ============================================================================
+# Pre-commit hooks — RunFoto
+#
+# Activar:    pre-commit install
+# Forzar:     pre-commit run --all-files
+# ============================================================================
+
+default_language_version:
+  python: python3.12
+
+repos:
+  # --- General hygiene ---
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^(reference/|theme/static/css/dist/)
+      - id: end-of-file-fixer
+        exclude: ^(reference/|theme/static/css/dist/)
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+      - id: detect-private-key
+
+  # --- Ruff: lint + format (fuente de verdad de estilo) ---
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  # --- Black: sanity check (mismas reglas que ruff format) ---
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+        args: ["--check"]
+        exclude: ^(reference/|theme/static_src/|.*/migrations/)
+
+  # --- Mypy (solo en código de negocio) ---
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.13.0
+    hooks:
+      - id: mypy
+        additional_dependencies:
+          - "django-stubs[compatible-mypy]>=5.0"
+        args: ["--config-file=pyproject.toml"]
+        exclude: ^(reference/|theme/|tests/|.*/migrations/|docs/)
+        pass_filenames: false

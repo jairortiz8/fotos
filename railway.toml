@@ -1,0 +1,26 @@
+# ============================================================================
+# Railway — configuración compartida del build.
+#
+# Cómo se mapean los 3 servicios en el dashboard de Railway
+# --------------------------------------------------------
+# En el dashboard se crean 3 servicios apuntando al MISMO repo. Cada uno usa
+# este Dockerfile pero override el "Start Command":
+#
+#   1) web    →  sh -c "python manage.py migrate --noinput &&
+#                       gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 3"
+#   2) worker →  celery -A config worker --loglevel=info
+#   3) beat   →  celery -A config beat --loglevel=info
+#
+# Postgres y Redis se aprovisionan desde el "+ New" del dashboard, no
+# desde acá.
+# ============================================================================
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/healthz"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5

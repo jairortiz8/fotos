@@ -1,0 +1,22 @@
+{% load static i18n %}<!doctype html>
+<html lang="{{ LANGUAGE_CODE|default:'es' }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a0a0b">
+  <title>{% block title %}{{ site_name }}{% endblock %}</title>
+  <meta name="description" content="{% block description %}{% blocktrans with site_name=site_name %}{{ site_name }} — plataforma gratuita de fotos de carrera.{% endblocktrans %}{% endblock %}">
+
+  {# Preload fuentes críticas — auto-hospedadas para no depender de Google #}
+  <link rel="preload" as="font" type="font/woff2" crossorigin
+        href="{% static 'fonts/inter-latin-400-normal.woff2' %}">
+  <link rel="preload" as="font" type="font/woff2" crossorigin
+        href="{% static 'fonts/space-grotesk-latin-700-normal.woff2' %}">
+
+  <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="min-h-screen bg-ink-0 text-text-1 font-body antialiased">
+  {% block body %}{% endblock %}
+</body>
+</html>
