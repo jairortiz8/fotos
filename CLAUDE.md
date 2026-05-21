@@ -35,7 +35,10 @@ Las fotos son **100% gratuitas** para los corredores. No hay e-commerce, no hay 
 ### Backend
 - **Django 5** + **Python 3.12**
 - **Django REST Framework** solo donde haga falta API JSON (mayoría es SSR con HTMX)
-- **PostgreSQL 16** + **pgvector** extension (para embeddings faciales)
+- **PostgreSQL** + **pgvector** extension (para embeddings faciales)
+  - Dev local: **Postgres 16** (Homebrew, con pgvector 0.8 compilado para pg16)
+  - Producción Railway: **Postgres 18** (imagen `ghcr.io/railwayapp-templates/postgres-ssl:18`, con pgvector habilitado vía `CREATE EXTENSION vector`)
+  - Decisión: dejamos las versiones desparejadas. Las migrations de Django son agnósticas a la versión mayor y pgvector ≥0.7 corre en ambas. Migrar local a pg18 era posible pero no aportaba nada y rompía el flujo de instalación documentado.
 - **Celery** + **Redis** para tasks async (OCR, face recognition, ZIP generation, cleanup)
 - **Pillow** para procesamiento de imágenes
 
@@ -92,7 +95,19 @@ Las fotos son **100% gratuitas** para los corredores. No hay e-commerce, no hay 
 - **2FA**: NO activado todavía, pero **dejar tabla `UserMFA` creada con columna `totp_secret` nullable** y views stub para activar después sin migración estructural.
 
 ### Privacidad (crítico — reconocimiento facial)
-- **Retención de embeddings**: **90 días** desde el último uso. Cron job diario (Celery beat) que borra embeddings inactivos.
+- **Retención de embeddings faciales**: **90 días** desde el último match. Cron job diario (Celery beat) que borra embeddings inactivos.
+- **Política de retención escalonada de EVENTOS** (independiente de los embeddings):
+
+  | Tiempo desde la fecha del evento | Estado          | Qué pasa                                                                                                                                  |
+  | -------------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+  | 0–90 días                        | `live` → `public_closed` | Galería pública activa, búsquedas activas, descargas habilitadas.                                                                |
+  | 91–180 días                      | `searchable_only` | Galería pública cerrada. Solo búsquedas por dorsal/selfie. Mensaje claro al corredor: "Para ver fotos, buscá por dorsal o subí selfie." |
+  | 181–365 días                     | `archived`      | Solo admin puede ver/buscar. Páginas públicas devuelven 404 amigable con info de contacto.                                                |
+  | 366+ días                        | `pending_deletion` → `deleted` | Cron borra fotos de R2 (originals + previews + thumbs). Queda solo metadata del evento en DB para referencia histórica.    |
+
+  Plazos configurables por evento (`public_until`, `searchable_until`, `archive_until` en el modelo `Event`).
+  Bandera `permanent_archive=True` en el evento ignora estas reglas (caso de organizador que pague por archivo permanente).
+
 - **Endpoint `/privacy/delete-my-data`**: público, sin login. El usuario sube su selfie, el sistema encuentra y borra TODAS sus fotos y embeddings de TODOS los eventos. Logged y confirmado.
 - **Banner de privacidad** obligatorio en homepage y en pantalla de búsqueda por selfie, explicando qué datos se procesan.
 - **Las fotos de menores son automáticamente blureadas en el preview público** — el sistema detecta caras < cierta edad (InsightFace tiene esto) y aplica blur en el preview con watermark. El original se mantiene intacto para el admin.
@@ -220,8 +235,18 @@ class Event:
     location: str
     description: text
     cover_image: ImageField
-    status: choices(draft, upcoming, live, closed)
-    visibility: choices(public, unlisted)
+    # 8 estados, alineados con la política de retención de §3:
+    status: choices(draft, upcoming, live, public_closed,
+                    searchable_only, archived,
+                    pending_deletion, deleted)
+    visibility: choices(public, unlisted, private)
+    public_until: datetime         # default: date + 90 días
+    searchable_until: datetime     # default: date + 180 días
+    archive_until: datetime        # default: date + 365 días
+    permanent_archive: bool        # si True, ignora todas las fechas anteriores
+    # Counters denormalizados (actualizados por signals/tasks):
+    photo_count, pending_count, photographer_count,
+    search_count, download_count: int
     created_at, updated_at
 
 # photos/models.py
@@ -265,13 +290,27 @@ class PhotographerLink:
     created_at, last_used_at
 
 # core/models.py
+class User(AbstractUser):
+    # User custom desde el día 1 (cambiar después es doloroso).
+    # AbstractUser ya trae username/password/email/etc.;
+    # acá vendrán las extensiones que necesitemos sin migración estructural.
+    pass  # TimeStampedModel mixin agrega created_at/updated_at
+
+class UserMFA:
+    user: OneToOneField(User)
+    totp_secret: EncryptedCharField (nullable hasta activar)
+    backup_codes: JSONField (list de hashes)
+    is_active: bool
+    activated_at: datetime (nullable)
+
 class AuditLog:
     user: FK User (nullable, for anonymous events)
-    action: str  # 'photo.approved', 'event.created', 'data.deleted'
+    action: str  # 'photo.approved', 'event.created', 'data.deleted',
+                 # 'photographer_link.generated', 'photographer_link.revoked', ...
     target_type: str
     target_id: str
     metadata: JSONField
-    ip_address: str (anonymized)
+    ip_address: str (anonymized — IPv4 último octeto = 0)
     created_at
 
 # privacy/models.py
@@ -461,4 +500,12 @@ En la carpeta `reference/runfoto-design/` está el zip de Claude Design extraíd
 
 ---
 
-**Última actualización**: Fase 0 (initial setup). Actualizar este archivo al final de cada fase con aprendizajes y decisiones nuevas.
+**Última actualización**: Fase 1 (modelos + admin custom). Actualizar este archivo al final de cada fase con aprendizajes y decisiones nuevas.
+
+## Cambios introducidos en Fase 1
+- Política de retención escalonada de eventos (§3) — nueva tabla con 4 ventanas temporales y el flag `permanent_archive`.
+- `Event` extendido (§4) con 8 estados, 3 visibilidades, fechas de retención y counters denormalizados.
+- `User(AbstractUser)` introducido en `apps.core` (`AUTH_USER_MODEL = 'core.User'`).
+- `EncryptedCharField` custom en `apps/core/fields.py` usando `cryptography.fernet` (sin dep nueva — `cryptography` ya entra como transitiva).
+- Postgres: dev pg16 / prod pg18 (decisión documentada en §2). pgvector ≥0.7 anda en ambos.
+- Admin custom: `django-unfold` (ADR 0002).

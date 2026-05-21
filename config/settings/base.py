@@ -68,6 +68,10 @@ SITE_DOMAIN = env("SITE_DOMAIN")
 # Apps
 # ----------------------------------------------------------------------------
 DJANGO_APPS = [
+    # django-unfold REEMPLAZA el admin default. DEBE ir antes que `django.contrib.admin`.
+    "unfold",
+    "unfold.contrib.filters",
+    "unfold.contrib.forms",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -233,6 +237,131 @@ MEDIA_ROOT = BASE_DIR / "media"
 # Defaults
 # ----------------------------------------------------------------------------
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ----------------------------------------------------------------------------
+# Auth — User custom desde Fase 1.
+# ----------------------------------------------------------------------------
+AUTH_USER_MODEL = "core.User"
+
+# ----------------------------------------------------------------------------
+# Django Admin custom (django-unfold) — ADR 0002.
+# Paleta replica reference/runfoto-design/index.html (dark theme).
+# ----------------------------------------------------------------------------
+UNFOLD = {
+    "SITE_TITLE": SITE_NAME,
+    "SITE_HEADER": SITE_NAME,
+    "SITE_SUBHEADER": "Admin",
+    "SITE_SYMBOL": "photo_camera",  # material symbol
+    "SITE_URL": "/",
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": True,
+    "ENVIRONMENT": "config.settings.unfold_environment",
+    "BORDER_RADIUS": "8px",
+    "COLORS": {
+        # Base (background + surfaces del design system)
+        "base": {
+            "50": "250 250 250",  # text-1 invertido
+            "100": "229 229 234",
+            "200": "199 199 204",
+            "300": "161 161 166",  # text-2
+            "400": "107 107 112",  # text-3
+            "500": "63 63 70",
+            "600": "42 42 46",  # border
+            "700": "31 31 35",  # surface-2
+            "800": "23 23 26",  # surface
+            "900": "10 10 11",  # bg
+            "950": "0 0 0",
+        },
+        # Primary = naranja brand (FC5200)
+        "primary": {
+            "50": "255 240 230",
+            "100": "255 219 199",
+            "200": "255 188 153",
+            "300": "255 156 105",
+            "400": "255 122 58",
+            "500": "252 82 0",  # base brand
+            "600": "227 73 0",
+            "700": "189 61 0",
+            "800": "151 49 0",
+            "900": "115 36 0",
+            "950": "78 24 0",
+        },
+        # Font hierarchy
+        "font": {
+            "subtle-light": "var(--color-base-500)",
+            "subtle-dark": "var(--color-base-400)",
+            "default-light": "var(--color-base-600)",
+            "default-dark": "var(--color-base-300)",
+            "important-light": "var(--color-base-900)",
+            "important-dark": "var(--color-base-100)",
+        },
+    },
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": False,
+        "navigation": [
+            {
+                "title": "Contenido",
+                "separator": True,
+                "items": [
+                    {
+                        "title": "Eventos",
+                        "icon": "event",
+                        "link": "/admin/events/event/",
+                    },
+                    {
+                        "title": "Fotos",
+                        "icon": "photo_library",
+                        "link": "/admin/photos/photo/",
+                    },
+                    {
+                        "title": "Dorsales",
+                        "icon": "tag",
+                        "link": "/admin/photos/bib/",
+                    },
+                ],
+            },
+            {
+                "title": "Operación",
+                "separator": True,
+                "items": [
+                    {
+                        "title": "Fotógrafos",
+                        "icon": "camera",
+                        "link": "/admin/photographers/photographerlink/",
+                    },
+                ],
+            },
+            {
+                "title": "Privacidad",
+                "separator": True,
+                "items": [
+                    {
+                        "title": "Solicitudes de borrado",
+                        "icon": "delete_forever",
+                        "link": "/admin/privacy/datadeletionrequest/",
+                    },
+                ],
+            },
+            {
+                "title": "Sistema",
+                "separator": True,
+                "items": [
+                    {
+                        "title": "Auditoría",
+                        "icon": "history",
+                        "link": "/admin/core/auditlog/",
+                    },
+                    {
+                        "title": "Usuarios",
+                        "icon": "people",
+                        "link": "/admin/core/user/",
+                    },
+                ],
+            },
+        ],
+    },
+}
 
 # ----------------------------------------------------------------------------
 # Tailwind (django-tailwind)

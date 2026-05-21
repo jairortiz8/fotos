@@ -23,6 +23,8 @@ dependencies = [
     "django-tailwind[reload]>=3.8",
     "django-ratelimit>=4.1",
     "django-environ>=0.11",
+    # Django Admin tuneado (Fase 1, ADR 0002)
+    "django-unfold>=0.45",
     "whitenoise[brotli]>=6.7",
     # --- DB / cache / queue ---
     "psycopg[binary,pool]>=3.2",
@@ -34,6 +36,8 @@ dependencies = [
     "boto3>=1.34",
     # --- Imágenes ---
     "pillow>=10.4",
+    # --- Crypto (EncryptedCharField via Fernet) ---
+    "cryptography>=43.0",
     # --- Server / ops ---
     "gunicorn>=23.0",
     "sentry-sdk[django]>=2.0",
@@ -166,6 +170,8 @@ module = [
     "ratelimit.*",
     "debug_toolbar.*",
     "django_htmx.*",
+    "unfold.*",
+    "cryptography.*",
 ]
 ignore_missing_imports = true
 

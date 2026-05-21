@@ -118,6 +118,35 @@ Hoy todavía no está conectado Railway al repo. Cuando se conecte:
 
 Más detalle en [`docs/runbook.md`](docs/runbook.md).
 
+## Modelos principales (Fase 1)
+
+| Modelo                                 | Para qué sirve                                                                                                              |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `apps.core.User` (AbstractUser)        | Super admin (hoy uno solo). Custom desde el día 1 para evitar migrations dolorosas después.                                 |
+| `apps.core.UserMFA`                    | Stub de TOTP (campo `totp_secret` encriptado, NULL hasta activar). `EncryptedCharField` custom via Fernet.                 |
+| `apps.core.AuditLog`                   | Append-only. Acciones del admin (event.created, photo.approved, …). IP anonimizada.                                         |
+| `apps.events.Event`                    | Evento de carrera. 8 estados + 3 visibilidades + 4 campos de retención (`public_until`, `searchable_until`, `archive_until`, `permanent_archive`). |
+| `apps.photographers.PhotographerLink`  | Token URL único por fotógrafo. `token_hash` (sha256), no se guarda el plano. Métodos `verify_token()`, `is_valid()`, `revoke()`. |
+| `apps.photos.Photo`                    | Una foto. R2 keys (`original_key` único, `preview_key`, `thumbnail_key`), EXIF detallado, status, flags ML.                |
+| `apps.photos.Bib`                      | Dorsal detectado/reportado en una foto. Source (OCR/manual), confidence, bbox. Unique `(photo, number, source)`.            |
+| `apps.photos.FaceEmbedding`            | Vector 512-d (pgvector + HNSW índice coseno). Edad estimada → `is_minor` (activa blur en preview).                          |
+| `apps.privacy.DataDeletionRequest`     | Log de borrados solicitados por usuarios (`/privacy/delete-my-data`). IP hasheada, sin embedding persistente.               |
+
+ER completo en [`docs/erd.md`](docs/erd.md) (Mermaid).
+
+Política de retención escalonada de eventos: ver [`docs/adr/0003-retention-policy.md`](docs/adr/0003-retention-policy.md).
+Elección de paquete admin: ver [`docs/adr/0002-admin-interface.md`](docs/adr/0002-admin-interface.md).
+
+### Sembrar data de prueba
+
+```bash
+python manage.py seed_data --clean
+```
+
+Crea 1 superuser (te imprime la password), 3 eventos en distintos estados, 50 fotos
+por evento con dorsales sintéticos, links de fotógrafo, y audit logs históricos.
+Después entrá a http://127.0.0.1:8000/admin/ para verlo.
+
 ## Estructura de carpetas
 
 ```
