@@ -24,6 +24,7 @@ from django.shortcuts import render
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views import View
+from django.views.decorators.csrf import csrf_exempt
 from django_ratelimit.decorators import ratelimit
 
 from apps.core.models import AuditLog, anonymize_ip
@@ -166,7 +167,13 @@ class PhotographerPortalView(View):
 
 # ---------------------------------------------------------------------------
 # UploadView (POST)
+#
+# `csrf_exempt`: el endpoint usa el token URL único como autenticación. No hay
+# sesión que defender, así que CSRF no aporta seguridad real — sólo bloquearía
+# clientes legítimos (apps mobiles, curl, etc.). El rate limit por token + la
+# validación del hash son la defensa real.
 # ---------------------------------------------------------------------------
+@method_decorator(csrf_exempt, name="dispatch")
 @method_decorator(
     ratelimit(key=upload_ratelimit_key, rate="100/m", method="POST", block=True),
     name="dispatch",
