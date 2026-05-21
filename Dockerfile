@@ -3,36 +3,37 @@
 # Dockerfile multi-stage para RunFoto
 #
 # Stages:
-#   1. tailwind-builder  — Node 20 compila el CSS de Tailwind.
-#   2. python-builder    — Python 3.12 + build deps; instala wheels Python.
-#   3. runtime           — Imagen final liviana; solo runtime deps + código.
+#   1. tailwind-builder  — Node 20 compila el CSS de Tailwind v4 via postcss.
+#   2. python-builder    — Python 3.12; instala wheels (todas manylinux, sin
+#                          necesidad de build-essential ni libs -dev).
+#   3. runtime           — Imagen final liviana; solo runtime libs + código.
 # ============================================================================
 
 # ----------------------------------------------------------------------------
 # 1) Tailwind CSS build (Node)
+#
+# Importante: en Tailwind v4 el plugin es @tailwindcss/postcss, NO existe
+# un binario `tailwindcss` invocable con `npx`. La compilación se hace con
+# `npm run build` que usa postcss-cli + @tailwindcss/postcss (definido en
+# theme/static_src/package.json y theme/static_src/postcss.config.js).
 # ----------------------------------------------------------------------------
 FROM node:20-alpine AS tailwind-builder
-WORKDIR /tw
+WORKDIR /workspace
 
-# Copiamos primero los lockfiles para aprovechar caché de Docker.
-COPY theme/static_src/package.json theme/static_src/package-lock.json* ./
+# Tailwind escanea estos paths según los @source en theme/static_src/src/styles.css.
+COPY theme/ ./theme/
+COPY templates/ ./templates/
+COPY apps/ ./apps/
+
+WORKDIR /workspace/theme/static_src
+
 RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+RUN npm run build
 
-# Copiamos el resto del proyecto Tailwind y los templates/apps que Tailwind
-# escanea (content paths).
-COPY theme/static_src/ ./
-COPY templates/ /workspace/templates/
-COPY apps/ /workspace/apps/
-
-# Output: /workspace/theme/static/css/dist/styles.css (lo copiamos a la final).
-RUN mkdir -p /workspace/theme/static/css/dist && \
-    npx tailwindcss \
-        -i ./src/styles.css \
-        -o /workspace/theme/static/css/dist/styles.css \
-        --minify
+# Output esperado: /workspace/theme/static/css/dist/styles.css
 
 # ----------------------------------------------------------------------------
-# 2) Python builder (compila wheels donde haga falta)
+# 2) Python builder (sin build-essential — wheels manylinux alcanzan)
 # ----------------------------------------------------------------------------
 FROM python:3.12-slim-bookworm AS python-builder
 
@@ -43,16 +44,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
-        libpq-dev \
-        libjpeg-dev \
-        zlib1g-dev \
-        libwebp-dev \
-        libpng-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copiamos solo lo mínimo necesario para resolver dependencias.
+# Copiamos solo lo mínimo necesario para que setuptools resuelva packages.
 COPY pyproject.toml README.md ./
 COPY apps/__init__.py apps/__init__.py
 COPY config/__init__.py config/__init__.py
@@ -73,9 +65,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Runtime deps (sin -dev).
+# Runtime libs para Pillow (sin -dev).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libpq5 \
         libjpeg62-turbo \
         libwebp7 \
         libpng16-16 \
