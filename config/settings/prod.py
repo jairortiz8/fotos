@@ -16,6 +16,10 @@ DEBUG = False
 # ----------------------------------------------------------------------------
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_SSL_REDIRECT = True
+# El healthcheck interno de Railway pega por HTTP sin X-Forwarded-Proto;
+# si dejamos que SECURE_SSL_REDIRECT lo agarre, devuelve 301 y nunca llega
+# a la vista. Eximimos `/healthz` (y solo `/healthz`) del redirect HTTPS.
+SECURE_REDIRECT_EXEMPT = [r"^healthz$"]
 SECURE_HSTS_SECONDS = 31_536_000  # 1 año
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
