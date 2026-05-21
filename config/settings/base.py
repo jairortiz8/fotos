@@ -43,6 +43,8 @@ env = environ.Env(
     R2_BUCKET_NAME=(str, ""),
     R2_ENDPOINT_URL=(str, ""),
     R2_PUBLIC_BASE_URL=(str, ""),
+    # Upload limits (Fase 2)
+    PHOTO_UPLOAD_MAX_MB=(int, 15),
 )
 
 # .env si existe
@@ -385,6 +387,9 @@ R2_SECRET_ACCESS_KEY = env("R2_SECRET_ACCESS_KEY")
 R2_BUCKET_NAME = env("R2_BUCKET_NAME")
 R2_ENDPOINT_URL = env("R2_ENDPOINT_URL")
 R2_PUBLIC_BASE_URL = env("R2_PUBLIC_BASE_URL")
+
+# Tamaño máximo de upload del fotógrafo (bytes).
+PHOTO_UPLOAD_MAX_BYTES = env("PHOTO_UPLOAD_MAX_MB") * 1024 * 1024
 
 # ----------------------------------------------------------------------------
 # Logging — JSON-ish para Sentry / Railway

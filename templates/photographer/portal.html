@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+{% load i18n static %}
+
+{% block title %}{{ event.name }} · {% trans "Portal de subida" %}{% endblock %}
+
+{% block body %}
+<div class="min-h-screen">
+
+  {# ============================================================== #}
+  {# Header minimalista (sin nav, sin sidebar)                      #}
+  {# ============================================================== #}
+  <header class="flex items-center justify-between px-6 md:px-14 py-5 border-b border-border">
+    <div class="flex items-center gap-4">
+      {% include "_partials/wordmark.html" with size="20px" %}
+      <span class="hidden md:inline-block w-px h-[18px] bg-border"></span>
+      <span class="hidden md:inline font-display font-bold text-[11px] uppercase tracking-[0.04em] text-text-2">
+        {% trans "Portal de subida" %}
+      </span>
+    </div>
+    <div class="flex items-center gap-3">
+      <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-warning/10 border border-warning/30 text-warning text-[10px] uppercase tracking-[0.04em] font-medium">
+        <span class="w-1.5 h-1.5 rounded-full bg-warning"></span>
+        {% trans "Sesión por token" %}
+      </span>
+      <span class="font-mono text-[11px] text-text-3 tracking-[0.08em] hidden sm:inline">u/{{ token|slice:":8" }}…</span>
+    </div>
+  </header>
+
+  {# ============================================================== #}
+  {# Context strip: nombre + fotógrafo + pills                      #}
+  {# ============================================================== #}
+  <section class="px-6 md:px-14 pt-10 pb-8 border-b border-border">
+    <div class="flex items-baseline flex-wrap gap-3 mb-3.5">
+      <span class="font-display font-bold text-[10px] uppercase tracking-widest text-text-3">{% trans "Fotógrafo" %}</span>
+      <span class="text-[15px] font-medium text-text-1">{{ link.photographer_name }}</span>
+      {% if link.photographer_email %}
+        <span class="text-text-3 text-[13px]">·</span>
+        <span class="text-[13px] text-text-2">{{ link.photographer_email }}</span>
+      {% endif %}
+    </div>
+
+    <h1 class="font-display font-black text-4xl md:text-6xl lg:text-7xl uppercase tracking-tight leading-[0.92] mb-5">
+      {{ event.name }}
+    </h1>
+
+    <div class="flex flex-wrap gap-2.5">
+      <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-border bg-ink-1 text-text-2 text-xs uppercase tracking-[0.04em] font-medium">
+        {{ event.date|date:"d M Y" }}
+      </span>
+      <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-warning/30 bg-warning/10 text-warning text-xs uppercase tracking-[0.04em] font-medium">
+        {% trans "Válido hasta" %} {{ link.expires_at|date:"d M Y" }}
+      </span>
+      <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-data/30 bg-data/10 text-data text-xs uppercase tracking-[0.04em] font-medium">
+        <span class="font-mono">{{ photos_uploaded }}</span>
+        {% if photo_limit %}<span class="opacity-60">/ {{ photo_limit }}</span>{% endif %}
+        {% trans "fotos" %}
+      </span>
+    </div>
+  </section>
+
+  {# ============================================================== #}
+  {# Dropzone (Alpine + HTMX por archivo)                            #}
+  {# ============================================================== #}
+  <section class="px-6 md:px-14 pt-8"
+           x-data="uploader({
+              uploadUrl: '{% url 'photographer:upload' token=token %}',
+              csrfToken: '{{ csrf_token }}',
+              maxMb: {{ max_upload_mb }},
+           })">
+
+    <div class="rounded-2xl border-2 border-dashed border-border bg-ink-1/40 px-6 py-12 md:py-14 text-center relative overflow-hidden"
+         :class="{ 'border-data ring-2 ring-data/20 bg-data/[0.04]': dragOver }"
+         @dragenter.prevent="dragOver = true"
+         @dragover.prevent="dragOver = true"
+         @dragleave.prevent="dragOver = false"
+         @drop.prevent="onDrop($event)">
+
+      <div class="inline-grid place-items-center w-16 h-16 rounded-full bg-data/10 text-data mb-4">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M7 18a5 5 0 01-1-9.9 7 7 0 0113.4 2.1A4.5 4.5 0 0117 18"/>
+          <path d="M12 12v8M9 15l3-3 3 3"/>
+        </svg>
+      </div>
+
+      <h2 class="font-display font-bold text-2xl md:text-3xl mb-2">
+        {% trans "Arrastrá tus fotos acá" %}
+      </h2>
+      <div class="font-mono text-xs text-text-3 tracking-[0.06em]">
+        {% blocktrans with mb=max_upload_mb %}Solo JPG · Máximo {{ mb }} MB por foto · Sin límite de cantidad{% endblocktrans %}
+      </div>
+
+      <div class="mt-6">
+        <label class="inline-flex items-center justify-center gap-2 px-5 py-3 bg-brand text-white font-display font-bold text-xs uppercase tracking-[0.04em] rounded-lg cursor-pointer hover:opacity-90 transition">
+          {% trans "Seleccionar archivos" %}
+          <input type="file" accept="image/jpeg,.jpg,.jpeg" multiple class="hidden" @change="onPick($event)">
+        </label>
+      </div>
+    </div>
+
+    {# ============================================================== #}
+    {# Cola en vivo (manejada por Alpine)                              #}
+    {# ============================================================== #}
+    <div class="mt-8" x-show="queue.length > 0" x-cloak>
+      <div class="flex justify-between items-baseline mb-3.5">
+        <h3 class="font-display font-bold text-base md:text-lg">{% trans "Cola de subida" %}</h3>
+        <span class="font-mono text-[11px] text-text-3">
+          <span x-text="queue.length"></span>
+          {% trans "archivos" %}
+          ·
+          <span x-text="totalSize"></span>
+        </span>
+      </div>
+
+      <div class="bg-ink-1 border border-border rounded-xl overflow-hidden">
+        <template x-for="(item, index) in queue" :key="item.key">
+          <div class="grid grid-cols-[52px_1fr_auto] md:grid-cols-[52px_1fr_200px_140px] items-center gap-3 md:gap-4 p-3.5 md:p-4 border-b border-border last:border-b-0">
+            <div class="w-[52px] h-[52px] rounded-md overflow-hidden bg-ink-2"
+                 :style="`background: linear-gradient(135deg, hsl(${(item.key * 37) % 360} 30% 18%), hsl(${(item.key * 53) % 360} 25% 10%))`"></div>
+            <div class="min-w-0">
+              <div class="font-mono text-[13px] font-medium truncate" x-text="item.name"></div>
+              <div class="font-mono text-[11px] text-text-3 mt-0.5" x-text="item.sizeFmt"></div>
+            </div>
+            <div class="col-span-2 md:col-span-1 h-1.5 rounded-full bg-ink-2 overflow-hidden">
+              <div class="h-full transition-[width] duration-300"
+                   :style="`width: ${item.progress * 100}%; background: ${item.color};`"></div>
+            </div>
+            <span class="text-[10px] uppercase tracking-[0.04em] font-medium px-2.5 py-1 rounded-full border w-fit hidden md:inline-flex items-center gap-1.5"
+                  :style="`background: ${item.color}1A; color: ${item.color}; border-color: ${item.color}40;`">
+              <span class="w-1.5 h-1.5 rounded-full"
+                    :style="`background: ${item.color};`"
+                    :class="item.statusKey === 'uploading' ? 'animate-pulse' : ''"></span>
+              <span x-text="item.status"></span>
+            </span>
+          </div>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  {# ============================================================== #}
+  {# Subidas recientes (server-rendered)                              #}
+  {# ============================================================== #}
+  {% if recent_uploads %}
+  <section class="px-6 md:px-14 pt-8 pb-14">
+    <div class="flex justify-between items-baseline mb-3.5">
+      <h3 class="font-display font-bold text-base md:text-lg">{% trans "Subidas recientes" %}</h3>
+      <span class="font-mono text-[11px] text-text-3">
+        {% blocktrans count counter=photos_uploaded with total=photos_uploaded %}{{ total }} foto subida{% plural %}{{ total }} fotos subidas{% endblocktrans %}
+      </span>
+    </div>
+    <div class="grid grid-cols-4 md:grid-cols-8 gap-1">
+      {% for photo in recent_uploads %}
+        <div class="relative aspect-[4/5] bg-ink-1 rounded-sm overflow-hidden"
+             style="background: linear-gradient(135deg, #1f1f23, #0e0e10);">
+          {% with bibs=photo.bibs.all|slice:":1" %}
+            {% for bib in bibs %}
+              <div class="absolute bottom-1.5 left-1.5">
+                <span class="inline-flex items-center font-mono font-semibold text-[10px] px-1.5 py-0.5 rounded bg-data/10 text-data border border-data/25 tracking-[0.02em]">
+                  #{{ bib.number }}
+                </span>
+              </div>
+            {% endfor %}
+          {% endwith %}
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function uploader(opts) {
+  return {
+    dragOver: false,
+    queue: [],
+    nextKey: 1,
+
+    get totalSize() {
+      const bytes = this.queue.reduce((sum, item) => sum + item.size, 0);
+      return formatBytes(bytes);
+    },
+
+    onPick(ev) {
+      this.handleFiles(ev.target.files);
+      ev.target.value = "";
+    },
+
+    onDrop(ev) {
+      this.dragOver = false;
+      this.handleFiles(ev.dataTransfer.files);
+    },
+
+    handleFiles(fileList) {
+      Array.from(fileList).forEach((file) => {
+        if (!/\.(jpe?g)$/i.test(file.name)) return;
+        const item = {
+          key: this.nextKey++,
+          file,
+          name: file.name,
+          size: file.size,
+          sizeFmt: formatBytes(file.size),
+          progress: 0,
+          color: "#FC5200",
+          status: "{% trans 'Subiendo' %}",
+          statusKey: "uploading",
+        };
+        this.queue.unshift(item);
+        this.uploadOne(item);
+      });
+    },
+
+    uploadOne(item) {
+      const fd = new FormData();
+      fd.append("file", item.file);
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", opts.uploadUrl);
+      xhr.setRequestHeader("X-CSRFToken", opts.csrfToken);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) item.progress = e.loaded / e.total;
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          item.progress = 1;
+          item.color = "#00D4FF";
+          item.status = "{% trans 'Procesando' %}";
+          item.statusKey = "processing";
+          // Después de 4s asumimos que el server terminó (Celery no tarda más para Fase 2)
+          setTimeout(() => {
+            item.color = "#10B981";
+            item.status = "{% trans 'Lista' %}";
+            item.statusKey = "ready";
+          }, 4000);
+        } else {
+          item.color = "#EF4444";
+          item.status = "{% trans 'Error' %}";
+          item.statusKey = "error";
+        }
+      };
+      xhr.onerror = () => {
+        item.color = "#EF4444";
+        item.status = "{% trans 'Sin conexión' %}";
+        item.statusKey = "error";
+      };
+      xhr.send(fd);
+    },
+  };
+}
+
+function formatBytes(bytes) {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+}
+</script>
+{% endblock %}

@@ -1,0 +1,132 @@
+"""Tests del pipeline Celery (process_photo + run_ocr_on_photo) con mocks."""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+from apps.ml.ocr import BibDetection
+from apps.ml.synthetic import write_synthetic_jpeg
+from apps.photos.models import Bib, PhotoStatus
+from apps.photos.tasks import process_photo, run_ocr_on_photo
+from tests.factories import EventFactory, PhotoFactory
+
+
+@contextmanager
+def _stub_download(tmp_path: Path, bib_number: str = "1042") -> Iterator[Path]:
+    """Reemplaza `download_temp_file` con un archivo sintético local."""
+    fake = write_synthetic_jpeg(bib_number, target=tmp_path / "from_r2.jpg")
+    yield fake
+
+
+# ---------------------------------------------------------------------------
+# process_photo
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_process_photo_runs_full_pipeline(tmp_path: Path) -> None:
+    event = EventFactory(slug="test-process")
+    photo = PhotoFactory(
+        event=event,
+        original_key="events/test-process/originals/abc123.jpg",
+        status=PhotoStatus.UPLOADING,
+        preview_key="",
+        thumbnail_key="",
+    )
+
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch("apps.photos.tasks.generate_preview", return_value="events/x/previews/abc.webp"),
+        patch("apps.photos.tasks.generate_thumbnail", return_value="events/x/thumbs/abc.webp"),
+        patch("apps.photos.tasks.run_ocr_on_photo.delay") as mock_ocr,
+    ):
+        result = process_photo.apply(args=[photo.id]).get()
+
+    photo.refresh_from_db()
+    assert photo.status == PhotoStatus.PENDING_REVIEW
+    assert photo.preview_key == "events/x/previews/abc.webp"
+    assert photo.thumbnail_key == "events/x/thumbs/abc.webp"
+    assert photo.width > 0
+    assert photo.height > 0
+    assert mock_ocr.called
+    assert result["status"] == PhotoStatus.PENDING_REVIEW
+
+
+@pytest.mark.django_db
+def test_process_photo_skips_deleted(tmp_path: Path) -> None:
+    photo = PhotoFactory(status=PhotoStatus.DELETED)
+    with patch("apps.photos.tasks.download_temp_file") as mock_dl:
+        result = process_photo.apply(args=[photo.id]).get()
+    assert mock_dl.called is False
+    assert result == {"photo_id": photo.id, "skipped": "deleted"}
+
+
+# ---------------------------------------------------------------------------
+# run_ocr_on_photo
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_run_ocr_creates_bibs(tmp_path: Path) -> None:
+    photo = PhotoFactory(
+        original_key="events/x/originals/abc.jpg",
+        has_bibs_detected=False,
+    )
+
+    fake_detections = [
+        BibDetection(
+            number="1042",
+            confidence=0.95,
+            bbox={"x": 0, "y": 0, "w": 0.1, "h": 0.05},
+            engine="paddle",
+        ),
+        BibDetection(
+            number="A77",
+            confidence=0.81,
+            bbox={"x": 0, "y": 0, "w": 0.1, "h": 0.05},
+            engine="paddle",
+        ),
+    ]
+
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch("apps.ml.ocr.detect_bibs", return_value=fake_detections),
+    ):
+        result = run_ocr_on_photo.apply(args=[photo.id]).get()
+
+    photo.refresh_from_db()
+    assert photo.has_bibs_detected is True
+    assert Bib.objects.filter(photo=photo, number="1042").exists()
+    assert Bib.objects.filter(photo=photo, number="A77").exists()
+    assert result["created"] == 2
+
+
+@pytest.mark.django_db
+def test_run_ocr_idempotent(tmp_path: Path) -> None:
+    """Correr OCR dos veces no duplica bibs (unique(photo, number, source))."""
+    photo = PhotoFactory(original_key="events/x/originals/abc.jpg")
+    det = BibDetection(number="1042", confidence=0.95, bbox={}, engine="paddle")
+
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch("apps.ml.ocr.detect_bibs", return_value=[det]),
+    ):
+        run_ocr_on_photo.apply(args=[photo.id]).get()
+        result_second = run_ocr_on_photo.apply(args=[photo.id]).get()
+
+    assert Bib.objects.filter(photo=photo, number="1042").count() == 1
+    assert result_second["created"] == 0
+
+
+@pytest.mark.django_db
+def test_run_ocr_with_no_detections(tmp_path: Path) -> None:
+    photo = PhotoFactory(original_key="events/x/originals/abc.jpg")
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch("apps.ml.ocr.detect_bibs", return_value=[]),
+    ):
+        result = run_ocr_on_photo.apply(args=[photo.id]).get()
+    assert result["detected"] == 0
+    assert result["created"] == 0
+    assert not Bib.objects.filter(photo=photo).exists()

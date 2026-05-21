@@ -18,5 +18,10 @@
 </head>
 <body class="min-h-screen bg-ink-0 text-text-1 font-body antialiased">
   {% block body %}{% endblock %}
+
+  {# HTMX para fragments y Alpine para estado de UI local — defer para no bloquear render. #}
+  <script defer src="https://unpkg.com/htmx.org@1.9.12" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js" integrity="sha384-WhTjMP4PtkkX7BNZWZFsZJpHy4nWphtxF6L0RZ4tNvGUgvLPxqljpHGmACAcsyEv" crossorigin="anonymous"></script>
+  {% block extra_scripts %}{% endblock %}
 </body>
 </html>

@@ -147,6 +147,51 @@ Crea 1 superuser (te imprime la password), 3 eventos en distintos estados, 50 fo
 por evento con dorsales sintéticos, links de fotógrafo, y audit logs históricos.
 Después entrá a http://127.0.0.1:8000/admin/ para verlo.
 
+## Para fotógrafos: cómo funciona el portal (Fase 2)
+
+El admin (`runfoto-admin`) genera un link único para cada fotógrafo:
+
+```bash
+python manage.py shell
+```
+
+```python
+from apps.events.models import Event
+from apps.photographers.models import PhotographerLink
+
+event = Event.objects.get(slug="maraton-antigua-2026")
+link, raw_token = PhotographerLink.generate_token_and_create(
+    event,
+    name="Lucia Pérez",
+    email="lucia@ejemplo.com",
+    photo_limit=300,        # opcional
+    expires_in_days=45,     # opcional; default 30 después del evento
+)
+print(f"https://<dominio>/u/{raw_token}/")
+```
+
+El admin **copia esa URL una sola vez** y se la manda al fotógrafo por WhatsApp
+(o como prefiera). El token plano no queda guardado en DB — solo el `sha256`.
+
+El fotógrafo abre el link en su browser (cualquiera, sin cuenta) y ve el portal
+de subida. Drag-and-drop JPGs, máximo 15 MB cada uno, sin límite de cantidad
+(salvo que se le ponga `photo_limit`). Por cada foto:
+
+1. El backend valida que es JPEG real (magic bytes).
+2. La sube a Cloudflare R2 (`events/<slug>/originals/<uuid>.jpg`).
+3. Crea el registro `Photo` en `status='processing'`.
+4. Dispara una task Celery (`process_photo`) que:
+   - Extrae EXIF + dimensiones.
+   - Genera preview con watermark diagonal (1200px, WebP).
+   - Genera thumbnail (400px, WebP).
+   - Encadena `run_ocr_on_photo` (PaddleOCR + EasyOCR fallback).
+5. El status pasa a `pending_review`. El admin lo aprueba desde `/admin/`.
+
+**Rate limits**: 60 req/min al portal por IP, 100 fotos/min al endpoint de
+upload por token (anti-flood pero permite ráfagas).
+
+**Revocar un link**: ver [`docs/runbook.md`](docs/runbook.md#cómo-crear-un-link-de-upload-de-fotógrafo-manual-fase-2).
+
 ## Estructura de carpetas
 
 ```

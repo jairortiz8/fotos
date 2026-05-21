@@ -38,6 +38,10 @@ dependencies = [
     "pillow>=10.4",
     # --- Crypto (EncryptedCharField via Fernet) ---
     "cryptography>=43.0",
+    # --- ML / OCR (Fase 2) — ADR 0004 ---
+    "paddleocr>=2.7,<3",
+    "paddlepaddle>=2.6",
+    "easyocr>=1.7",  # fallback cuando PaddleOCR no devuelve nada
     # --- Server / ops ---
     "gunicorn>=23.0",
     "sentry-sdk[django]>=2.0",
@@ -58,6 +62,8 @@ dev = [
     # --- Workflow ---
     "pre-commit>=3.8",
     "django-debug-toolbar>=4.4",
+    # --- Test infra (Fase 2 — boto3 mocks) ---
+    "moto[s3]>=5.0",
 ]
 
 [project.urls]
@@ -172,6 +178,10 @@ module = [
     "django_htmx.*",
     "unfold.*",
     "cryptography.*",
+    "paddleocr.*",
+    "easyocr.*",
+    "moto.*",
+    "django_ratelimit.*",
 ]
 ignore_missing_imports = true
 

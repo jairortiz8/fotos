@@ -1,0 +1,19 @@
+{# Partial HTMX para una fila de la cola tras un upload exitoso.
+   Hoy el flow principal es Alpine (XHR + state local); este partial se devuelve
+   sólo si el cliente manda `HX-Request: true`. #}
+{% load i18n %}
+<div class="grid grid-cols-[52px_1fr_200px_140px] items-center gap-4 p-4 border-b border-border last:border-b-0"
+     id="upload-row-{{ photo.id }}">
+  <div class="w-[52px] h-[52px] rounded-md overflow-hidden bg-ink-2"></div>
+  <div class="min-w-0">
+    <div class="font-mono text-[13px] font-medium truncate">{{ photo.original_filename }}</div>
+    <div class="font-mono text-[11px] text-text-3 mt-0.5">
+      {{ photo.file_size|filesizeformat }}
+    </div>
+  </div>
+  <div class="h-1.5 rounded-full bg-data overflow-hidden"></div>
+  <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-data/30 bg-data/10 text-data text-[10px] uppercase tracking-[0.04em] font-medium w-fit">
+    <span class="w-1.5 h-1.5 rounded-full bg-data"></span>
+    {% trans "Procesando" %}
+  </span>
+</div>
