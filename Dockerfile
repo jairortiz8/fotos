@@ -142,11 +142,12 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1:${PORT}/healthz || exit 1
 
 # Default command: web. Worker y beat overridean en railway.toml / compose.
-#  --timeout 120: la 1ª búsqueda por selfie carga buffalo_l en memoria (~5-10s,
-#                 más si baja el modelo en runtime). El default de 30s mataría
-#                 el worker → 502. 120s da margen.
-#  --workers 2 --threads 4: la inferencia facial corre EN el proceso web (síncrona
-#                 por privacidad). Cada worker carga ~1.2 GB de modelo, así que
-#                 limitamos a 2 copias y ganamos concurrencia con threads
-#                 (numpy/onnxruntime liberan el GIL).
-CMD ["sh", "-c", "python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:${PORT} --workers 2 --threads 4 --timeout 120 --access-logfile -"]
+#  --timeout 120: la 1ª búsqueda por selfie carga buffalo_l en memoria (~5-10s).
+#                 El default de 30s mataría el worker → 502. 120s da margen.
+#  --workers 1 --threads 4: la inferencia facial corre EN el proceso web (síncrona
+#                 por privacidad) y el modelo pesa >700 MB en RAM. El dyno está
+#                 capado a 1 GB, así que mantenemos UNA sola copia del modelo
+#                 (1 worker) compartida por los threads (onnxruntime es
+#                 thread-safe y libera el GIL → 4 requests concurrentes con 1 sola
+#                 copia). Subir workers requiere subir la RAM del servicio.
+CMD ["sh", "-c", "python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:${PORT} --workers 1 --threads 4 --timeout 120 --access-logfile -"]

@@ -25,6 +25,16 @@ EMBEDDING_DIM = 512
 MODEL_NAME = "buffalo_l"
 DET_SIZE = (640, 640)
 
+# Sólo cargamos los modelos del pack buffalo_l que realmente usamos:
+#  - detection (det_10g): bbox + keypoints (alineación) + det_score
+#  - recognition (w600k_r50): el embedding de 512-d
+#  - genderage: edad (blur de menores) + género
+# Omitimos landmark_3d_68 (1k3d68, ~143MB) y landmark_2d_106 (2d106det) que NO
+# usamos. Esto baja el pico de RAM ~200-300MB para entrar en el dyno de 1GB y
+# acelera la carga. La alineación para recognition usa los 5 keypoints del
+# detector, no los 106 puntos del landmark 2D — así que esto no afecta el match.
+ALLOWED_MODULES = ["detection", "recognition", "genderage"]
+
 
 # ---------------------------------------------------------------------------
 # Errores de dominio (para que las vistas devuelvan respuestas claras)
@@ -77,6 +87,7 @@ def get_face_model() -> Any:
                 kwargs: dict[str, Any] = {
                     "name": MODEL_NAME,
                     "providers": ["CPUExecutionProvider"],
+                    "allowed_modules": ALLOWED_MODULES,
                 }
                 # En prod el modelo viene pre-cacheado en /opt/insightface
                 # (ver Dockerfile). Si la env var está, usamos ese root para
