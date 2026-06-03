@@ -49,7 +49,13 @@ COPY pyproject.toml README.md ./
 COPY apps/__init__.py apps/__init__.py
 COPY config/__init__.py config/__init__.py
 
+# EasyOCR depende de torch. Por default pip baja torch con las librerías CUDA
+# (~1.5 GB de GPU que NO usamos — hacemos OCR en CPU). Instalamos torch+cpu
+# PRIMERO desde el índice CPU; cuando easyocr resuelva sus deps, ve que torch
+# ya está satisfecho y no baja la versión CUDA. Imagen: ~3 GB → ~1.5 GB.
 RUN pip install --upgrade pip setuptools wheel \
+ && pip install --no-cache-dir torch torchvision \
+        --index-url https://download.pytorch.org/whl/cpu \
  && pip install --no-cache-dir .
 
 # ----------------------------------------------------------------------------
