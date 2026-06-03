@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Privacidad" %} · {{ site_name }}{% endblock %}
+{% block privacy_banner %}{% endblock %}
+
+{% block body %}
+<div class="min-h-screen">
+  <header class="flex items-center justify-between px-5 md:px-10 py-3.5 border-b border-border">
+    <a href="{% url 'core:index' %}">{% include "_partials/wordmark.html" with size="18px" %}</a>
+  </header>
+
+  <main class="max-w-2xl mx-auto px-6 py-12">
+    <h1 class="font-display font-black text-3xl md:text-4xl tracking-tight mb-3">{% trans "Privacidad y reconocimiento facial" %}</h1>
+    <p class="text-text-2 leading-relaxed mb-10">{% blocktrans with site_name=site_name %}En {{ site_name }} las fotos son gratis y sin cuenta. Para que puedas encontrarte usamos reconocimiento facial, y manejamos esos datos con el mayor cuidado. Acá te explicamos exactamente cómo.{% endblocktrans %}</p>
+
+    <div class="space-y-8 text-text-2 leading-relaxed text-[15px]">
+      <section>
+        <h2 class="font-display font-bold text-lg text-text-1 mb-2">{% trans "Qué datos procesamos" %}</h2>
+        <ul class="list-disc pl-5 space-y-1.5">
+          <li>{% trans "Tu selfie de búsqueda: se procesa en memoria y se descarta inmediatamente. No se guarda en ningún lado." %}</li>
+          <li>{% trans "Vectores de cara (embeddings) extraídos de las fotos del evento: representaciones matemáticas que permiten el matching. No son fotos ni se pueden revertir a una imagen." %}</li>
+          <li>{% trans "Direcciones IP: las guardamos hasheadas (no la IP real) solo para limitar abuso." %}</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2 class="font-display font-bold text-lg text-text-1 mb-2">{% trans "Cuánto tiempo los guardamos" %}</h2>
+        <ul class="list-disc pl-5 space-y-1.5">
+          <li>{% trans "Selfie de búsqueda: cero. Se descarta al terminar la búsqueda." %}</li>
+          <li>{% trans "Embeddings de las fotos: se borran a los 90 días desde el último uso." %}</li>
+          <li>{% trans "Fotos del evento: según la política de retención del evento (entre 3 meses y 1 año)." %}</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2 class="font-display font-bold text-lg text-text-1 mb-2">{% trans "Cómo borrar tus datos" %}</h2>
+        <p>{% trans "Subí una selfie y borramos todas tus fotos y embeddings de todos los eventos, al instante." %}</p>
+        <a href="{% url 'privacy:delete_my_data' %}" class="rf-cta mt-3 inline-flex">{% trans "Borrar mis datos" %}</a>
+      </section>
+
+      <section>
+        <h2 class="font-display font-bold text-lg text-text-1 mb-2">{% trans "Protección de menores" %}</h2>
+        <p>{% trans "Detectamos automáticamente caras de menores y las difuminamos en las versiones públicas de las fotos. El reconocimiento sigue funcionando para que un menor (o su familia) pueda encontrar y borrar sus fotos." %}</p>
+      </section>
+
+      <section>
+        <h2 class="font-display font-bold text-lg text-text-1 mb-2">{% trans "Quién tiene acceso" %}</h2>
+        <p>{% trans "Sólo el administrador del sistema. No vendemos ni compartimos datos con terceros. Los embeddings se usan exclusivamente para el matching directo — nunca para analytics ni entrenamiento." %}</p>
+      </section>
+
+      <section>
+        <h2 class="font-display font-bold text-lg text-text-1 mb-2">{% trans "Contacto" %}</h2>
+        <p>{% trans "Para cualquier consulta sobre tus datos, escribinos." %}</p>
+      </section>
+    </div>
+  </main>
+</div>
+{% endblock %}

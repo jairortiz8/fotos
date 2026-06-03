@@ -22,7 +22,7 @@ from apps.photos.imaging import (
     generate_preview,
     generate_thumbnail,
 )
-from apps.photos.models import Bib, Photo, PhotoStatus
+from apps.photos.models import Bib, FaceEmbedding, Photo, PhotoStatus
 from apps.photos.storage import default_storage
 
 logger = logging.getLogger(__name__)
@@ -112,8 +112,9 @@ def process_photo(self, photo_id: int) -> dict[str, str | int]:
         ]
     )
 
-    # OCR como task separada — independiente del resto.
+    # OCR y reconocimiento facial como tasks separadas — independientes.
     run_ocr_on_photo.delay(photo.id)
+    run_face_recognition_on_photo.delay(photo.id)
 
     return {
         "photo_id": photo.id,
@@ -173,3 +174,121 @@ def run_ocr_on_photo(self, photo_id: int) -> dict[str, int | list[str]]:
         "created": len(bib_sources_created),
         "bibs": bib_sources_created,
     }
+
+
+# ---------------------------------------------------------------------------
+# run_face_recognition_on_photo (Fase 4)
+#
+# Umbrales de edad (decisión de privacidad, ADR 0006):
+#   - age < MINOR_BLUR_AGE (16) → is_minor=True → blur automático del preview.
+#   - age < MINOR_REVIEW_AGE (22) → needs_minor_review=True → el admin decide
+#     en la cola de aprobación (Fase 5) si las caras dudosas requieren blur.
+# El estimador de edad de InsightFace es impreciso; preferimos errar del lado
+# de proteger menores.
+# ---------------------------------------------------------------------------
+MINOR_BLUR_AGE = 16
+MINOR_REVIEW_AGE = 22
+
+
+@shared_task(
+    name="photos.run_face_recognition_on_photo",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=120,
+    autoretry_for=(Exception,),
+)
+def run_face_recognition_on_photo(self, photo_id: int) -> dict[str, int | bool]:
+    """Extrae embeddings de las caras y persiste `FaceEmbedding`.
+
+    Marca menores (`is_minor`, blur automático) y caras dudosas
+    (`needs_minor_review`). Si hay menores, regenera el preview con blur.
+    """
+    from apps.ml.face_recognition import extract_faces
+
+    photo = Photo.objects.get(id=photo_id)
+    if photo.status in {PhotoStatus.DELETED, PhotoStatus.REJECTED}:
+        return {"photo_id": photo_id, "skipped": True}
+
+    with download_temp_file(photo.original_key) as source:
+        detections = extract_faces(source)
+
+    if not detections:
+        if not photo.has_faces_detected:
+            return {"photo_id": photo.id, "faces": 0, "minors": 0}
+        return {"photo_id": photo.id, "faces": 0, "minors": 0}
+
+    minors = 0
+    needs_review = False
+    with transaction.atomic():
+        for det in detections:
+            is_minor = det.age < MINOR_BLUR_AGE
+            if is_minor:
+                minors += 1
+            if det.age < MINOR_REVIEW_AGE:
+                needs_review = True
+            x1, y1, x2, y2 = det.bbox
+            FaceEmbedding.objects.create(
+                photo=photo,
+                embedding=det.embedding.tolist(),
+                bbox={"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+                estimated_age=max(0, det.age),
+                is_minor=is_minor,
+            )
+
+        photo.has_faces_detected = True
+        photo.has_minors_detected = minors > 0
+        photo.needs_minor_review = needs_review
+        photo.save(
+            update_fields=[
+                "has_faces_detected",
+                "has_minors_detected",
+                "needs_minor_review",
+                "updated_at",
+            ]
+        )
+
+    # Si hay menores confirmados, regenerar preview/thumb con blur en sus caras.
+    if minors > 0:
+        regenerate_preview_with_minor_blur.delay(photo.id)
+
+    return {
+        "photo_id": photo.id,
+        "faces": len(detections),
+        "minors": minors,
+        "needs_review": needs_review,
+    }
+
+
+@shared_task(
+    name="photos.regenerate_preview_with_minor_blur",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=60,
+)
+def regenerate_preview_with_minor_blur(self, photo_id: int) -> dict[str, object]:
+    """Regenera preview + thumbnail con blur en las caras de menores.
+
+    El ORIGINAL nunca se toca. Si falla el blur, la foto pasa a
+    `processing_failed` y NO se aprueba (regla de privacidad).
+    """
+    from apps.photos.imaging import blur_minor_faces_and_regenerate
+
+    photo = Photo.objects.prefetch_related("face_embeddings").get(id=photo_id)
+    minor_faces = list(photo.face_embeddings.filter(is_minor=True))
+    if not minor_faces:
+        return {"photo_id": photo_id, "skipped": "no_minors"}
+
+    try:
+        with download_temp_file(photo.original_key) as source:
+            preview_key, thumb_key = blur_minor_faces_and_regenerate(photo, source, minor_faces)
+        photo.preview_key = preview_key
+        photo.thumbnail_key = thumb_key
+        photo.save(update_fields=["preview_key", "thumbnail_key", "updated_at"])
+    except Exception as exc:
+        logger.exception("Blur de menores falló (photo=%s)", photo_id)
+        # Regla: si no se puede blurear, la foto NO debe quedar visible.
+        photo.status = PhotoStatus.PROCESSING_FAILED
+        photo.save(update_fields=["status", "updated_at"])
+        raise self.retry(exc=exc) from exc
+
+    return {"photo_id": photo.id, "blurred_faces": len(minor_faces)}

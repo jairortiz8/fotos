@@ -42,6 +42,10 @@ dependencies = [
     "paddleocr>=2.7,<3",
     "paddlepaddle>=2.6",
     "easyocr>=1.7",  # fallback cuando PaddleOCR no devuelve nada
+    # --- ML / Face recognition (Fase 4) — ADR 0006/0007 ---
+    "insightface>=0.7",
+    "onnxruntime>=1.18",
+    "opencv-python-headless>=4.9",
     # --- Server / ops ---
     "gunicorn>=23.0",
     "sentry-sdk[django]>=2.0",
@@ -182,6 +186,9 @@ module = [
     "easyocr.*",
     "moto.*",
     "django_ratelimit.*",
+    "insightface.*",
+    "onnxruntime.*",
+    "cv2.*",
 ]
 ignore_missing_imports = true
 

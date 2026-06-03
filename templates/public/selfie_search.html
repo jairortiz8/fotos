@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ event.name }} · {% trans "Buscar por selfie" %}{% endblock %}
+
+{% block body %}
+<div class="min-h-screen pb-16">
+  <header class="flex items-center justify-between px-5 md:px-10 py-3.5 border-b border-border">
+    <a href="{% url 'core:index' %}">{% include "_partials/wordmark.html" with size="18px" %}</a>
+    <a href="{% url 'events:gallery' slug=event.slug %}" class="text-[12px] text-text-2 hover:text-text-1 transition">{% trans "Volver a la galería" %}</a>
+  </header>
+
+  <section class="px-6 md:px-10 pt-9 pb-6" style="background: linear-gradient(180deg, #1a1418 0%, #0a0a0b 100%);">
+    <span class="font-mono text-[10px] text-text-3 tracking-[0.1em] uppercase">{{ event.date|date:"d M Y" }}</span>
+    <h1 class="font-display font-black uppercase tracking-tight leading-[0.9] mt-2" style="font-size: clamp(2rem, 8vw, 3.5rem);">{{ event.name }}</h1>
+  </section>
+
+  {# Tabs #}
+  <div class="px-6 md:px-10 border-b border-border">
+    <div class="flex gap-7">
+      <a href="{% url 'events:gallery' slug=event.slug %}"
+         class="font-display font-bold text-[11px] uppercase tracking-[0.04em] py-3.5 text-text-2 hover:text-text-1 border-b-2 border-transparent transition">{% trans "Por dorsal" %}</a>
+      <span class="font-display font-bold text-[11px] uppercase tracking-[0.04em] py-3.5 text-brand border-b-2 border-brand -mb-px">{% trans "Por selfie" %}</span>
+    </div>
+  </div>
+
+  <div class="px-6 md:px-10 max-w-2xl mx-auto pt-8"
+       x-data="selfieUpload('{% url 'events:selfie_search' slug=event.slug %}')">
+
+    {# Banner de privacidad obligatorio #}
+    <div class="rounded-xl border border-warning/30 bg-warning/[0.06] px-4 py-4 mb-6">
+      <div class="flex items-start gap-3">
+        <span class="text-warning shrink-0 mt-0.5">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </span>
+        <div class="text-[12px] text-text-2 leading-relaxed">
+          <strong class="text-text-1">{% trans "Tu selfie no se guarda." %}</strong>
+          {% trans "Lo usamos solo para encontrar tus fotos y se descarta inmediatamente después de la búsqueda. Los vectores de cara extraídos de las fotos del evento se borran a los 90 días." %}
+          <a href="{% url 'privacy:policy' %}" class="text-data underline">{% trans "Más info" %}</a>
+        </div>
+      </div>
+    </div>
+
+    {# Dropzone #}
+    <form @submit.prevent="submit()">
+      <label class="block rounded-2xl border-2 border-dashed border-border bg-ink-1/40 px-6 py-12 text-center cursor-pointer hover:border-data/40 transition"
+             :class="{ 'border-data ring-2 ring-data/20': hasFile }">
+        <div class="inline-grid place-items-center w-16 h-16 rounded-full bg-data/10 text-data mb-4">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M9 15c1 1 2 1.5 3 1.5s2-.5 3-1.5"/></svg>
+        </div>
+        <h2 class="font-display font-bold text-xl md:text-2xl mb-2" x-text="fileName || '{% trans "Subí una selfie clara, mirando a cámara" %}'"></h2>
+        <div class="font-mono text-xs text-text-3 tracking-[0.06em]">
+          {% blocktrans count n=approved_count %}JPG o PNG, máximo 10MB. Buscamos en {{ n }} foto del evento.{% plural %}JPG o PNG, máximo 10MB. Buscamos en {{ n }} fotos del evento.{% endblocktrans %}
+        </div>
+        <input type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" class="hidden" @change="onPick($event)">
+      </label>
+
+      <button type="submit" x-show="hasFile" class="rf-cta rf-cta--lg rf-cta--full mt-5" :disabled="loading">
+        <span x-show="!loading">{% trans "Buscar mis fotos" %}</span>
+        <span x-show="loading">{% trans "Buscando..." %}</span>
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function selfieUpload(url) {
+  return {
+    hasFile: false, fileName: '', file: null, loading: false,
+    onPick(ev) {
+      const f = ev.target.files[0];
+      if (!f) return;
+      this.file = f; this.fileName = f.name; this.hasFile = true;
+    },
+    async submit() {
+      if (!this.file || this.loading) return;
+      this.loading = true;
+      const fd = new FormData();
+      fd.append('selfie', this.file);
+      const res = await fetch(url, { method: 'POST', body: fd });
+      // El server devuelve HTML (resultados o error) — reemplazamos el documento.
+      const html = await res.text();
+      document.open(); document.write(html); document.close();
+    },
+  };
+}
+</script>
+{% endblock %}

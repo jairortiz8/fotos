@@ -132,3 +132,29 @@ def check_zip_rate_limit(request: HttpRequest) -> bool:
         increment=True,
     )
     return not limited
+
+
+def check_selfie_rate_limit(request: HttpRequest) -> bool:
+    """20 búsquedas por selfie/hora por IP (más caro computacionalmente)."""
+    limited = is_ratelimited(
+        request,
+        group="selfie-search",
+        key="ip",
+        rate="20/h",
+        method=("POST",),
+        increment=True,
+    )
+    return not limited
+
+
+def check_deletion_rate_limit(request: HttpRequest) -> bool:
+    """5 solicitudes de borrado/hora por IP (operación seria)."""
+    limited = is_ratelimited(
+        request,
+        group="data-deletion",
+        key="ip",
+        rate="5/h",
+        method=("POST",),
+        increment=True,
+    )
+    return not limited

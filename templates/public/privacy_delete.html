@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Borrar mis datos" %} · {{ site_name }}{% endblock %}
+{% block privacy_banner %}{% endblock %}
+
+{% block body %}
+<div class="min-h-screen">
+  <header class="flex items-center justify-between px-5 md:px-10 py-3.5 border-b border-border">
+    <a href="{% url 'core:index' %}">{% include "_partials/wordmark.html" with size="18px" %}</a>
+  </header>
+
+  <main class="max-w-xl mx-auto px-6 py-12"
+        x-data="deleteData('{% url 'privacy:delete_my_data' %}')">
+    <h1 class="font-display font-black text-3xl tracking-tight mb-3">{% trans "Borrar mis datos" %}</h1>
+    <p class="text-text-2 leading-relaxed mb-8">{% trans "Subí una selfie y borramos TODAS tus fotos y vectores de cara de TODOS los eventos. Esta acción es permanente y no se puede deshacer." %}</p>
+
+    <div class="rounded-xl border border-danger/30 bg-danger/[0.06] px-4 py-4 mb-6 text-[13px] text-text-2 leading-relaxed">
+      <strong class="text-danger">{% trans "Atención:" %}</strong>
+      {% trans "esto borra tus fotos del evento permanentemente. Si querés conservarlas, descargalas antes." %}
+    </div>
+
+    <form @submit.prevent="submit()">
+      <label class="block rounded-2xl border-2 border-dashed border-border bg-ink-1/40 px-6 py-10 text-center cursor-pointer hover:border-danger/40 transition"
+             :class="{ 'border-danger ring-2 ring-danger/20': hasFile }">
+        <div class="inline-grid place-items-center w-14 h-14 rounded-full bg-danger/10 text-danger mb-3">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>
+        </div>
+        <div class="font-display font-bold text-lg mb-1" x-text="fileName || '{% trans "Subí tu selfie" %}'"></div>
+        <div class="font-mono text-xs text-text-3">{% trans "JPG o PNG, máximo 10MB" %}</div>
+        <input type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" class="hidden" @change="onPick($event)">
+      </label>
+
+      <label class="flex items-start gap-2.5 mt-5 cursor-pointer text-[13px] text-text-2">
+        <input type="checkbox" x-model="confirmed" class="mt-0.5">
+        {% trans "Entiendo que esto borra mis fotos permanentemente y no se puede deshacer." %}
+      </label>
+
+      <button type="submit" x-show="hasFile && confirmed" class="rf-cta rf-cta--lg rf-cta--full mt-5" style="background:#EF4444;" :disabled="loading">
+        <span x-show="!loading">{% trans "Borrar todos mis datos" %}</span>
+        <span x-show="loading">{% trans "Procesando..." %}</span>
+      </button>
+    </form>
+  </main>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function deleteData(url) {
+  return {
+    hasFile: false, fileName: '', file: null, confirmed: false, loading: false,
+    onPick(ev) { const f = ev.target.files[0]; if (!f) return; this.file = f; this.fileName = f.name; this.hasFile = true; },
+    async submit() {
+      if (!this.file || !this.confirmed || this.loading) return;
+      this.loading = true;
+      const fd = new FormData();
+      fd.append('selfie', this.file);
+      fd.append('confirmed', 'yes');
+      const res = await fetch(url, { method: 'POST', body: fd });
+      const html = await res.text();
+      document.open(); document.write(html); document.close();
+    },
+  };
+}
+</script>
+{% endblock %}

@@ -143,12 +143,17 @@ def _format_shutter(value: Any) -> str:
 # ---------------------------------------------------------------------------
 def generate_preview(
     photo: Photo,
-    source_path: Path,
+    source_path: Path | None = None,
     *,
+    img_object: Image.Image | None = None,
     storage: R2Storage | None = None,
 ) -> str:
-    """Genera preview con watermark diagonal y lo sube a R2. Devuelve el key."""
-    img = Image.open(source_path)
+    """Genera preview con watermark diagonal y lo sube a R2. Devuelve el key.
+
+    Acepta `source_path` (lee de disco) o `img_object` (imagen ya cargada,
+    p.ej. con blur de menores aplicado).
+    """
+    img = img_object.copy() if img_object is not None else Image.open(source_path)  # type: ignore[arg-type]
     img.thumbnail((PREVIEW_LONG_EDGE, PREVIEW_LONG_EDGE), Image.Resampling.LANCZOS)
     watermark_text = f"{settings.SITE_NAME.upper()} · {photo.event.name.upper()}"
     watermarked = apply_diagonal_watermark(img, watermark_text)
@@ -164,12 +169,13 @@ def generate_preview(
 
 def generate_thumbnail(
     photo: Photo,
-    source_path: Path,
+    source_path: Path | None = None,
     *,
+    img_object: Image.Image | None = None,
     storage: R2Storage | None = None,
 ) -> str:
     """Thumb sin watermark (es pequeño, no vale la pena)."""
-    img = Image.open(source_path)
+    img = img_object.copy() if img_object is not None else Image.open(source_path)  # type: ignore[arg-type]
     img.thumbnail((THUMB_LONG_EDGE, THUMB_LONG_EDGE), Image.Resampling.LANCZOS)
 
     buf = BytesIO()
@@ -179,6 +185,57 @@ def generate_thumbnail(
     key = key_for_thumbnail(photo.event.slug, _photo_uid(photo))
     (storage or default_storage()).upload(buf, key, content_type="image/webp")
     return key
+
+
+# ---------------------------------------------------------------------------
+# Blur de menores (Fase 4)
+# ---------------------------------------------------------------------------
+MINOR_BLUR_RADIUS = 30
+MINOR_BBOX_MARGIN = 0.2  # expandir el bbox 20% para cubrir toda la cara
+
+
+def blur_minor_faces_and_regenerate(
+    photo: Photo,
+    source_path: Path,
+    minor_faces: list[Any],
+    *,
+    storage: R2Storage | None = None,
+) -> tuple[str, str]:
+    """Aplica blur gaussiano a las caras de menores y regenera preview+thumb.
+
+    El ORIGINAL no se toca: trabajamos sobre una copia en memoria. Devuelve
+    `(preview_key, thumbnail_key)`.
+    """
+    from PIL import ImageFilter
+
+    img = Image.open(source_path).convert("RGB")
+    w, h = img.size
+
+    for face in minor_faces:
+        bbox = face.bbox or {}
+        try:
+            x1 = float(bbox["x1"])
+            y1 = float(bbox["y1"])
+            x2 = float(bbox["x2"])
+            y2 = float(bbox["y2"])
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        bw, bh = x2 - x1, y2 - y1
+        x1 = max(0, int(x1 - bw * MINOR_BBOX_MARGIN))
+        y1 = max(0, int(y1 - bh * MINOR_BBOX_MARGIN))
+        x2 = min(w, int(x2 + bw * MINOR_BBOX_MARGIN))
+        y2 = min(h, int(y2 + bh * MINOR_BBOX_MARGIN))
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        region = img.crop((x1, y1, x2, y2))
+        blurred = region.filter(ImageFilter.GaussianBlur(radius=MINOR_BLUR_RADIUS))
+        img.paste(blurred, (x1, y1))
+
+    preview_key = generate_preview(photo, img_object=img, storage=storage)
+    thumb_key = generate_thumbnail(photo, img_object=img, storage=storage)
+    return preview_key, thumb_key
 
 
 def _photo_uid(photo: Photo) -> str:

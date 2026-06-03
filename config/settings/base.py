@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import environ
+from celery.schedules import crontab
 
 # ----------------------------------------------------------------------------
 # Paths
@@ -188,7 +189,11 @@ CELERY_BEAT_SCHEDULE: dict[str, dict] = {
         "task": "downloads.cleanup_expired_zips",
         "schedule": 60 * 60,  # cada hora
     },
-    # Fases posteriores: retention de embeddings, cleanup de links, etc.
+    # Borra embeddings faciales inactivos > 90 días, diario a las 3 AM (Fase 4).
+    "cleanup-old-embeddings": {
+        "task": "privacy.cleanup_old_embeddings",
+        "schedule": crontab(hour=3, minute=0),
+    },
 }
 
 # ----------------------------------------------------------------------------

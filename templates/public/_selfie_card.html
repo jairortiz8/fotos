@@ -1,0 +1,37 @@
+{% comment %}Celda de resultado de selfie con badge de similitud + barra de confianza.
+Requiere `photo` con `.similarity` (0-100).{% endcomment %}
+{% load i18n %}
+<div class="relative aspect-[4/5] bg-ink-0 group">
+  <a href="{% url 'events:lightbox' slug=photo.event.slug photo_id=photo.id %}" class="block w-full h-full">
+    {% with thumb=photo.get_thumbnail_url %}
+      {% if thumb %}
+        <img src="{{ thumb }}" alt="{% trans 'Foto' %} #{{ photo.id }}" loading="lazy" class="w-full h-full object-cover">
+      {% else %}
+        <div class="w-full h-full" style="background: linear-gradient(135deg, #1f1f23, #0e0e10);"></div>
+      {% endif %}
+    {% endwith %}
+  </a>
+
+  {# Badge de % similitud top-left #}
+  <div class="absolute top-2 left-2">
+    {% if photo.similarity >= 80 %}
+      <span class="rf-pill rf-pill--green">{{ photo.similarity }}%</span>
+    {% elif photo.similarity >= 60 %}
+      <span class="rf-pill rf-pill--amber">{{ photo.similarity }}%</span>
+    {% else %}
+      <span class="rf-pill rf-pill--cyan">{{ photo.similarity }}%</span>
+    {% endif %}
+  </div>
+
+  {# Bib badge bottom-left #}
+  {% with first_bib=photo.bibs.all|first %}
+    {% if first_bib %}
+    <div class="absolute bottom-2 left-2 pointer-events-none"><span class="rf-bib">#{{ first_bib.number }}</span></div>
+    {% endif %}
+  {% endwith %}
+
+  {# Barra de confianza al pie #}
+  <div class="absolute bottom-0 left-0 right-0 h-1 bg-ink-2">
+    <div class="h-full bg-brand" style="width: {{ photo.similarity }}%;"></div>
+  </div>
+</div>

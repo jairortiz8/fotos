@@ -24,6 +24,7 @@ from apps.core.models import TimeStampedModel
 class PhotoStatus(models.TextChoices):
     UPLOADING = "uploading", _("Subiendo")
     PROCESSING = "processing", _("Procesando")
+    PROCESSING_FAILED = "processing_failed", _("Falló el procesamiento")
     PENDING_REVIEW = "pending_review", _("Pendiente de revisión")
     APPROVED = "approved", _("Aprobada")
     REJECTED = "rejected", _("Rechazada")
@@ -81,7 +82,7 @@ class Photo(TimeStampedModel):
     # --- Estado ---
     status = models.CharField(
         _("estado"),
-        max_length=16,
+        max_length=24,
         choices=PhotoStatus.choices,
         default=PhotoStatus.UPLOADING,
     )
@@ -91,7 +92,16 @@ class Photo(TimeStampedModel):
 
     # --- Flags ML ---
     has_minors_detected = models.BooleanField(_("tiene menores detectados"), default=False)
+    needs_minor_review = models.BooleanField(
+        _("necesita revisión de menores"),
+        default=False,
+        help_text=_(
+            "El estimador de edad detectó una cara dudosa (<22). El admin revisa "
+            "en la cola de aprobación si hace falta blurear."
+        ),
+    )
     has_bibs_detected = models.BooleanField(_("tiene dorsales detectados"), default=False)
+    has_faces_detected = models.BooleanField(_("tiene caras detectadas"), default=False)
 
     # --- Stats ---
     view_count = models.PositiveIntegerField(_("vistas"), default=0)

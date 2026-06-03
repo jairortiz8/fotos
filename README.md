@@ -147,6 +147,25 @@ Crea 1 superuser (te imprime la password), 3 eventos en distintos estados, 50 fo
 por evento con dorsales sintéticos, links de fotógrafo, y audit logs históricos.
 Después entrá a http://127.0.0.1:8000/admin/ para verlo.
 
+## Privacidad y reconocimiento facial (Fase 4)
+
+RunFoto usa reconocimiento facial (InsightFace `buffalo_l`) para que los
+corredores se encuentren por selfie. El manejo de datos biométricos es
+estricto — documento completo en [`docs/privacy.md`](docs/privacy.md):
+
+- **El selfie del usuario nunca se guarda** (ni archivo ni embedding). La
+  búsqueda y el borrado son síncronos: el embedding vive en RAM durante el
+  request y se descarta. Nunca toca Celery/Redis.
+- **Embeddings de las fotos**: se guardan en Postgres (pgvector) y se borran a
+  los **90 días** desde el último uso (cron diario).
+- **Menores**: caras estimadas <16 se difuminan automáticamente en el preview
+  (el original queda intacto); caras <22 se marcan para revisión del admin.
+- **Borrá tus datos**: `/privacidad/borrar-mis-datos/` — subís un selfie y se
+  borran todas tus fotos y embeddings de todos los eventos.
+
+Búsqueda por selfie: `/eventos/<slug>/buscar-selfie/`.
+Umbrales y decisiones: [`docs/adr/0006`](docs/adr/0006-face-recognition-threshold.md) (similitud) · [`docs/adr/0007`](docs/adr/0007-pgvector-index-type.md) (índice HNSW).
+
 ## Para corredores: cómo buscar tus fotos (Fase 3)
 
 1. Entrá a la home (`/`). Vas a ver los eventos públicos.

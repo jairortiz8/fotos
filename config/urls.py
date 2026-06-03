@@ -26,6 +26,7 @@ urlpatterns = [
     path("u/", include("apps.photographers.urls", namespace="photographer")),
     path("eventos/", include("apps.events.urls", namespace="events")),
     path("descargas/", include("apps.downloads.urls", namespace="downloads")),
+    path("privacidad/", include("apps.privacy.urls", namespace="privacy")),
     path("", include("apps.core.urls", namespace="core")),
 ]
 

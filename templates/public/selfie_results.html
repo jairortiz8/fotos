@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Resultados" %} · {{ event.name }}{% endblock %}
+
+{% block body %}
+<div class="min-h-screen pb-16">
+  <header class="flex items-center justify-between px-5 md:px-10 py-3.5 border-b border-border sticky top-0 bg-ink-0/95 backdrop-blur z-20">
+    <a href="{% url 'core:index' %}">{% include "_partials/wordmark.html" with size="18px" %}</a>
+    <a href="{% url 'events:selfie_search' slug=event.slug %}" class="text-[12px] text-text-2 hover:text-text-1 transition">{% trans "Cambiar selfie" %}</a>
+  </header>
+
+  <div class="px-6 md:px-10 py-5 border-b border-border flex items-center gap-3">
+    <span class="inline-grid place-items-center w-9 h-9 rounded-full bg-data/10 text-data">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M9 15c1 1 2 1.5 3 1.5s2-.5 3-1.5"/></svg>
+    </span>
+    <div>
+      <div class="font-display font-bold text-lg">{% blocktrans count n=match_count %}{{ n }} coincidencia{% plural %}{{ n }} coincidencias{% endblocktrans %}</div>
+      <div class="font-mono text-[11px] text-text-3">{{ event.name }}</div>
+    </div>
+  </div>
+
+  {% if high_matches %}
+  <div class="px-6 md:px-10 pt-5 pb-2"><span class="rf-pill rf-pill--green">{% blocktrans count n=high_matches|length %}{{ n }} alta confianza{% plural %}{{ n }} alta confianza{% endblocktrans %}</span></div>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-[2px] bg-ink-0">
+    {% for photo in high_matches %}{% include "public/_selfie_card.html" with photo=photo %}{% endfor %}
+  </div>
+  {% endif %}
+
+  {% if med_matches %}
+  <div class="px-6 md:px-10 pt-5 pb-2"><span class="rf-pill rf-pill--amber">{% blocktrans count n=med_matches|length %}{{ n }} confianza media{% plural %}{{ n }} confianza media{% endblocktrans %}</span></div>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-[2px] bg-ink-0">
+    {% for photo in med_matches %}{% include "public/_selfie_card.html" with photo=photo %}{% endfor %}
+  </div>
+  {% endif %}
+
+  {% if low_matches %}
+  <div class="px-6 md:px-10 pt-5 pb-2"><span class="rf-pill rf-pill--cyan">{% blocktrans count n=low_matches|length %}{{ n }} confianza baja{% plural %}{{ n }} confianza baja{% endblocktrans %}</span></div>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-[2px] bg-ink-0">
+    {% for photo in low_matches %}{% include "public/_selfie_card.html" with photo=photo %}{% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

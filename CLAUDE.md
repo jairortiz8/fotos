@@ -533,3 +533,18 @@ En la carpeta `reference/runfoto-design/` está el zip de Claude Design extraíd
 - **Bug Django**: los comentarios `{# #}` multilínea se renderizan como texto. Usar `{% comment %}` para multilínea. (Arreglados 3 casos.)
 - **Cloudflare R2**: un solo bucket `runfoto-prod` (Jair no creó `runfoto-dev`). Todo apunta ahí por ahora.
 - Cobertura global 85%. 215 tests (+1 slow de OCR excluido en CI).
+
+## Cambios introducidos en Fase 4
+- **Reconocimiento facial** (InsightFace `buffalo_l`, CPU): `apps/ml/face_recognition.py` con `extract_faces` (disco) y `embedding_from_bytes` (selfie en memoria). Embeddings 512-d normalizados L2.
+- **Búsqueda por selfie SÍNCRONA** (`/eventos/<slug>/buscar-selfie/`): el embedding del selfie se procesa EN MEMORIA y se descarta — NUNCA se persiste ni pasa por Celery/Redis (decisión de privacidad, ADR 0006). Matching pgvector con `CosineDistance`, threshold 0.55, agrupado por confianza (alta/media/baja).
+- **delete-my-data SÍNCRONO** (`/privacidad/borrar-mis-datos/`): extrae embedding en memoria, busca en TODOS los eventos (threshold 0.62 estricto), pasa sólo `photo_ids` (no biometría) a la task de borrado. Borra embeddings + bibs + R2 + Photo + AuditLog.
+- **Blur de menores**: caras estimadas <16 → blur automático del preview (original intacto); caras <22 → `Photo.needs_minor_review` para revisión del admin (Fase 5). Si el blur falla → `processing_failed` (no se aprueba). Decisión de Jair: doble umbral + red de seguridad humana.
+- **Retención 90 días**: `cleanup_old_embeddings` (Celery beat diario 3 AM) borra embeddings con `last_matched_at`>90d (o `created_at` si nunca matcheó). NO se desactiva sin migración + aprobación.
+- **pgvector HNSW** (ya creado en Fase 1): verificado que las queries lo usan vía `EXPLAIN` (`Index Scan using face_embedding_hnsw_cos`). ADR 0007.
+- **Banner de privacidad** en `base.html` (block desactivable en fullscreen). Página `/privacidad/` completa.
+- **Reglas de privacidad cumplidas**: selfie/embedding del usuario nunca persistido, nunca por Redis, nunca loggeado completo, IP siempre hasheada. Verificado por tests.
+- **Decisiones nuevas vs el prompt**: (1) selfie search + delete síncronos (el prompt los hacía con tasks; cambiado por privacidad — la biometría nunca toca el broker). (2) Campos nuevos `Photo.needs_minor_review` + `has_faces_detected` + status `processing_failed` (max_length status 16→24).
+- **Verificación E2E** (caras GAN reales + buffalo_l): same-person 0.96-1.0 vs different 0.19-0.28; búsqueda 4/4 sin falsos positivos en 10ms con HNSW. Extracción ~0.18s/foto.
+- **Deps nuevas**: insightface, onnxruntime, opencv-python-headless. El modelo buffalo_l (~280MB) se descarga en runtime el primer uso (pendiente pre-cachear en Dockerfile).
+- **Pendiente prod**: worker + beat en Railway (sin ellos, el procesamiento facial, delete-my-data y el cron de retención no corren en prod). Verificación se hizo con worker local.
+- Cobertura: 257 tests, ml/privacy/search 85-93%.

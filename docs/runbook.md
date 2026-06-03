@@ -228,6 +228,44 @@ e.photo_count = e.photos.filter(status="approved").count()
 e.save()
 ```
 
+## Cómo procesar una solicitud manual de borrado (Fase 4)
+
+Normalmente el usuario lo hace solo en `/privacidad/borrar-mis-datos/`. Si
+alguien lo pide por otro canal (WhatsApp, email) y tenés una foto suya:
+
+```bash
+railway run python manage.py shell
+```
+```python
+from apps.ml.face_recognition import embedding_from_bytes
+from apps.privacy.views import find_matching_photo_ids
+from apps.privacy.models import DataDeletionRequest, DeletionStatus
+from apps.privacy.tasks import delete_photos_for_request
+
+emb = embedding_from_bytes(open("/ruta/foto.jpg", "rb").read())
+ids = find_matching_photo_ids(emb.tolist())
+print(f"{len(ids)} fotos matchean")
+d = DataDeletionRequest.objects.create(
+    requester_ip_hash="manual", status=DeletionStatus.PROCESSING, matched_photo_count=len(ids)
+)
+delete_photos_for_request.delay(d.id, ids)   # requiere worker corriendo
+```
+
+## Cómo volver a un threshold anterior si hay quejas (Fase 4)
+
+Los umbrales son constantes en código (no DB):
+- Búsqueda: `SIMILARITY_THRESHOLD` en `apps/search/views.py`.
+- Borrado: `DELETION_THRESHOLD` en `apps/privacy/views.py`.
+- Menores: `MINOR_BLUR_AGE` / `MINOR_REVIEW_AGE` en `apps/photos/tasks.py`.
+
+Para revertir: editá la constante, commit, push, redeploy. **No requiere
+migración ni reprocesar embeddings** (el umbral se aplica en query-time).
+
+Para calibrar con datos reales:
+```bash
+python manage.py tune_threshold --selfie s.jpg --positives pos/ --negatives neg/
+```
+
 ## Backups
 
 > **Fase 0**: no aplica todavía (no hay datos en producción).

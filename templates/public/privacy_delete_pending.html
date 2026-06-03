@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Borrado en proceso" %} · {{ site_name }}{% endblock %}
+{% block privacy_banner %}{% endblock %}
+{% block body %}
+<main class="min-h-screen flex items-center justify-center px-6 py-14">
+  <div class="max-w-md w-full text-center">
+    <div class="mb-6 flex justify-center">{% include "_partials/wordmark.html" with size="30px" %}</div>
+    <div class="inline-grid place-items-center w-16 h-16 rounded-full bg-success/15 text-success mb-5">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>
+    </div>
+    <h1 class="font-display font-bold text-2xl mb-3">{% trans "Recibimos tu solicitud" %}</h1>
+    {% if matched_count %}
+    <p class="text-text-2 leading-relaxed mb-2">{% blocktrans count n=matched_count %}Encontramos {{ n }} foto tuya y la estamos borrando.{% plural %}Encontramos {{ n }} fotos tuyas y las estamos borrando.{% endblocktrans %}</p>
+    {% else %}
+    <p class="text-text-2 leading-relaxed mb-2">{% trans "No encontramos fotos asociadas a tu cara. Si tenías datos, ya no quedan." %}</p>
+    {% endif %}
+    <p class="font-mono text-[11px] text-text-3 mb-7">{% trans "Solicitud" %} #{{ request_id }}</p>
+    <a href="{% url 'core:index' %}" class="rf-ghost">{% trans "Volver al inicio" %}</a>
+  </div>
+</main>
+{% endblock %}
