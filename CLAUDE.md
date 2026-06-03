@@ -500,7 +500,7 @@ En la carpeta `reference/runfoto-design/` está el zip de Claude Design extraíd
 
 ---
 
-**Última actualización**: Fase 1 (modelos + admin custom). Actualizar este archivo al final de cada fase con aprendizajes y decisiones nuevas.
+**Última actualización**: Fase 2 (upload fotógrafo + OCR). Actualizar este archivo al final de cada fase con aprendizajes y decisiones nuevas.
 
 ## Cambios introducidos en Fase 1
 - Política de retención escalonada de eventos (§3) — nueva tabla con 4 ventanas temporales y el flag `permanent_archive`.
@@ -509,3 +509,14 @@ En la carpeta `reference/runfoto-design/` está el zip de Claude Design extraíd
 - `EncryptedCharField` custom en `apps/core/fields.py` usando `cryptography.fernet` (sin dep nueva — `cryptography` ya entra como transitiva).
 - Postgres: dev pg16 / prod pg18 (decisión documentada en §2). pgvector ≥0.7 anda en ambos.
 - Admin custom: `django-unfold` (ADR 0002).
+
+## Cambios introducidos en Fase 2
+- **Portal de fotógrafo** (`/u/<token>/`) sin cuenta, autenticado por token URL único. Validación del hash sha256 en CADA request (no se confía en sesiones). 410 (token muerto) vs 403 (límite de fotos) distinguidos.
+- **`UploadView` es `csrf_exempt`**: el token URL es la autenticación; no hay sesión que CSRF defienda. El rate limit por token + el hash sha256 son la defensa real. (Decisión nueva, no estaba en el plan.)
+- **Storage R2** (`apps/photos/storage.py`): wrapper boto3 con upload / signed URL (TTL 15 min) / delete / delete_many. Si `R2_ENDPOINT_URL` está vacío → usa default AWS (para tests con `moto`).
+- **Cloudflare R2**: un solo bucket `runfoto-prod` por ahora (Jair creó solo ese). Cuando haga falta separar dev/prod se crea `runfoto-dev`. Token con permiso "Object Read & Write" sobre el bucket.
+- **Imaging** (`apps/photos/imaging.py`): preview 1200px WebP q80 con watermark diagonal (texto repetido rotado -30°), thumbnail 400px WebP q75, extracción de EXIF.
+- **OCR** (ADR 0004): PaddleOCR primario + EasyOCR fallback. Heurística `is_bib_like` (1-6 chars, dígitos o letra+dígitos). Verificado E2E: detectó 10/10 dorsales sintéticos incl. alfanuméricos.
+- **Celery**: `process_photo` (EXIF + preview + thumb → encadena OCR) + `run_ocr_on_photo`. Autoretry exponencial. **El worker en Railway todavía NO existe** (CLI/MCP tiran Unauthorized al conectar repo; lo crea Jair desde dashboard). Verificación E2E de Fase 2 se hizo corriendo el worker localmente apuntado a Redis+DB+R2 de Railway.
+- **Deps nuevas**: paddleocr, paddlepaddle, easyocr (runtime); moto[s3] (dev). Imagen Docker ~3 GB (torch trae CUDA libs innecesarias — pendiente cambiar a `torch+cpu`). Worker necesita ≥1 GB RAM.
+- **Pendiente para producción real**: crear servicios `worker` y `beat` en Railway. Hasta entonces, las fotos subidas quedan en `status=processing` sin procesar.
