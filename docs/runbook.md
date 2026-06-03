@@ -302,9 +302,22 @@ python manage.py tune_threshold --selfie s.jpg --positives pos/ --negatives neg/
   falló`. El runtime lo baja igual (cubierto por `--timeout 120`). Re-deployar
   cuando el host del modelo vuelva lo vuelve a cachear. No es bloqueante.
 
-- **Web service con OOM / reinicios** → cada worker de gunicorn carga ~1.2 GB de
-  `buffalo_l` en memoria (la inferencia facial es síncrona en el proceso web por
-  privacidad, ADR 0006). Con `--workers 2` son ~2.4 GB. → El servicio `fotos`
-  necesita **≥3 GB RAM**. Si Railway lo mata por memoria, bajá a `--workers 1
-  --threads 4` en el `Dockerfile` (sacrifica algo de paralelismo de procesos
-  pero mantiene concurrencia por threads).
+- **Búsqueda por selfie deshabilitada en prod (`503 no disponible`)** → es a
+  propósito, vía `FACE_SEARCH_ENABLED=false`. **Por qué**: la inferencia facial
+  es síncrona en el proceso web (por privacidad, ADR 0006); cargar `buffalo_l`
+  necesita **~1.1 GB** de RAM aún optimizado (1 worker + sólo los sub-modelos
+  detection/recognition/genderage). El servicio `fotos` está **capado a 1 GB**,
+  así que cargar el modelo OOM-killeaba el único worker (`Worker was sent
+  SIGKILL! Perhaps out of memory?`) → 502 que tiraba TODO el sitio unos segundos.
+  El flag corta antes de tocar el modelo y muestra una página amable.
+  **Para re-habilitar**, elegí una:
+  1. Subir la RAM del servicio `fotos` a ≥2 GB (Railway → servicio → Settings →
+     límites, o `railway scale`) y poner `FACE_SEARCH_ENABLED=true`. La RAM se
+     factura por uso real (idlea en ~150 MB, sube ~1.1 GB sólo durante una
+     búsqueda), así que el costo extra es chico.
+  2. Cambiar a un modelo más liviano (`buffalo_s`) en `apps/ml/face_recognition.py`
+     (`MODEL_NAME`) — entra en 1 GB pero baja algo la precisión y hay que
+     recalibrar los umbrales con `tune_threshold`.
+  3. Mover la inferencia a un microservicio aparte con su propia RAM.
+  El umbral, el blur de menores y el matching ya están verificados (local) — sólo
+  falta la RAM. Local/dev tiene el flag en `true` y la búsqueda anda normal.

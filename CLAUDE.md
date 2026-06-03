@@ -500,7 +500,7 @@ En la carpeta `reference/runfoto-design/` está el zip de Claude Design extraíd
 
 ---
 
-**Última actualización**: Fase 3 (galería pública + búsqueda por dorsal). Actualizar este archivo al final de cada fase con aprendizajes y decisiones nuevas.
+**Última actualización**: Fase 4 (reconocimiento facial + búsqueda por selfie). Actualizar este archivo al final de cada fase con aprendizajes y decisiones nuevas.
 
 ## Cambios introducidos en Fase 1
 - Política de retención escalonada de eventos (§3) — nueva tabla con 4 ventanas temporales y el flag `permanent_archive`.
@@ -545,6 +545,9 @@ En la carpeta `reference/runfoto-design/` está el zip de Claude Design extraíd
 - **Reglas de privacidad cumplidas**: selfie/embedding del usuario nunca persistido, nunca por Redis, nunca loggeado completo, IP siempre hasheada. Verificado por tests.
 - **Decisiones nuevas vs el prompt**: (1) selfie search + delete síncronos (el prompt los hacía con tasks; cambiado por privacidad — la biometría nunca toca el broker). (2) Campos nuevos `Photo.needs_minor_review` + `has_faces_detected` + status `processing_failed` (max_length status 16→24).
 - **Verificación E2E** (caras GAN reales + buffalo_l): same-person 0.96-1.0 vs different 0.19-0.28; búsqueda 4/4 sin falsos positivos en 10ms con HNSW. Extracción ~0.18s/foto.
-- **Deps nuevas**: insightface, onnxruntime, opencv-python-headless. El modelo buffalo_l (~280MB) se descarga en runtime el primer uso (pendiente pre-cachear en Dockerfile).
-- **Pendiente prod**: worker + beat en Railway (sin ellos, el procesamiento facial, delete-my-data y el cron de retención no corren en prod). Verificación se hizo con worker local.
-- Cobertura: 257 tests, ml/privacy/search 85-93%.
+- **Deps nuevas**: insightface, onnxruntime, opencv-python-headless. El modelo buffalo_l (~280MB) se **pre-cachea en build-time** a `/opt/insightface` (`INSIGHTFACE_ROOT`), best-effort para no acoplar el deploy a la descarga externa.
+- **Bug de prod #1 (cv2)**: el POST de selfie daba 500 en Railway (no en local) por `ImportError: libxcb.so.1` — InsightFace arrastra `opencv-python` (full, no headless) y su `cv2.so` necesita libs de sistema que la imagen slim no traía. Fix en `Dockerfile`: instalar `libgl1 libglib2.0-0 libgomp1 libxcb1 libsm6 libxext6 libxrender1`. También se pre-cachea buffalo_l en build-time y gunicorn va con `--timeout 120`.
+- **Bug de prod #2 (RAM) — NO resuelto, decisión de Jair pendiente**: el servicio `fotos` está **capado a 1 GB** y cargar buffalo_l necesita **~1.1 GB** aún optimizado (`--workers 1` + `allowed_modules=['detection','recognition','genderage']`, sin los 2 modelos de landmarks que no usamos). El OOM SIGKILLeaba el único worker → 502 que tiraba todo el sitio. **Mitigación aplicada**: feature flag `FACE_SEARCH_ENABLED` (default `true` local, `false` en Railway prod) que corta antes de cargar el modelo y muestra `public/face_unavailable.html` (503). Tab "Por selfie" oculto en prod. Para re-habilitar: subir RAM a ≥2 GB / cambiar a buffalo_s / microservicio aparte (ver runbook §Incidentes). **Jair eligió "dejarlo así por ahora"** (la búsqueda por dorsal, método principal, anda perfecto).
+- **Verificación local del matching real**: con `allowed_modules`, misma persona 0.963 vs distinta 0.199 — el reconocimiento NO se degrada sin los landmarks (usa los 5 keypoints del detector). Embedding 512-d, edad y género OK.
+- **Pendiente prod**: (1) worker + beat en Railway (sin ellos, el procesamiento facial de uploads, el borrado de delete-my-data y el cron de retención no corren en prod); (2) la RAM del web para re-habilitar `FACE_SEARCH_ENABLED`. Verificación de la pipeline se hizo con worker local.
+- Cobertura: 263 tests, ml/privacy/search 85-93%.

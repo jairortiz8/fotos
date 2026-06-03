@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 
 from apps.events.models import EventStatus
@@ -150,3 +150,46 @@ def test_selfie_search_get_renders_form(client: Client) -> None:
     response = client.get(reverse("events:selfie_search", args=[event.slug]))
     assert response.status_code == 200
     assert b"no se guarda" in response.content  # banner de privacidad
+
+
+# ---------------------------------------------------------------------------
+# FACE_SEARCH_ENABLED=False (prod sin RAM para buffalo_l) — degradación amable
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+@override_settings(FACE_SEARCH_ENABLED=False)
+def test_selfie_search_get_disabled_shows_notice(client: Client) -> None:
+    event = EventFactory(status=EventStatus.LIVE)
+    response = client.get(reverse("events:selfie_search", args=[event.slug]))
+    assert response.status_code == 503
+    assert b"no disponible" in response.content
+    assert b"no se guarda" not in response.content  # NO es el form
+
+
+@pytest.mark.django_db
+@override_settings(FACE_SEARCH_ENABLED=False)
+def test_selfie_search_post_disabled_never_loads_model(client: Client) -> None:
+    """Lo crítico: con el flag apagado, el POST NO toca el modelo (evita el OOM)."""
+    event = EventFactory(status=EventStatus.LIVE)
+    url = reverse("events:selfie_search", args=[event.slug])
+    with patch("apps.ml.face_recognition.embedding_from_bytes", new=MagicMock()) as m:
+        response = client.post(url, {"selfie": _selfie()})
+    assert response.status_code == 503
+    m.assert_not_called()
+
+
+@pytest.mark.django_db
+@override_settings(FACE_SEARCH_ENABLED=False)
+def test_gallery_hides_selfie_tab_when_disabled(client: Client) -> None:
+    event = EventFactory(status=EventStatus.LIVE)
+    ApprovedPhotoFactory(event=event)
+    response = client.get(reverse("events:gallery", args=[event.slug]))
+    assert response.status_code == 200
+    assert b"buscar-selfie" not in response.content  # tab oculto
+
+
+@pytest.mark.django_db
+def test_gallery_shows_selfie_tab_when_enabled(client: Client) -> None:
+    event = EventFactory(status=EventStatus.LIVE)
+    ApprovedPhotoFactory(event=event)
+    response = client.get(reverse("events:gallery", args=[event.slug]))
+    assert b"buscar-selfie" in response.content  # default: tab visible

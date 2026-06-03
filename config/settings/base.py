@@ -46,6 +46,11 @@ env = environ.Env(
     R2_PUBLIC_BASE_URL=(str, ""),
     # Upload limits (Fase 2)
     PHOTO_UPLOAD_MAX_MB=(int, 15),
+    # Búsqueda por selfie (Fase 4). El modelo buffalo_l necesita >1GB de RAM
+    # al cargar. En el dyno de prod (capado a 1GB) se deshabilita poniendo esto
+    # en False hasta subir la RAM o cambiar de modelo (decisión pendiente).
+    # Local/dev queda en True (la RAM alcanza).
+    FACE_SEARCH_ENABLED=(bool, True),
 )
 
 # .env si existe
@@ -66,6 +71,9 @@ CSRF_TRUSTED_ORIGINS = env("CSRF_TRUSTED_ORIGINS")
 # ----------------------------------------------------------------------------
 SITE_NAME = env("SITE_NAME")
 SITE_DOMAIN = env("SITE_DOMAIN")
+
+# Búsqueda por selfie / borrado por selfie (Fase 4). Ver nota en env() arriba.
+FACE_SEARCH_ENABLED = env("FACE_SEARCH_ENABLED")
 
 # ----------------------------------------------------------------------------
 # Apps

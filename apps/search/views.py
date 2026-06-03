@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 
+from django.conf import settings
 from django.db.models import F, Min
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
@@ -34,6 +35,20 @@ HIGH_CONFIDENCE = 0.80
 MED_CONFIDENCE = 0.60
 
 
+def _face_unavailable(request: HttpRequest, event: Event | None, *, mode: str) -> HttpResponse:
+    """Respuesta amable cuando la búsqueda facial está apagada (FACE_SEARCH_ENABLED).
+
+    `mode`: "search" (buscar por selfie) o "delete" (borrar mis datos).
+    No carga el modelo — es seguro de servir en el dyno de 1GB.
+    """
+    return render(
+        request,
+        "public/face_unavailable.html",
+        {"event": event, "mode": mode},
+        status=503,
+    )
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class SelfieSearchView(View):
     """GET: formulario de selfie. POST: procesa y devuelve coincidencias."""
@@ -42,6 +57,8 @@ class SelfieSearchView(View):
         event = get_object_or_404(Event, slug=slug)
         if not self._can_search(event):
             raise Http404
+        if not settings.FACE_SEARCH_ENABLED:
+            return _face_unavailable(request, event, mode="search")
         return render(
             request,
             "public/selfie_search.html",
@@ -55,6 +72,12 @@ class SelfieSearchView(View):
         event = get_object_or_404(Event, slug=slug)
         if not self._can_search(event):
             raise Http404
+
+        # Cortamos ANTES de cargar buffalo_l: en prod (dyno 1GB) cargar el
+        # modelo OOM-killea el worker. El flag lo mantiene apagado hasta resolver
+        # la RAM. Local/dev queda en True.
+        if not settings.FACE_SEARCH_ENABLED:
+            return _face_unavailable(request, event, mode="search")
 
         if not check_selfie_rate_limit(request):
             return render(request, "public/rate_limited.html", {"event": event}, status=429)

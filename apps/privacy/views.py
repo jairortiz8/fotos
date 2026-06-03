@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 
+from django.conf import settings
 from django.db.models import Min
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
@@ -35,12 +36,28 @@ class PrivacyPolicyView(TemplateView):
     template_name = "public/privacy_policy.html"
 
 
+def _face_unavailable(request: HttpRequest) -> HttpResponse:
+    """Borrado por selfie apagado (FACE_SEARCH_ENABLED). No carga el modelo."""
+    return render(
+        request,
+        "public/face_unavailable.html",
+        {"event": None, "mode": "delete"},
+        status=503,
+    )
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class DeleteMyDataView(View):
     def get(self, request: HttpRequest) -> HttpResponse:
+        if not settings.FACE_SEARCH_ENABLED:
+            return _face_unavailable(request)
         return render(request, "public/privacy_delete.html")
 
     def post(self, request: HttpRequest) -> HttpResponse:
+        # Cortamos antes de cargar buffalo_l (mismo OOM que la búsqueda).
+        if not settings.FACE_SEARCH_ENABLED:
+            return _face_unavailable(request)
+
         if not check_deletion_rate_limit(request):
             return render(request, "public/rate_limited.html", status=429)
 

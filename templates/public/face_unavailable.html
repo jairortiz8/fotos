@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}{% if mode == "delete" %}{% trans "Borrar mis datos" %}{% else %}{% trans "Búsqueda por selfie" %}{% endif %} · {{ site_name }}{% endblock %}
+{% block body %}
+<main class="min-h-screen flex items-center justify-center px-6 py-14">
+  <div class="max-w-md w-full text-center">
+    <div class="mb-6 flex justify-center">{% include "_partials/wordmark.html" with size="30px" %}</div>
+    <div class="relative inline-grid place-items-center w-24 h-24 rounded-full mb-5" style="background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.18); color: #F59E0B;">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+    </div>
+    {% if mode == "delete" %}
+      <h1 class="font-display font-bold text-2xl mb-3">{% trans "Borrado por selfie no disponible" %}</h1>
+      <p class="text-text-2 leading-relaxed mb-7">{% trans "Por ahora el borrado automático por selfie está desactivado. Si querés que borremos tus fotos, escribinos y lo hacemos manualmente." %}</p>
+      <div class="flex flex-wrap gap-3 justify-center">
+        <a href="{% url 'privacy:policy' %}" class="rf-ghost">{% trans "Ver política de privacidad" %}</a>
+        <a href="{% url 'core:index' %}" class="rf-ghost">{% trans "Volver al inicio" %}</a>
+      </div>
+    {% else %}
+      <h1 class="font-display font-bold text-2xl mb-3">{% trans "Búsqueda por selfie no disponible" %}</h1>
+      <p class="text-text-2 leading-relaxed mb-7">{% trans "Estamos afinando la búsqueda por selfie y la tenemos pausada por ahora. Mientras tanto, podés encontrar tus fotos buscando por tu número de dorsal." %}</p>
+      <div class="flex flex-wrap gap-3 justify-center">
+        {% if event %}
+          <a href="{% url 'events:gallery' slug=event.slug %}" class="rf-cta">{% trans "Buscar por dorsal" %}</a>
+        {% else %}
+          <a href="{% url 'core:index' %}" class="rf-cta">{% trans "Volver al inicio" %}</a>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+</main>
+{% endblock %}

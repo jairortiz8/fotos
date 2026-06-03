@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 from moto import mock_aws
 
@@ -237,3 +237,20 @@ def test_delete_view_rate_limited(r2) -> None:  # type: ignore[no-untyped-def]
             if last == 429:
                 break
     assert last == 429
+
+
+@pytest.mark.django_db
+@override_settings(FACE_SEARCH_ENABLED=False)
+def test_delete_view_post_disabled_never_loads_model() -> None:
+    """Con el flag apagado el borrado por selfie no carga buffalo_l (evita OOM)."""
+    from unittest.mock import MagicMock
+
+    client = Client()
+    with patch("apps.ml.face_recognition.embedding_from_bytes", new=MagicMock()) as m:
+        response = client.post(
+            reverse("privacy:delete_my_data"),
+            {"selfie": _selfie(), "confirmed": "yes"},
+        )
+    assert response.status_code == 503
+    assert b"no disponible" in response.content
+    m.assert_not_called()
