@@ -59,6 +59,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # cv2 (dep de InsightFace) necesita estas libs para importar; sin ellas
+      # los tests de face_recognition fallan con "libGL.so.1 / libxcb.so.1:
+      # cannot open shared object file" (mismo problema que el Dockerfile).
+      - name: Install system libs for OpenCV/onnxruntime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libglib2.0-0 libgomp1 libxcb1 libsm6 libxext6 libxrender1
+
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
