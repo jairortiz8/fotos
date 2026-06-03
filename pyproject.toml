@@ -59,10 +59,15 @@ dev = [
     "pytest-cov>=5.0",
     "factory-boy>=3.3",
     # --- Lint / format / typing ---
+    # mypy + django-stubs van PINEADOS (==): con deps sin pinear, cada release
+    # de mypy/django-stubs cambiaba qué `# type: ignore` son necesarios y, con
+    # `warn_unused_ignores=true`, rompía el CI sin tocar el código (pasó en Fase
+    # 3 y 4). Pinear el type-checker hace el CI determinístico. Para subir la
+    # versión: bumpear acá a propósito y correr mypy local antes de pushear.
     "ruff>=0.6",
     "black>=24.8",
-    "mypy>=1.11",
-    "django-stubs[compatible-mypy]>=5.0",
+    "mypy==2.1.0",
+    "django-stubs[compatible-mypy]==6.0.5",
     # --- Workflow ---
     "pre-commit>=3.8",
     "django-debug-toolbar>=4.4",

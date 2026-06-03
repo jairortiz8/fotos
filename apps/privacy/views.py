@@ -133,4 +133,4 @@ def find_matching_photo_ids(
         .order_by("min_distance")
         .values_list("id", flat=True)[:limit]
     )
-    return list(qs)  # type: ignore[arg-type]
+    return list(qs)
