@@ -28,6 +28,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django_ratelimit.decorators import ratelimit
 
 from apps.core.models import AuditLog, anonymize_ip
+from apps.core.utils import get_client_ip
 from apps.photographers.models import PhotographerLink
 from apps.photos.models import Photo, PhotoStatus
 from apps.photos.storage import (
@@ -43,15 +44,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def get_client_ip(request: HttpRequest) -> str | None:
-    """Extrae IP del cliente respetando X-Forwarded-For (Railway está detrás de proxy)."""
-    xff = request.META.get("HTTP_X_FORWARDED_FOR", "").strip()
-    if xff:
-        # XFF puede tener "client, proxy1, proxy2" — nos quedamos con el primero.
-        return xff.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR")
-
-
 def hash_token(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
 

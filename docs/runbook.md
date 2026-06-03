@@ -181,6 +181,53 @@ públicamente.
 
 ---
 
+## Cómo regenerar el cache de búsquedas (Fase 3)
+
+Las búsquedas por dorsal se cachean 5 minutos en Redis con la key
+`search:bib:<event_id>:<DORSAL>`. Si aprobás/rechazás fotos y querés que las
+búsquedas reflejen el cambio **ya** (sin esperar los 5 min):
+
+```bash
+# Borrar el cache de un dorsal puntual
+railway run python manage.py shell
+```
+```python
+from django.core.cache import cache
+cache.delete("search:bib:42:1042")   # evento 42, dorsal 1042
+```
+
+O para limpiar TODO el cache (también resetea rate limits — usar con cuidado):
+```python
+from django.core.cache import cache
+cache.clear()
+```
+
+> Nota: `cache.clear()` borra también los contadores de rate limiting. En
+> producción, preferí borrar keys puntuales.
+
+## Cómo aprobar fotos para que aparezcan en la galería
+
+Las fotos suben en `status=pending_review`. La galería pública sólo muestra
+`approved`. Para aprobar:
+
+- **Vía admin**: `/admin/photos/photo/` → seleccionar → no hay action bulk
+  todavía (llega en Fase 5). Por ahora, editar cada foto y cambiar el estado.
+- **Vía shell** (bulk):
+```python
+from apps.photos.models import Photo, PhotoStatus
+from django.utils import timezone
+Photo.objects.filter(event__slug="mi-evento", status="pending_review").update(
+    status=PhotoStatus.APPROVED, approved_at=timezone.now(), approved_by_admin=True
+)
+```
+Después actualizá el contador del evento:
+```python
+from apps.events.models import Event
+e = Event.objects.get(slug="mi-evento")
+e.photo_count = e.photos.filter(status="approved").count()
+e.save()
+```
+
 ## Backups
 
 > **Fase 0**: no aplica todavía (no hay datos en producción).

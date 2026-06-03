@@ -156,4 +156,150 @@
     margin-left: 0.08em;
     transform: translateY(0.02em);
   }
+
+  /* --- CTA primario (naranja, solo acciones) --- */
+  .rf-cta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    background: var(--color-brand);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-control);
+    cursor: pointer;
+    padding: 0.75rem 1.125rem;
+    font-size: 0.75rem;
+    transition: opacity 0.15s;
+  }
+  .rf-cta:hover {
+    opacity: 0.9;
+  }
+  .rf-cta--lg {
+    padding: 0.875rem 1.375rem;
+    font-size: 0.8125rem;
+  }
+  .rf-cta--full {
+    width: 100%;
+  }
+
+  /* --- Ghost (secundario, borde) --- */
+  .rf-ghost {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    background: transparent;
+    color: var(--color-text-1);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-control);
+    cursor: pointer;
+    padding: 0.75rem 1.125rem;
+    font-size: 0.75rem;
+    transition: border-color 0.15s;
+  }
+  .rf-ghost:hover {
+    border-color: var(--color-text-3);
+  }
+
+  /* --- Pill (badge con tono) --- */
+  .rf-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-family: var(--font-body);
+    font-weight: 500;
+    font-size: 0.625rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 0.25rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid;
+  }
+  .rf-pill__dot {
+    width: 0.375rem;
+    height: 0.375rem;
+    border-radius: 999px;
+    background: currentColor;
+  }
+  .rf-pill--cyan {
+    background: rgba(0, 212, 255, 0.1);
+    color: var(--color-data);
+    border-color: rgba(0, 212, 255, 0.22);
+  }
+  .rf-pill--orange {
+    background: rgba(252, 82, 0, 0.12);
+    color: var(--color-brand);
+    border-color: rgba(252, 82, 0, 0.3);
+  }
+  .rf-pill--green {
+    background: rgba(16, 185, 129, 0.12);
+    color: var(--color-success);
+    border-color: rgba(16, 185, 129, 0.28);
+  }
+  .rf-pill--amber {
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--color-warning);
+    border-color: rgba(245, 158, 11, 0.28);
+  }
+  .rf-pill--red {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--color-danger);
+    border-color: rgba(239, 68, 68, 0.28);
+  }
+  .rf-pill--neutral {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--color-text-2);
+    border-color: var(--color-border);
+  }
+
+  /* --- Bib badge (dorsal, mono cyan) --- */
+  .rf-bib {
+    display: inline-flex;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 0.625rem;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    padding: 0.1875rem 0.375rem;
+    border-radius: var(--radius-badge);
+    background: rgba(0, 212, 255, 0.12);
+    color: var(--color-data);
+    border: 1px solid rgba(0, 212, 255, 0.25);
+  }
+  .rf-bib--lg {
+    font-size: 0.8125rem;
+    padding: 0.3125rem 0.625rem;
+  }
+
+  /* --- Pulsing dot (live indicator) --- */
+  .rf-pulse {
+    animation: rfpulse 1.6s ease-out infinite;
+  }
+}
+
+@keyframes rfpulse {
+  0% {
+    box-shadow: 0 0 0 0 currentColor;
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* Hide Alpine elements until initialized */
+[x-cloak] {
+  display: none !important;
 }

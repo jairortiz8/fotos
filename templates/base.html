@@ -7,6 +7,14 @@
   <title>{% block title %}{{ site_name }}{% endblock %}</title>
   <meta name="description" content="{% block description %}{% blocktrans with site_name=site_name %}{{ site_name }} — plataforma gratuita de fotos de carrera.{% endblocktrans %}{% endblock %}">
 
+  {# Open Graph para compartir en redes #}
+  <meta property="og:site_name" content="{{ site_name }}">
+  <meta property="og:type" content="{% block og_type %}website{% endblock %}">
+  <meta property="og:title" content="{% block og_title %}{{ site_name }}{% endblock %}">
+  <meta property="og:description" content="{% block og_description %}{% trans 'Encontrá tus fotos de carrera.' %}{% endblock %}">
+  {% block og_image %}{% endblock %}
+  <meta name="twitter:card" content="summary_large_image">
+
   {# Preload fuentes críticas — auto-hospedadas para no depender de Google #}
   <link rel="preload" as="font" type="font/woff2" crossorigin
         href="{% static 'fonts/inter-latin-400-normal.woff2' %}">

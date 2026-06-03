@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Foto" %} #{{ photo.id }} · {{ event.name }}{% endblock %}
+{% block og_type %}article{% endblock %}
+
+{% block body %}
+<div class="fixed inset-0 z-50" style="background: #050506;"
+     x-data="lightbox()"
+     @keydown.escape.window="close()"
+     @keydown.arrow-left.window="go(prevUrl)"
+     @keydown.arrow-right.window="go(nextUrl)">
+
+  {% include "public/_lightbox_content.html" %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function lightbox() {
+  return {
+    prevUrl: '{% if prev_photo %}{% url "events:lightbox" slug=event.slug photo_id=prev_photo.id %}{% if bib_filter %}?bib={{ bib_filter }}{% endif %}{% endif %}',
+    nextUrl: '{% if next_photo %}{% url "events:lightbox" slug=event.slug photo_id=next_photo.id %}{% if bib_filter %}?bib={{ bib_filter }}{% endif %}{% endif %}',
+    go(url) { if (url) window.location.href = url; },
+    close() { window.location.href = '{% url "events:gallery" slug=event.slug %}{% if bib_filter %}?bib={{ bib_filter }}{% endif %}'; },
+  };
+}
+</script>
+{% endblock %}

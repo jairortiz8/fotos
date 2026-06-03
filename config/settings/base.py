@@ -80,6 +80,7 @@ DJANGO_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.sitemaps",
 ]
 
 THIRD_PARTY_APPS = [
@@ -182,7 +183,12 @@ CELERY_TIMEZONE = env("TIME_ZONE")
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 60 * 30  # 30 min
 CELERY_BEAT_SCHEDULE: dict[str, dict] = {
-    # Se llenan en fases posteriores (retention de embeddings, cleanup links, etc.)
+    # Borra ZIPs expirados de R2 cada hora (Fase 3).
+    "cleanup-expired-zips": {
+        "task": "downloads.cleanup_expired_zips",
+        "schedule": 60 * 60,  # cada hora
+    },
+    # Fases posteriores: retention de embeddings, cleanup de links, etc.
 }
 
 # ----------------------------------------------------------------------------

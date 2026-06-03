@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ event.name }} · {% trans "Galería cerrada" %}{% endblock %}
+
+{% block body %}
+<div class="min-h-screen">
+  <header class="flex items-center justify-between px-5 md:px-10 py-3.5 border-b border-border">
+    <a href="{% url 'core:index' %}">{% include "_partials/wordmark.html" with size="18px" %}</a>
+  </header>
+
+  <section class="px-6 md:px-10 pt-9 pb-7" style="background: linear-gradient(180deg, #1a1418 0%, #0a0a0b 100%);">
+    <span class="font-mono text-[10px] text-text-3 tracking-[0.1em] uppercase">{{ event.date|date:"d M Y" }}</span>
+    <h1 class="font-display font-black uppercase tracking-tight leading-[0.9] mt-2" style="font-size: clamp(2rem, 8vw, 3.5rem);">{{ event.name }}</h1>
+  </section>
+
+  <div class="px-6 py-14 flex flex-col items-center text-center">
+    <span class="rf-pill rf-pill--amber mb-6">{% trans "Galería cerrada al público" %}</span>
+    <h2 class="font-display font-bold text-xl md:text-2xl max-w-lg">{% trans "Esta galería ya no se muestra completa." %}</h2>
+    <p class="text-text-2 mt-3 max-w-md leading-relaxed text-sm">{% trans "Para ver tus fotos, buscá por tu número de dorsal." %}</p>
+
+    <form method="get" action="{% url 'events:gallery' slug=event.slug %}" class="flex flex-col sm:flex-row gap-3 mt-7 w-full max-w-md">
+      <div class="flex-1 flex items-center gap-2.5 bg-ink-0 border border-border rounded-lg px-3.5 py-3">
+        <span class="font-mono font-semibold text-data text-sm">#</span>
+        <input name="bib" inputmode="numeric" autocomplete="off" placeholder="{% trans 'Tu número de dorsal' %}"
+               class="bg-transparent border-0 outline-none text-text-1 text-sm flex-1 placeholder:text-text-3 font-mono">
+      </div>
+      <button type="submit" class="rf-cta">{% trans "Buscar" %}</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

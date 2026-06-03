@@ -1,6 +1,6 @@
-{# Partial HTMX para una fila de la cola tras un upload exitoso.
-   Hoy el flow principal es Alpine (XHR + state local); este partial se devuelve
-   sólo si el cliente manda `HX-Request: true`. #}
+{% comment %}Partial HTMX para una fila de la cola tras un upload exitoso.
+Hoy el flow principal es Alpine (XHR + state local); este partial se devuelve
+sólo si el cliente manda `HX-Request: true`.{% endcomment %}
 {% load i18n %}
 <div class="grid grid-cols-[52px_1fr_200px_140px] items-center gap-4 p-4 border-b border-border last:border-b-0"
      id="upload-row-{{ photo.id }}">

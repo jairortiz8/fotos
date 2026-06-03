@@ -1,0 +1,11 @@
+{# Partial HTMX de estado del ZIP (polling alternativo a la versión Alpine/fetch). #}
+{% load i18n %}
+<div {% if download.status == 'pending' or download.status == 'processing' %}hx-get="{% url 'downloads:status' download_id=download.id %}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  {% if download.status == 'ready' %}
+    <a href="{{ download.download_url }}" class="rf-cta rf-cta--full">{% trans "Guardar ZIP" %} ({{ download.total_size_mb }} MB)</a>
+  {% elif download.status == 'failed' %}
+    <p class="text-danger text-sm">{% trans "Error generando el ZIP." %}</p>
+  {% else %}
+    <p class="font-mono text-[11px] text-text-3">{% trans "Preparando..." %}</p>
+  {% endif %}
+</div>

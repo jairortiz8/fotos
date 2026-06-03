@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Sin resultados" %} · {{ event.name }}{% endblock %}
+
+{% block body %}
+<div class="min-h-screen">
+  <header class="flex items-center justify-between px-5 md:px-10 py-3.5 border-b border-border">
+    <a href="{% url 'core:index' %}">{% include "_partials/wordmark.html" with size="18px" %}</a>
+    <a href="{% url 'events:gallery' slug=event.slug %}" class="text-[12px] text-text-2 hover:text-text-1 transition">{% trans "Volver a la galería" %}</a>
+  </header>
+
+  <div class="px-6 py-16 flex flex-col items-center text-center">
+    <div class="relative w-24 h-24 rounded-full grid place-items-center mb-6 text-data"
+         style="background: rgba(0,212,255,0.08); border: 1px solid rgba(0,212,255,0.15);">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <span class="absolute -top-1.5 -right-1.5 w-7 h-7 rounded-full grid place-items-center text-xs font-semibold bg-ink-2 border border-border text-text-1">0</span>
+    </div>
+
+    <h2 class="font-display font-extrabold text-2xl md:text-3xl tracking-tight max-w-xl">
+      {% blocktrans %}No encontramos fotos para el dorsal{% endblocktrans %}
+      <span class="text-data font-mono">#{{ bib_query }}</span>
+    </h2>
+    <p class="text-text-2 mt-3 max-w-md leading-relaxed text-sm">
+      {% trans "Los fotógrafos todavía pueden estar subiendo fotos del evento. Probá de nuevo en unos minutos." %}
+    </p>
+
+    <div class="flex flex-wrap gap-3 justify-center mt-7">
+      <a href="{% url 'events:gallery' slug=event.slug %}" class="rf-ghost">{% trans "Volver a la galería" %}</a>
+    </div>
+
+    {% if similar_bibs %}
+    <div class="mt-10 bg-ink-1 border border-border rounded-xl px-5 py-4 max-w-md w-full text-left">
+      <div class="flex items-center gap-2.5 mb-3">
+        <span class="rf-pill rf-pill--amber">OCR</span>
+        <span class="text-[13px] font-medium">{% trans "¿Quizá quisiste decir...?" %}</span>
+      </div>
+      <p class="text-[12px] text-text-2 mb-3.5">{% trans "Estos dorsales tienen lectura similar y fueron detectados en este evento:" %}</p>
+      <div class="flex flex-wrap gap-2">
+        {% for n in similar_bibs %}
+        <a href="{% url 'events:gallery' slug=event.slug %}?bib={{ n }}"
+           class="font-mono font-semibold text-sm text-data px-4 py-2.5 rounded-lg tracking-[0.05em] hover:bg-data/10 transition"
+           style="background: #0e0e10; border: 1px solid rgba(0,212,255,0.25);">#{{ n }}</a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

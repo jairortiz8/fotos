@@ -1,1 +1,204 @@
-# Create your views here.
+"""Vistas públicas de eventos: landing + galería + búsqueda por dorsal."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from django.core.cache import cache
+from django.core.paginator import Paginator
+from django.db.models import F
+from django.http import Http404, HttpRequest, HttpResponse
+from django.shortcuts import get_object_or_404, render
+from django.views import View
+from django.views.generic import TemplateView
+
+from apps.core.utils import (
+    check_bib_specific_rate_limit,
+    check_general_search_rate_limit,
+    generate_ocr_variants,
+    is_valid_bib_format,
+    normalize_bib_query,
+)
+from apps.events.models import Event, EventStatus, EventVisibility
+from apps.photos.models import Bib, Photo, PhotoStatus
+
+GALLERY_PAGE_SIZE = 60
+SEARCH_CACHE_TTL = 300  # 5 minutos
+MAX_SEARCH_RESULTS = 200
+
+# Estados en los que la galería pública (grid completo) está visible.
+PUBLIC_GALLERY_STATUSES = {EventStatus.UPCOMING, EventStatus.LIVE, EventStatus.PUBLIC_CLOSED}
+# Estados que aparecen listados en el home.
+HOME_LISTED_STATUSES = {EventStatus.UPCOMING, EventStatus.LIVE, EventStatus.PUBLIC_CLOSED}
+
+
+# ---------------------------------------------------------------------------
+# HomeView — landing pública
+# ---------------------------------------------------------------------------
+class HomeView(TemplateView):
+    template_name = "public/home.html"
+
+    def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
+        ctx = super().get_context_data(**kwargs)
+        events = list(
+            Event.objects.filter(
+                visibility=EventVisibility.PUBLIC,
+                status__in=HOME_LISTED_STATUSES,
+            ).order_by("-date")[:12]
+        )
+        ctx["events"] = events
+        ctx["live_count"] = sum(1 for e in events if e.status == EventStatus.LIVE)
+        return ctx
+
+
+# ---------------------------------------------------------------------------
+# EventGalleryView — galería + búsqueda por dorsal
+# ---------------------------------------------------------------------------
+class EventGalleryView(View):
+    def get(self, request: HttpRequest, slug: str) -> HttpResponse:
+        event = get_object_or_404(Event, slug=slug)
+
+        # Visibilidad privada o evento ya borrado → 404.
+        if event.visibility == EventVisibility.PRIVATE or event.status in {
+            EventStatus.DRAFT,
+            EventStatus.DELETED,
+        }:
+            raise Http404
+
+        # Archivado / pendiente de borrado → 404 amigable público.
+        if event.status in {EventStatus.ARCHIVED, EventStatus.PENDING_DELETION}:
+            return render(request, "public/event_archived.html", {"event": event}, status=404)
+
+        bib_query = request.GET.get("bib", "").strip()
+        if bib_query:
+            return self._handle_bib_search(request, event, bib_query)
+
+        # Sin query: si la galería pública está cerrada (public_closed o
+        # searchable_only o public_until pasado), mostramos pantalla de "cerrada".
+        gallery_open = event.is_public() and event.status in PUBLIC_GALLERY_STATUSES
+        if not gallery_open:
+            if event.is_searchable():
+                return render(request, "public/event_closed.html", {"event": event})
+            raise Http404
+
+        return self._render_gallery(request, event)
+
+    # ----- Galería completa -----
+    def _render_gallery(self, request: HttpRequest, event: Event) -> HttpResponse:
+        photos_qs = (
+            Photo.objects.filter(event=event, status=PhotoStatus.APPROVED)
+            .prefetch_related("bibs")
+            .order_by("-capture_time", "-created_at")
+        )
+        paginator = Paginator(photos_qs, GALLERY_PAGE_SIZE)
+        page = paginator.get_page(request.GET.get("page", 1))
+
+        ctx = {
+            "event": event,
+            "photos": page,
+            "page_obj": page,
+            "total_photos": paginator.count,
+            "photographer_count": event.photographer_links.count(),
+        }
+        # HTMX infinite-scroll: solo el grid + el sentinel de la próxima página.
+        if getattr(request, "htmx", False):
+            return render(request, "public/_photo_grid.html", ctx)
+        return render(request, "public/event_gallery.html", ctx)
+
+    # ----- Búsqueda por dorsal -----
+    def _handle_bib_search(
+        self, request: HttpRequest, event: Event, bib_query: str
+    ) -> HttpResponse:
+        bib_query = normalize_bib_query(bib_query)
+
+        if not is_valid_bib_format(bib_query):
+            return render(
+                request,
+                "public/event_gallery.html",
+                {"event": event, "bib_query": bib_query, "error": "invalid_format"},
+            )
+
+        # Rate limit general (60/h por IP).
+        if not check_general_search_rate_limit(request):
+            return render(request, "public/rate_limited.html", {"event": event}, status=429)
+
+        # Rate limit específico (10/día por IP+evento+dorsal).
+        if not check_bib_specific_rate_limit(request, event.id, bib_query):
+            return render(request, "public/rate_limited.html", {"event": event}, status=429)
+
+        # Cache 5 min: guardamos IDs (no objetos, para no cachear signed URLs).
+        cache_key = f"search:bib:{event.id}:{bib_query}"
+        photo_ids = cache.get(cache_key)
+        if photo_ids is None:
+            photo_ids = list(
+                Photo.objects.filter(
+                    event=event,
+                    status=PhotoStatus.APPROVED,
+                    bibs__number=bib_query,
+                    bibs__rejected=False,
+                )
+                .distinct()
+                .order_by("capture_time", "created_at")
+                .values_list("id", flat=True)[:MAX_SEARCH_RESULTS]
+            )
+            cache.set(cache_key, photo_ids, timeout=SEARCH_CACHE_TTL)
+
+        # Incrementar contador del evento (no bloqueante para el usuario).
+        Event.objects.filter(id=event.id).update(search_count=F("search_count") + 1)
+
+        if not photo_ids:
+            return self._render_no_results(request, event, bib_query)
+
+        photos = list(
+            Photo.objects.filter(id__in=photo_ids)
+            .prefetch_related("bibs")
+            .order_by("capture_time", "created_at")
+        )
+
+        return render(
+            request,
+            "public/event_gallery.html",
+            {
+                "event": event,
+                "search_photos": photos,
+                "bib_query": bib_query,
+                "is_search_result": True,
+                "result_count": len(photos),
+            },
+        )
+
+    def _render_no_results(
+        self, request: HttpRequest, event: Event, bib_query: str
+    ) -> HttpResponse:
+        similar = get_similar_bibs_in_event(event, bib_query, limit=5)
+        return render(
+            request,
+            "public/event_no_results.html",
+            {"event": event, "bib_query": bib_query, "similar_bibs": similar},
+        )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def get_similar_bibs_in_event(event: Event, query: str, *, limit: int = 5) -> list[str]:
+    """Sugiere dorsales que existen en el evento y son OCR-confundibles con el query."""
+    if not query.isdigit():
+        return []
+
+    variants = set(generate_ocr_variants(query))
+    if not variants:
+        return []
+
+    existing = set(
+        Bib.objects.filter(
+            photo__event=event,
+            photo__status=PhotoStatus.APPROVED,
+            rejected=False,
+            number__in=variants,
+        )
+        .values_list("number", flat=True)
+        .distinct()
+    )
+    similar = [v for v in sorted(existing) if v != query]
+    return similar[:limit]

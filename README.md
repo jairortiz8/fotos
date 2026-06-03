@@ -147,6 +147,30 @@ Crea 1 superuser (te imprime la password), 3 eventos en distintos estados, 50 fo
 por evento con dorsales sintéticos, links de fotógrafo, y audit logs históricos.
 Después entrá a http://127.0.0.1:8000/admin/ para verlo.
 
+## Para corredores: cómo buscar tus fotos (Fase 3)
+
+1. Entrá a la home (`/`). Vas a ver los eventos públicos.
+2. Hacé click en tu evento, o escribí tu número de dorsal directo en el
+   buscador del home.
+3. En la galería del evento (`/eventos/<slug>/`):
+   - **Buscá por dorsal**: escribí tu número (ej. `1042`) y dale "Buscar".
+     Filtra a las fotos donde el OCR detectó ese dorsal.
+   - Si no aparece nada, te sugerimos dorsales con **lectura OCR similar**
+     que sí existen en el evento (ej. buscás `8999` y te ofrece `9999`).
+4. Click en una foto → se abre el **lightbox** con el preview (marca de agua).
+   Navegá con las flechas o `←`/`→`, cerrá con `Esc`.
+5. **Seleccioná** varias fotos (checkbox arriba a la derecha de cada una) y
+   tocá "Descargar" → se arma un **ZIP en alta resolución sin marca de agua**.
+   El link de descarga vive 1 hora.
+
+Estados de un evento (política de retención, ver ADR 0003):
+- **Live / próximo**: galería completa + búsqueda + descargas.
+- **Cerrado** (91-180 días): galería oculta, **solo búsqueda por dorsal**.
+- **Archivado** (181-365 días): página pública devuelve 404 amigable.
+
+Rate limiting (ver ADR 0005): 60 búsquedas/hora por IP, 10/día por dorsal,
+5 ZIPs/hora por IP.
+
 ## Para fotógrafos: cómo funciona el portal (Fase 2)
 
 El admin (`runfoto-admin`) genera un link único para cada fotógrafo:

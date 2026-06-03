@@ -71,3 +71,4 @@ README-PROMPTS.md
 *.bak
 *.tmp
 .python-cache/
+.claude/launch.json

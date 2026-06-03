@@ -1,4 +1,4 @@
-"""Vistas públicas comunes — landing temporal + health check."""
+"""Vistas públicas comunes — health check + robots."""
 
 from __future__ import annotations
 
@@ -7,15 +7,20 @@ from typing import Any
 from django.core.cache import cache
 from django.db import connection
 from django.http import HttpRequest, HttpResponse, JsonResponse
-from django.shortcuts import render
 
 
-def index(request: HttpRequest) -> HttpResponse:
-    """Landing temporal 'Coming soon' (Fase 0).
-
-    Se reemplaza por la landing pública real en Fase 3.
-    """
-    return render(request, "public/landing.html")
+def robots_txt(request: HttpRequest) -> HttpResponse:
+    """robots.txt permisivo (contenido público) excepto admin / portal / descargas."""
+    lines = [
+        "User-agent: *",
+        "Disallow: /admin/",
+        "Disallow: /u/",
+        "Disallow: /descargas/",
+        "Disallow: /__debug__/",
+        "Allow: /",
+        f"Sitemap: {request.scheme}://{request.get_host()}/sitemap.xml",
+    ]
+    return HttpResponse("\n".join(lines), content_type="text/plain")
 
 
 def healthz(request: HttpRequest) -> JsonResponse:

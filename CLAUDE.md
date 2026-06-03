@@ -500,7 +500,7 @@ En la carpeta `reference/runfoto-design/` está el zip de Claude Design extraíd
 
 ---
 
-**Última actualización**: Fase 2 (upload fotógrafo + OCR). Actualizar este archivo al final de cada fase con aprendizajes y decisiones nuevas.
+**Última actualización**: Fase 3 (galería pública + búsqueda por dorsal). Actualizar este archivo al final de cada fase con aprendizajes y decisiones nuevas.
 
 ## Cambios introducidos en Fase 1
 - Política de retención escalonada de eventos (§3) — nueva tabla con 4 ventanas temporales y el flag `permanent_archive`.
@@ -520,3 +520,16 @@ En la carpeta `reference/runfoto-design/` está el zip de Claude Design extraíd
 - **Celery**: `process_photo` (EXIF + preview + thumb → encadena OCR) + `run_ocr_on_photo`. Autoretry exponencial. **El worker en Railway todavía NO existe** (CLI/MCP tiran Unauthorized al conectar repo; lo crea Jair desde dashboard). Verificación E2E de Fase 2 se hizo corriendo el worker localmente apuntado a Redis+DB+R2 de Railway.
 - **Deps nuevas**: paddleocr, paddlepaddle, easyocr (runtime); moto[s3] (dev). Imagen Docker ~3 GB (torch trae CUDA libs innecesarias — pendiente cambiar a `torch+cpu`). Worker necesita ≥1 GB RAM.
 - **Pendiente para producción real**: crear servicios `worker` y `beat` en Railway. Hasta entonces, las fotos subidas quedan en `status=processing` sin procesar.
+
+## Cambios introducidos en Fase 3
+- **Landing pública** (`/`) + **galería de evento** (`/eventos/<slug>/`) + **lightbox** (`/eventos/<slug>/foto/<id>/`), replicando pantallas 1-6 del design system. Verificadas con screenshots en mobile (375px) + desktop.
+- **Búsqueda por dorsal**: cache 5 min en Redis (IDs, no objetos, para no cachear signed URLs), normalización + validación de formato, empty state con **sugerencias OCR** (variantes 0/8/6/9, 1/7, 5/6/8, etc. que existen en el evento).
+- **Rate limiting (ADR 0005)**: 60 búsquedas/h por IP, 10/día por (IP, evento, dorsal), 5 ZIPs/h por IP. Con `django_ratelimit.core.is_ratelimited` (API programática). **NO se creó modelo SearchLog** — solo `Event.search_count` denormalizado + Redis (decisión de privacidad).
+- **Descarga ZIP**: modelo `ZipDownload` (apps/downloads), task `generate_zip` (baja originales de R2 → ZIP → sube a R2 → signed URL 1h), `cleanup_expired_zips` (beat cada hora). Verificado E2E: ZIP con 5 originales full-res **sin watermark**.
+- **Estados de retención aplicados**: `public`/`live`/`upcoming` → galería completa; `public_closed`/`searchable_only` → solo búsqueda (`event_closed.html`); `archived`/`pending_deletion` → 404 amigable; `private`/`draft`/`deleted` → 404.
+- **`Photo._presign` ahora usa R2 real** (boto3 signed URL 15 min) en vez del stub `r2://`. Devuelve `""` si R2 no está configurado (tests sin credentials).
+- **SEO**: `sitemap.xml` (eventos públicos), `robots.txt` (bloquea /admin/, /u/, /descargas/), OG tags en `base.html`.
+- **Selección múltiple**: Alpine.js con `sessionStorage` por evento. Pill flotante + bottom sheet de descarga con polling del estado del ZIP.
+- **Bug Django**: los comentarios `{# #}` multilínea se renderizan como texto. Usar `{% comment %}` para multilínea. (Arreglados 3 casos.)
+- **Cloudflare R2**: un solo bucket `runfoto-prod` (Jair no creó `runfoto-dev`). Todo apunta ahí por ahora.
+- Cobertura global 85%. 215 tests (+1 slow de OCR excluido en CI).

@@ -134,10 +134,16 @@ class Photo(TimeStampedModel):
         return self._presign(self.thumbnail_key, expires_in_seconds)
 
     def _presign(self, key: str, expires_in_seconds: int) -> str:
-        """Stub. Se reemplaza en Fase 2 con boto3."""
+        """URL firmada de R2 (15 min default). Vacío si no hay key o R2 no está
+        configurado (tests sin credentials)."""
         if not key:
             return ""
-        return f"r2://{key}?expires_in={expires_in_seconds}"
+        from apps.photos.storage import R2NotConfiguredError, default_storage
+
+        try:
+            return default_storage().get_signed_url(key, expires_in=expires_in_seconds)
+        except R2NotConfiguredError:
+            return ""
 
     # --- Lifecycle ---
 
