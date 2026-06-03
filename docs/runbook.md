@@ -288,4 +288,23 @@ python manage.py tune_threshold --selfie s.jpg --positives pos/ --negatives neg/
 
 ### Sintoma → Causa probable → Cómo arreglar
 
-- _(pendiente — se completa cuando aparezcan los primeros incidentes)_
+- **Búsqueda por selfie devuelve 500 inmediato (~0.8s) en prod** → `cv2` no
+  puede importar por falta de libs de sistema (`ImportError: libxcb.so.1: cannot
+  open shared object file`). InsightFace arrastra `opencv-python` (full, no
+  headless) que necesita libGL + GLib + X11. → Verificar que el `Dockerfile`
+  (runtime stage) instale `libgl1 libglib2.0-0 libgomp1 libxcb1 libsm6 libxext6
+  libxrender1`. Si agregás otra lib ML que use cv2, ya están. Diagnóstico:
+  `railway logs | grep -i "shared object"`.
+
+- **Primer selfie tarda ~30-60s o da 502** → el modelo `buffalo_l` (~280 MB) se
+  está descargando en caliente porque el pre-cache de build-time falló (host del
+  modelo caído ese día). → Mirá los logs de build: `WARN: pre-cache de buffalo_l
+  falló`. El runtime lo baja igual (cubierto por `--timeout 120`). Re-deployar
+  cuando el host del modelo vuelva lo vuelve a cachear. No es bloqueante.
+
+- **Web service con OOM / reinicios** → cada worker de gunicorn carga ~1.2 GB de
+  `buffalo_l` en memoria (la inferencia facial es síncrona en el proceso web por
+  privacidad, ADR 0006). Con `--workers 2` son ~2.4 GB. → El servicio `fotos`
+  necesita **≥3 GB RAM**. Si Railway lo mata por memoria, bajá a `--workers 1
+  --threads 4` en el `Dockerfile` (sacrifica algo de paralelismo de procesos
+  pero mantiene concurrencia por threads).

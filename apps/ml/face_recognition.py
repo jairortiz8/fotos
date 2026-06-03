@@ -11,6 +11,7 @@ PRIVACIDAD (CLAUDE.md §3 — reglas no negociables):
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -73,10 +74,18 @@ def get_face_model() -> Any:
             if _model is None:
                 import insightface
 
-                app = insightface.app.FaceAnalysis(
-                    name=MODEL_NAME,
-                    providers=["CPUExecutionProvider"],
-                )
+                kwargs: dict[str, Any] = {
+                    "name": MODEL_NAME,
+                    "providers": ["CPUExecutionProvider"],
+                }
+                # En prod el modelo viene pre-cacheado en /opt/insightface
+                # (ver Dockerfile). Si la env var está, usamos ese root para
+                # no re-descargar buffalo_l en cada arranque del dyno.
+                root = os.environ.get("INSIGHTFACE_ROOT")
+                if root:
+                    kwargs["root"] = root
+
+                app = insightface.app.FaceAnalysis(**kwargs)
                 app.prepare(ctx_id=0, det_size=DET_SIZE)
                 _model = app
     return _model

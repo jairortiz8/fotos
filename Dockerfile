@@ -71,11 +71,25 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Runtime libs para Pillow (sin -dev).
+# Runtime libs:
+#  - Pillow: libjpeg/libwebp/libpng
+#  - OpenCV (cv2, dependencia de InsightFace): libGL + GLib + X11 (libxcb, etc.).
+#    Aunque usamos opencv-python-headless, InsightFace arrastra opencv-python
+#    completo como dep transitiva y su .so necesita estas libs. Sin ellas el
+#    import de cv2 falla con "libxcb.so.1: cannot open shared object file" y la
+#    búsqueda por selfie devuelve 500.
+#  - onnxruntime (inferencia del modelo): libgomp (OpenMP).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libjpeg62-turbo \
         libwebp7 \
         libpng16-16 \
+        libgl1 \
+        libglib2.0-0 \
+        libgomp1 \
+        libxcb1 \
+        libsm6 \
+        libxext6 \
+        libxrender1 \
         curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -85,6 +99,19 @@ RUN groupadd -r app && useradd -r -g app -d /app -s /sbin/nologin app
 # Paquetes Python ya instalados desde el builder.
 COPY --from=python-builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=python-builder /usr/local/bin /usr/local/bin
+
+# --- Pre-cache del modelo facial buffalo_l (~280 MB) ---
+# La búsqueda por selfie es SÍNCRONA (corre en el proceso web, por privacidad).
+# Sin pre-cache, el primer request descargaría el modelo en caliente (~30-60s) y
+# cada reinicio del dyno lo re-descargaría (FS efímero). Lo bajamos en build-time
+# a /opt/insightface y apuntamos INSIGHTFACE_ROOT ahí.
+# Best-effort (`|| true`): si el host del modelo está caído, NO rompemos el
+# deploy — el modelo se baja en runtime (cubierto por --timeout 120 en gunicorn).
+ENV INSIGHTFACE_ROOT=/opt/insightface
+RUN mkdir -p /opt/insightface \
+ && python -c "import insightface; insightface.app.FaceAnalysis(name='buffalo_l', root='/opt/insightface', providers=['CPUExecutionProvider']).prepare(ctx_id=0, det_size=(640,640))" \
+ || echo "WARN: pre-cache de buffalo_l falló; se descargará en runtime." \
+ && chown -R app:app /opt/insightface
 
 # Código de la app.
 COPY --chown=app:app . .
@@ -102,6 +129,11 @@ RUN DJANGO_SETTINGS_MODULE=config.settings.prod \
     CELERY_RESULT_BACKEND=redis://localhost:6379/2 \
     python manage.py collectstatic --noinput
 
+# gunicorn 23 abre un "control server" que escribe en el CWD (/app). El dir /app
+# lo crea WORKDIR como root; sin esto el proceso `app` no puede escribir ahí y
+# loggea "Permission denied: '/app/.gunicorn'". chown del nodo de directorio.
+RUN chown app:app /app
+
 USER app
 EXPOSE 8000
 
@@ -110,4 +142,11 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1:${PORT}/healthz || exit 1
 
 # Default command: web. Worker y beat overridean en railway.toml / compose.
-CMD ["sh", "-c", "python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:${PORT} --workers 3 --access-logfile -"]
+#  --timeout 120: la 1ª búsqueda por selfie carga buffalo_l en memoria (~5-10s,
+#                 más si baja el modelo en runtime). El default de 30s mataría
+#                 el worker → 502. 120s da margen.
+#  --workers 2 --threads 4: la inferencia facial corre EN el proceso web (síncrona
+#                 por privacidad). Cada worker carga ~1.2 GB de modelo, así que
+#                 limitamos a 2 copias y ganamos concurrencia con threads
+#                 (numpy/onnxruntime liberan el GIL).
+CMD ["sh", "-c", "python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:${PORT} --workers 2 --threads 4 --timeout 120 --access-logfile -"]
