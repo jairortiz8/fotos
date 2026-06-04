@@ -1,0 +1,24 @@
+{% load i18n %}
+{% comment %}Sección de dorsales (editable vía HTMX). Reemplaza #bibs-section.{% endcomment %}
+<div class="flex items-center justify-between mb-2.5">
+  <span class="rf-label !mb-0">{% trans "Dorsales detectados" %}</span>
+  <span class="rf-pill rf-pill--{{ confidence_tone }} !text-[10px]">{{ confidence_label }}</span>
+</div>
+<div class="flex flex-wrap gap-1.5 mb-3">
+  {% for bib in bibs %}
+    <span class="rf-chip">#{{ bib.number }}
+      <span class="rf-chip__x" title="{% trans 'Marcar falso positivo' %}"
+            hx-post="{% url 'dashboard:remove_bib' pk=bib.id %}"
+            hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+            hx-target="#bibs-section" hx-swap="innerHTML">✕</span>
+    </span>
+  {% empty %}
+    <span class="text-text-3 text-xs">{% trans "Ninguno detectado." %}</span>
+  {% endfor %}
+</div>
+<form hx-post="{% url 'dashboard:add_bib' pk=photo.id %}"
+      hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+      hx-target="#bibs-section" hx-swap="innerHTML" class="flex gap-2">
+  <input type="text" name="number" placeholder="{% trans 'Agregar dorsal…' %}" class="rf-input !py-2 text-xs flex-1" required>
+  <button type="submit" class="rf-ghost" style="padding:.5rem .85rem">{% trans "Agregar" %}</button>
+</form>

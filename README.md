@@ -235,6 +235,24 @@ upload por token (anti-flood pero permite ráfagas).
 
 **Revocar un link**: ver [`docs/runbook.md`](docs/runbook.md#cómo-crear-un-link-de-upload-de-fotógrafo-manual-fase-2).
 
+## Para administradores: usando el dashboard (Fase 5)
+
+El super admin gestiona todo desde un **dashboard custom** en `/dashboard/`
+(no el Django admin, que queda como fallback en `/admin/django/`).
+
+- **Login**: `/dashboard/login/` con la cuenta super admin. Sesión de 12 horas.
+- **Crear eventos** y **generar links de upload** (con QR + mensaje de WhatsApp
+  listo para copiar y mandar al fotógrafo).
+- **Cola de aprobación**: grilla con multi-select, acciones en bloque y atajos
+  de teclado (`A` aprobar, `R` rechazar, `←/→` navegar, `Enter` detalle). En el
+  detalle se editan los dorsales detectados a mano.
+- **Audit log**: registro de solo lectura de todas las acciones admin.
+- **Estadísticas**: fotos por día/hora y totales por evento (sin tracking de
+  búsquedas individuales, por privacidad).
+
+El paso a paso operativo está en [`docs/runbook.md`](docs/runbook.md) →
+"Usar el dashboard admin".
+
 ## Estructura de carpetas
 
 ```

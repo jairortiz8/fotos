@@ -1,0 +1,56 @@
+{% extends "dashboard/base.html" %}
+{% load i18n %}
+{% block title %}{{ event.name }} · {{ site_name }}{% endblock %}
+
+{% block dashboard_content %}
+<div class="px-6 md:px-8 py-6">
+
+  {# Breadcrumb #}
+  <nav class="text-[12px] text-text-3 mb-4">
+    <a href="{% url 'dashboard:event_list' %}" class="hover:text-text-1">{% trans "Eventos" %}</a>
+    <span class="mx-1.5">/</span>
+    <span class="text-text-2">{{ event.name }}</span>
+  </nav>
+
+  {# Hero #}
+  <div class="rf-card overflow-hidden mb-5">
+    <div class="h-32 md:h-40 bg-ink-2 relative">
+      {% if event.cover_image %}<img src="{{ event.cover_image.url }}" alt="" class="w-full h-full object-cover">{% endif %}
+      <div class="absolute inset-0 bg-gradient-to-t from-ink-1 to-transparent"></div>
+    </div>
+    <div class="px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <div class="flex items-center gap-2.5 mb-1">
+          <h1 class="font-display font-bold text-xl tracking-tight">{{ event.name }}</h1>
+          {% include "dashboard/partials/_status_pill.html" with status=event.status display=event.get_status_display %}
+        </div>
+        <div class="rf-num text-[11px] text-text-3 uppercase tracking-wider">{{ event.date|date:"d M Y" }}{% if event.location %} · {{ event.location }}{% endif %} · {{ event.get_visibility_display }}</div>
+      </div>
+      <div class="flex gap-2">
+        <a href="{% url 'dashboard:event_update' slug=event.slug %}" class="rf-ghost" style="padding:.55rem .9rem">{% trans "Editar" %}</a>
+        <button type="button" class="rf-cta" style="padding:.55rem .9rem"
+                hx-get="{% url 'dashboard:generate_link' slug=event.slug %}"
+                hx-target="#modal-root" hx-swap="innerHTML">+ {% trans "Generar link" %}</button>
+      </div>
+    </div>
+  </div>
+
+  {# Tabs #}
+  <div class="border-b border-border flex gap-6 mb-5 overflow-x-auto">
+    {% for t, label in tabs %}
+      <a href="{% url 'dashboard:event_detail' slug=event.slug %}?tab={{ t }}"
+         hx-get="{% url 'dashboard:event_detail' slug=event.slug %}?tab={{ t }}"
+         hx-target="#tab-content" hx-swap="innerHTML" hx-push-url="true"
+         class="rf-tab whitespace-nowrap {% if tab == t %}rf-tab--active{% endif %}">{{ label }}</a>
+    {% endfor %}
+  </div>
+
+  {# Tab content #}
+  <div id="tab-content">
+    {% with "dashboard/partials/event_tab_"|add:tab|add:".html" as tpl %}{% include tpl %}{% endwith %}
+  </div>
+</div>
+
+{# Modal root (generar link se inyecta acá) #}
+<div id="modal-root"></div>
+{% endblock %}

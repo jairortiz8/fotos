@@ -1,0 +1,44 @@
+{% load i18n %}
+<div class="fixed inset-0 z-50 grid place-items-center p-4">
+  <div class="absolute inset-0 bg-black/70" onclick="document.getElementById('modal-root').innerHTML=''"></div>
+  <div class="relative rf-card w-full max-w-md p-6">
+    <div class="flex items-center justify-between mb-5">
+      <h2 class="font-display font-bold text-lg">{% trans "Generar link de subida" %}</h2>
+      <button type="button" class="text-text-3 hover:text-text-1" onclick="document.getElementById('modal-root').innerHTML=''" aria-label="{% trans 'Cerrar' %}">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <form hx-post="{% url 'dashboard:generate_link' slug=event.slug %}" hx-target="#modal-root" hx-swap="innerHTML" class="space-y-3.5">
+      {% csrf_token %}
+      {% if form.non_field_errors %}<div class="rf-pill rf-pill--red !text-xs w-full justify-center">{{ form.non_field_errors.0 }}</div>{% endif %}
+      <div>
+        <label class="rf-label" for="{{ form.photographer_name.id_for_label }}">{% trans "Fotógrafo" %}</label>
+        {{ form.photographer_name }}
+        {% if form.photographer_name.errors %}<p class="text-danger text-[11px] mt-1">{{ form.photographer_name.errors.0 }}</p>{% endif %}
+      </div>
+      <div>
+        <label class="rf-label" for="{{ form.photographer_email.id_for_label }}">{% trans "Email (opcional)" %}</label>
+        {{ form.photographer_email }}
+      </div>
+      <div>
+        <label class="rf-label" for="{{ form.photographer_phone.id_for_label }}">{% trans "Teléfono / WhatsApp (opcional)" %}</label>
+        {{ form.photographer_phone }}
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="rf-label" for="{{ form.expires_in_days.id_for_label }}">{% trans "Expira en" %}</label>
+          {{ form.expires_in_days }}
+        </div>
+        <div>
+          <label class="rf-label" for="{{ form.photo_limit.id_for_label }}">{% trans "Límite de fotos" %}</label>
+          {{ form.photo_limit }}
+        </div>
+      </div>
+      <div class="flex gap-2 pt-2">
+        <button type="button" class="rf-ghost flex-1" onclick="document.getElementById('modal-root').innerHTML=''">{% trans "Cancelar" %}</button>
+        <button type="submit" class="rf-cta flex-1">{% trans "Generar link" %}</button>
+      </div>
+    </form>
+  </div>
+</div>

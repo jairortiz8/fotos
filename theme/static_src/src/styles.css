@@ -285,6 +285,181 @@
   .rf-pulse {
     animation: rfpulse 1.6s ease-out infinite;
   }
+
+  /* ==========================================================================
+   * Dashboard admin (Fase 5) — réplica de admin-screens.jsx (pantallas 08-12).
+   * ========================================================================== */
+
+  /* Números/datos en mono con tabular-nums (alineación de dígitos). */
+  .rf-num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* --- Sidebar nav items --- */
+  .rf-side-item {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.625rem 0.75rem;
+    border-radius: var(--radius-badge);
+    border-left: 2px solid transparent;
+    color: var(--color-text-2);
+    font-size: 0.8125rem;
+    transition:
+      background 0.12s,
+      color 0.12s;
+  }
+  .rf-side-item:hover {
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--color-text-1);
+  }
+  .rf-side-item--active {
+    background: var(--color-ink-1);
+    border-left-color: var(--color-brand);
+    color: var(--color-text-1);
+    font-weight: 600;
+  }
+
+  /* --- Stat card --- */
+  .rf-statcard {
+    background: var(--color-ink-1);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-card);
+    padding: 1.125rem 1.25rem;
+  }
+  .rf-statcard__label {
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-text-2);
+  }
+  .rf-statcard__value {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 1.875rem;
+    letter-spacing: -0.02em;
+    color: var(--color-text-1);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* --- Inputs / selects / textareas --- */
+  .rf-input {
+    width: 100%;
+    background: var(--color-ink-0);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-control);
+    padding: 0.625rem 0.75rem;
+    color: var(--color-text-1);
+    font-family: var(--font-body);
+    font-size: 0.8125rem;
+  }
+  .rf-input:focus {
+    outline: none;
+    border-color: var(--color-brand);
+  }
+  .rf-label {
+    display: block;
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-text-2);
+    margin-bottom: 0.375rem;
+  }
+
+  /* --- Card genérica --- */
+  .rf-card {
+    background: var(--color-ink-1);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-card);
+  }
+
+  /* --- Tabla --- */
+  .rf-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+  }
+  .rf-table th {
+    text-align: left;
+    font-size: 0.625rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-text-3);
+    padding: 0.625rem 0.875rem;
+    border-bottom: 1px solid var(--color-border);
+    font-weight: 600;
+  }
+  .rf-table td {
+    padding: 0.75rem 0.875rem;
+    border-bottom: 1px solid var(--color-ink-2);
+    color: var(--color-text-1);
+    vertical-align: middle;
+  }
+  .rf-table tr:last-child td {
+    border-bottom: none;
+  }
+
+  /* --- Tabs (event detail) --- */
+  .rf-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.75rem 0.125rem;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-2);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    cursor: pointer;
+    transition: color 0.12s;
+  }
+  .rf-tab:hover {
+    color: var(--color-text-1);
+  }
+  .rf-tab--active {
+    color: var(--color-brand);
+    border-bottom-color: var(--color-brand);
+  }
+
+  /* --- Avatar circular con iniciales --- */
+  .rf-avatar {
+    display: grid;
+    place-items: center;
+    border-radius: 999px;
+    background: linear-gradient(135deg, var(--color-brand), #b03700);
+    color: #fff;
+    font-family: var(--font-display);
+    font-weight: 700;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+
+  /* --- Chip de dorsal editable (cyan, con X) --- */
+  .rf-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 0.8125rem;
+    padding: 0.4375rem 0.625rem;
+    border-radius: var(--radius-badge);
+    background: rgba(0, 212, 255, 0.1);
+    color: var(--color-data);
+    border: 1px solid rgba(0, 212, 255, 0.25);
+  }
+  .rf-chip__x {
+    cursor: pointer;
+    color: rgba(0, 212, 255, 0.6);
+    line-height: 1;
+  }
+  .rf-chip__x:hover {
+    color: var(--color-data);
+  }
 }
 
 @keyframes rfpulse {

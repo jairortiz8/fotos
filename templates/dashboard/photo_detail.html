@@ -1,0 +1,25 @@
+{% extends "dashboard/base.html" %}
+{% load i18n %}
+{% block title %}{{ photo.original_filename }} · {{ site_name }}{% endblock %}
+
+{% block dashboard_content %}
+<div x-data="{ drawerOpen: true }"
+     x-init="$watch('drawerOpen', v => { if(!v) window.location='{% url 'dashboard:pending_photos' %}' })"
+     class="lg:flex lg:h-[calc(100vh-1px)]">
+
+  {# Foto grande #}
+  <div class="flex-1 grid place-items-center p-6 lg:p-10 bg-ink-0 min-h-[40vh]">
+    <div class="relative aspect-[4/5] max-h-[78vh] w-full max-w-[520px] rounded-md overflow-hidden bg-ink-2">
+      {% if photo.preview_key %}<img src="{{ photo.get_preview_url }}" alt="" class="w-full h-full object-contain">{% endif %}
+      <div class="absolute inset-0 grid place-items-center pointer-events-none">
+        <span class="font-display font-bold text-text-1/15 text-3xl -rotate-[30deg] tracking-widest">PENDING REVIEW</span>
+      </div>
+    </div>
+  </div>
+
+  {# Drawer #}
+  <div id="drawer-content" class="w-full lg:max-w-[480px] lg:w-[480px] shrink-0 border-t lg:border-t-0 lg:border-l border-border bg-ink-0 lg:overflow-y-auto">
+    {% include "dashboard/partials/photo_drawer.html" %}
+  </div>
+</div>
+{% endblock %}

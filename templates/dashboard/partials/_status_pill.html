@@ -1,0 +1,13 @@
+{% load i18n %}{% comment %}Pill de estado de evento. Params: status (valor), display (label).{% endcomment %}{% spaceless %}
+{% if status == "live" %}
+  <span class="rf-pill rf-pill--cyan"><span class="rf-pill__dot rf-pulse"></span>{{ display }}</span>
+{% elif status == "upcoming" %}
+  <span class="rf-pill rf-pill--amber">{{ display }}</span>
+{% elif status == "draft" %}
+  <span class="rf-pill rf-pill--neutral">{{ display }}</span>
+{% elif status == "deleted" or status == "pending_deletion" %}
+  <span class="rf-pill rf-pill--red">{{ display }}</span>
+{% else %}
+  <span class="rf-pill rf-pill--neutral">{{ display }}</span>
+{% endif %}
+{% endspaceless %}

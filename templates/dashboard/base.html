@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% comment %}
+Layout base del dashboard admin (Fase 5).
+Sidebar fijo 240px en desktop; drawer colapsable en <1024px (iPad portrait).
+El privacy_banner público se desactiva acá.
+{% endcomment %}
+
+{% block privacy_banner %}{% endblock %}
+
+{% block body %}
+<div x-data="{ sidebarOpen: false }" class="min-h-screen">
+
+  {# ===== Topbar mobile (<lg) ===== #}
+  <div class="lg:hidden flex items-center justify-between px-4 py-3 border-b border-border bg-ink-0 sticky top-0 z-30">
+    <button @click="sidebarOpen = true" aria-label="{% trans 'Abrir menú' %}" class="text-text-2 hover:text-text-1">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+    </button>
+    {% include "_partials/wordmark.html" with size="18px" %}
+    <span class="w-6"></span>
+  </div>
+
+  <div class="lg:flex">
+    {# ===== Sidebar ===== #}
+    <div x-show="sidebarOpen" x-cloak @click="sidebarOpen = false"
+         class="fixed inset-0 bg-black/60 z-40 lg:hidden"></div>
+
+    <aside :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
+           class="fixed lg:static lg:translate-x-0 inset-y-0 left-0 z-50 w-[240px] shrink-0
+                  bg-ink-0 border-r border-border flex flex-col transition-transform duration-200">
+      {% include "dashboard/partials/_sidebar.html" %}
+    </aside>
+
+    {# ===== Main ===== #}
+    <main class="flex-1 min-w-0">
+      {% if messages %}
+        <div class="px-6 md:px-8 pt-4 space-y-2">
+          {% for message in messages %}
+            <div class="rf-pill rf-pill--{% if message.tags == 'success' %}green{% elif message.tags == 'error' %}red{% else %}neutral{% endif %} !text-xs">
+              {{ message }}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+      {% block dashboard_content %}{% endblock %}
+    </main>
+  </div>
+</div>
+{% endblock %}

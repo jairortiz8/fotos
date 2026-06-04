@@ -14,6 +14,7 @@ def robots_txt(request: HttpRequest) -> HttpResponse:
     lines = [
         "User-agent: *",
         "Disallow: /admin/",
+        "Disallow: /dashboard/",
         "Disallow: /u/",
         "Disallow: /descargas/",
         "Disallow: /__debug__/",

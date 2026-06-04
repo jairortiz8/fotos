@@ -1,0 +1,19 @@
+{% load i18n %}
+{% if bib_rows %}
+<div class="rf-card overflow-hidden">
+  <table class="rf-table">
+    <thead><tr><th>{% trans "Dorsal" %}</th><th>{% trans "Fotos" %}</th></tr></thead>
+    <tbody>
+      {% for row in bib_rows %}
+        <tr>
+          <td><span class="rf-bib rf-bib--lg">{{ row.number }}</span></td>
+          <td class="rf-num text-data font-semibold">{{ row.n }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="text-text-3 text-[11px] mt-3">{% trans "Listado de dorsales detectados por OCR + corregidos a mano. Para corregir un dorsal puntual, abrí la foto en la cola de aprobación." %}</p>
+{% else %}
+  <div class="rf-card p-10 text-center text-text-3 text-sm">{% trans "Todavía no se detectaron dorsales en este evento." %}</div>
+{% endif %}

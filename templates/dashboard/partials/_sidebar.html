@@ -1,0 +1,71 @@
+{% load i18n %}
+{% comment %}Sidebar del dashboard. Resalta active_nav e inyecta el badge de pendientes.{% endcomment %}
+
+{# Top: wordmark + ADMIN #}
+<div class="px-5 pt-5 pb-4 flex items-center justify-between">
+  <div class="flex items-center gap-2">
+    {% include "_partials/wordmark.html" with size="18px" %}
+    <span class="font-mono text-[9px] tracking-[0.16em] text-text-3 uppercase">{% trans "Admin" %}</span>
+  </div>
+  <button @click="sidebarOpen = false" class="lg:hidden text-text-3" aria-label="{% trans 'Cerrar' %}">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+  </button>
+</div>
+
+{# Nav #}
+<nav class="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
+  <a href="{% url 'dashboard:dashboard_home' %}" class="rf-side-item {% if active_nav == 'home' %}rf-side-item--active{% endif %}">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+    {% trans "Dashboard" %}
+  </a>
+  <a href="{% url 'dashboard:event_list' %}" class="rf-side-item {% if active_nav == 'events' %}rf-side-item--active{% endif %}">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+    {% trans "Eventos" %}
+  </a>
+  <a href="{% url 'dashboard:photographer_list' %}" class="rf-side-item {% if active_nav == 'photographers' %}rf-side-item--active{% endif %}">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+    {% trans "Fotógrafos" %}
+  </a>
+  <a href="{% url 'dashboard:pending_photos' %}" class="rf-side-item {% if active_nav == 'approval' %}rf-side-item--active{% endif %} justify-between">
+    <span class="flex items-center gap-2.5">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+      {% trans "Aprobación" %}
+    </span>
+    {% if nav_pending_count %}
+      <span class="font-mono text-[10px] font-semibold bg-brand text-white rounded-full px-2 py-0.5">{{ nav_pending_count }}</span>
+    {% endif %}
+  </a>
+  <a href="{% url 'dashboard:stats' %}" class="rf-side-item {% if active_nav == 'stats' %}rf-side-item--active{% endif %}">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+    {% trans "Estadísticas" %}
+  </a>
+  <a href="{% url 'dashboard:audit_log' %}" class="rf-side-item {% if active_nav == 'audit' %}rf-side-item--active{% endif %}">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
+    {% trans "Audit log" %}
+  </a>
+  <a href="{% url 'dashboard:settings' %}" class="rf-side-item {% if active_nav == 'settings' %}rf-side-item--active{% endif %}">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    {% trans "Configuración" %}
+  </a>
+</nav>
+
+{# Bottom: CTA + avatar + logout #}
+<div class="p-3 border-t border-border space-y-3">
+  <a href="{% url 'dashboard:event_create' %}" class="rf-cta rf-cta--full">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    {% trans "Nuevo evento" %}
+  </a>
+  <div class="flex items-center gap-2.5 px-1">
+    <span class="rf-avatar w-8 h-8 text-[11px]">{{ request.user.username|slice:":2"|upper }}</span>
+    <div class="min-w-0 flex-1">
+      <div class="text-xs text-text-1 truncate">{{ request.user.get_full_name|default:request.user.username }}</div>
+      <div class="font-mono text-[10px] text-text-3 uppercase">{% trans "Super admin" %}</div>
+    </div>
+    <form method="post" action="{% url 'dashboard:dashboard_logout' %}">
+      {% csrf_token %}
+      <button type="submit" title="{% trans 'Cerrar sesión' %}" class="text-text-3 hover:text-danger">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
+      </button>
+    </form>
+  </div>
+</div>

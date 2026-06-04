@@ -1,0 +1,42 @@
+{% load i18n %}
+<div class="fixed inset-0 z-50 grid place-items-center p-4">
+  <div class="absolute inset-0 bg-black/70" onclick="document.getElementById('modal-root').innerHTML=''"></div>
+  <div class="relative rf-card w-full max-w-md p-6">
+    <div class="flex items-center justify-between mb-4">
+      <span class="rf-pill rf-pill--green"><span class="rf-pill__dot"></span>{% trans "Link generado" %}</span>
+      <button type="button" class="text-text-3 hover:text-text-1" onclick="document.getElementById('modal-root').innerHTML=''" aria-label="{% trans 'Cerrar' %}">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <h2 class="font-display font-bold text-lg mb-1">{% trans "Listo para compartir" %}</h2>
+    <p class="text-text-3 text-[13px] mb-5">{{ link.photographer_name }} · {{ event.name }}</p>
+
+    {# URL #}
+    <label class="rf-label">{% trans "Link de subida" %}</label>
+    <div class="flex items-center gap-2 bg-ink-0 border border-border rounded-lg px-3 py-2.5 mb-4">
+      <span class="rf-num text-data text-[12px] truncate flex-1">{{ upload_url }}</span>
+      <button type="button" class="text-text-2 hover:text-text-1 shrink-0" data-text="{{ upload_url }}"
+              onclick="navigator.clipboard.writeText(this.dataset.text); this.textContent='✓'">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      </button>
+    </div>
+
+    {# QR #}
+    <div class="flex justify-center mb-4">
+      <img src="{{ qr_data_uri }}" alt="QR" class="w-40 h-40 rounded-lg bg-white p-1">
+    </div>
+
+    {# Acciones #}
+    <div class="grid grid-cols-2 gap-2 mb-4">
+      <button type="button" class="rf-ghost" style="padding:.55rem .5rem; font-size:11px" data-text="{{ whatsapp_message }}"
+              onclick="navigator.clipboard.writeText(this.dataset.text); this.textContent='{% trans "✓ Copiado" %}'">{% trans "Copiar p/ WhatsApp" %}</button>
+      <a href="{{ qr_data_uri }}" download="qr-{{ link.id }}.png" class="rf-ghost" style="padding:.55rem .5rem; font-size:11px">{% trans "Descargar QR" %}</a>
+    </div>
+
+    {# Warning #}
+    <div class="flex items-start gap-2.5 rounded-lg px-3.5 py-3" style="background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.25)">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2" stroke-linecap="round" class="mt-0.5 shrink-0"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+      <p class="text-[11.5px] text-warning leading-relaxed">{% blocktrans %}Compartilo solo con el fotógrafo. Expira el {{ expires_label }}.{% endblocktrans %}</p>
+    </div>
+  </div>
+</div>

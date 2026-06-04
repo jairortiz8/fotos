@@ -1,0 +1,28 @@
+{% load i18n %}
+<form method="get" class="flex gap-2 items-center mb-4">
+  <input type="hidden" name="tab" value="fotos">
+  <select name="foto_status" class="rf-input !w-auto !py-2 text-xs"
+          hx-get="{% url 'dashboard:event_detail' slug=event.slug %}" hx-include="[name='tab'],[name='foto_status']"
+          hx-target="#tab-content" hx-swap="innerHTML">
+    <option value="">{% trans "Todos los estados" %}</option>
+    {% for val, label in photo_status_choices %}
+      <option value="{{ val }}" {% if foto_status == val %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+</form>
+
+{% if event_photos %}
+<div class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-1.5">
+  {% for photo in event_photos %}
+    <a href="{% url 'dashboard:photo_detail' pk=photo.id %}" class="relative aspect-[4/5] rounded-md overflow-hidden bg-ink-2 block group">
+      {% if photo.thumbnail_key %}<img src="{{ photo.get_thumbnail_url }}" alt="" class="w-full h-full object-cover">{% endif %}
+      <div class="absolute bottom-1.5 left-1.5 flex gap-1">
+        {% for bib in photo.bibs.all %}{% if not bib.rejected %}<span class="rf-bib">{{ bib.number }}</span>{% endif %}{% endfor %}
+      </div>
+      {% if photo.status != "approved" %}<span class="absolute top-1.5 right-1.5 rf-pill rf-pill--{% if photo.status == 'pending_review' %}amber{% elif photo.status == 'rejected' %}red{% else %}neutral{% endif %} !text-[8px] !py-0.5">{{ photo.get_status_display }}</span>{% endif %}
+    </a>
+  {% endfor %}
+</div>
+{% else %}
+  <div class="rf-card p-10 text-center text-text-3 text-sm">{% trans "No hay fotos con ese filtro." %}</div>
+{% endif %}

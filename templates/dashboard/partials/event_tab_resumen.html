@@ -1,0 +1,45 @@
+{% load i18n %}
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+  <div class="rf-statcard"><div class="rf-statcard__label">{% trans "Fotos totales" %}</div><div class="rf-statcard__value mt-1">{{ summary.total }}</div></div>
+  <div class="rf-statcard"><div class="rf-statcard__label">{% trans "Pendientes" %}</div><div class="rf-statcard__value mt-1 {% if summary.pending %}!text-warning{% endif %}">{{ summary.pending }}</div></div>
+  <div class="rf-statcard"><div class="rf-statcard__label">{% trans "Aprobadas" %}</div><div class="rf-statcard__value mt-1">{{ summary.approved }}</div></div>
+  <div class="rf-statcard"><div class="rf-statcard__label">{% trans "Búsquedas" %}</div><div class="rf-statcard__value mt-1">{{ summary.searches }}</div></div>
+</div>
+
+<div class="grid lg:grid-cols-2 gap-5">
+  {# Actividad reciente #}
+  <section class="rf-card overflow-hidden">
+    <div class="px-5 py-3.5 border-b border-border"><h3 class="font-display font-bold text-[14px]">{% trans "Fotos recientes" %}</h3></div>
+    <div class="p-4 grid grid-cols-4 gap-1.5">
+      {% for photo in recent_photos %}
+        <a href="{% url 'dashboard:photo_detail' pk=photo.id %}" class="aspect-[4/5] rounded bg-ink-2 overflow-hidden block">
+          {% if photo.thumbnail_key %}<img src="{{ photo.get_thumbnail_url }}" alt="" class="w-full h-full object-cover">{% endif %}
+        </a>
+      {% empty %}
+        <p class="col-span-4 text-text-3 text-sm py-4 text-center">{% trans "Sin fotos todavía." %}</p>
+      {% endfor %}
+    </div>
+  </section>
+
+  {# Fotógrafos #}
+  <section class="rf-card overflow-hidden">
+    <div class="px-5 py-3.5 border-b border-border flex items-center justify-between">
+      <h3 class="font-display font-bold text-[14px]">{% trans "Fotógrafos" %}</h3>
+      <button type="button" class="text-[12px] text-data hover:underline"
+              hx-get="{% url 'dashboard:generate_link' slug=event.slug %}" hx-target="#modal-root" hx-swap="innerHTML">+ {% trans "Link" %}</button>
+    </div>
+    <div class="divide-y divide-ink-2">
+      {% for link in photographers %}
+        <div class="flex items-center gap-3 px-5 py-3">
+          <span class="rf-avatar w-8 h-8 text-[10px]">{{ link.photographer_name|slice:":2"|upper }}</span>
+          <div class="flex-1 min-w-0">
+            <div class="text-[13px] truncate">{{ link.photographer_name }}</div>
+            <div class="rf-num text-[10px] text-text-3">{{ link.photos_uploaded }} {% trans "subidas" %}</div>
+          </div>
+        </div>
+      {% empty %}
+        <p class="text-text-3 text-sm px-5 py-4">{% trans "Ningún fotógrafo asignado." %}</p>
+      {% endfor %}
+    </div>
+  </section>
+</div>

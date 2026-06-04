@@ -1,0 +1,85 @@
+{% extends "dashboard/base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Audit log" %} · {{ site_name }}{% endblock %}
+
+{% block dashboard_content %}
+<div class="px-6 md:px-8 py-6">
+
+  {# Header #}
+  <div class="mb-6">
+    <h1 class="font-display font-bold text-2xl tracking-tight">{% trans "Audit log" %}</h1>
+    <p class="text-[11px] text-text-3 mt-1">{% trans "Solo lectura. Registro de todas las acciones admin." %}</p>
+  </div>
+
+  {# Filtros #}
+  <form method="get" class="flex flex-wrap gap-2 mb-4">
+    <select name="action" class="rf-input !w-auto !py-2 text-xs">
+      <option value="">{% trans "Todas" %}</option>
+      {% for action in actions %}
+        <option value="{{ action }}" {% if filter_action == action %}selected{% endif %}>{{ action }}</option>
+      {% endfor %}
+    </select>
+    <select name="target_type" class="rf-input !w-auto !py-2 text-xs">
+      <option value="">{% trans "Todos" %}</option>
+      {% for target in target_types %}
+        <option value="{{ target }}" {% if filter_target == target %}selected{% endif %}>{{ target }}</option>
+      {% endfor %}
+    </select>
+    <select name="range" class="rf-input !w-auto !py-2 text-xs">
+      <option value="">{% trans "Siempre" %}</option>
+      <option value="7d" {% if filter_range == "7d" %}selected{% endif %}>{% trans "Últimos 7 días" %}</option>
+      <option value="30d" {% if filter_range == "30d" %}selected{% endif %}>{% trans "Últimos 30 días" %}</option>
+    </select>
+    <input type="text" name="q" value="{{ filter_q }}" placeholder="{% trans 'Buscar acción…' %}" class="rf-input !w-auto !py-2 text-xs">
+    <button type="submit" class="rf-ghost" style="padding:.5rem .9rem">{% trans "Filtrar" %}</button>
+  </form>
+
+  {# Tabla #}
+  {% if entries %}
+  <div class="rf-card overflow-hidden">
+    <table class="rf-table">
+      <thead>
+        <tr>
+          <th>{% trans "Fecha" %}</th>
+          <th>{% trans "Usuario" %}</th>
+          <th>{% trans "Acción" %}</th>
+          <th>{% trans "Objetivo" %}</th>
+          <th>{% trans "IP" %}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in entries %}
+        <tr>
+          <td><span class="rf-num text-[11px] text-text-2 whitespace-nowrap">{{ entry.created_at|date:"d M Y H:i:s" }}</span></td>
+          <td><span class="text-[12px]">{{ entry.user|default:"—" }}</span></td>
+          <td><span class="rf-pill rf-pill--neutral rf-num !text-[10px]">{{ entry.action }}</span></td>
+          <td><span class="rf-num text-[11px] text-text-3">{{ entry.target_type }} {{ entry.target_id }}</span></td>
+          <td><span class="rf-num text-[11px] text-text-3">{{ entry.ip_address|default:"—" }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# Paginación #}
+  {% if page_obj.has_other_pages %}
+    <div class="flex justify-center items-center gap-2 mt-6">
+      {% if page_obj.has_previous %}
+        <a href="?page={{ page_obj.previous_page_number }}{% if filter_action %}&action={{ filter_action }}{% endif %}{% if filter_target %}&target_type={{ filter_target }}{% endif %}{% if filter_range %}&range={{ filter_range }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}" class="rf-ghost" style="padding:.5rem .9rem">←</a>
+      {% endif %}
+      <span class="rf-num text-[12px] text-text-3 px-2">{{ page_obj.number }} / {{ paginator.num_pages }}</span>
+      {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}{% if filter_action %}&action={{ filter_action }}{% endif %}{% if filter_target %}&target_type={{ filter_target }}{% endif %}{% if filter_range %}&range={{ filter_range }}{% endif %}{% if filter_q %}&q={{ filter_q }}{% endif %}" class="rf-ghost" style="padding:.5rem .9rem">→</a>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% else %}
+  <div class="rf-card p-12 text-center">
+    <p class="text-text-2 text-sm mb-1">{% trans "No hay registros para estos filtros." %}</p>
+    <p class="text-text-3 text-xs">{% trans "Las acciones admin van apareciendo acá a medida que ocurren." %}</p>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

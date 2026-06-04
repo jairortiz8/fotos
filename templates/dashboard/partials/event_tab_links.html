@@ -1,0 +1,29 @@
+{% load i18n %}
+<div class="flex justify-end mb-4">
+  <button type="button" class="rf-cta" style="padding:.5rem .9rem"
+          hx-get="{% url 'dashboard:generate_link' slug=event.slug %}" hx-target="#modal-root" hx-swap="innerHTML">+ {% trans "Generar link" %}</button>
+</div>
+{% if links %}
+<div class="rf-card overflow-hidden">
+  <table class="rf-table">
+    <thead><tr>
+      <th>{% trans "Fotógrafo" %}</th><th>{% trans "Estado" %}</th><th>{% trans "Fotos" %}</th>
+      <th>{% trans "Creado" %}</th><th>{% trans "Expira" %}</th><th></th>
+    </tr></thead>
+    <tbody>
+      {% for link in links %}
+        <tr>
+          <td>{{ link.photographer_name }}</td>
+          <td><span class="rf-pill rf-pill--{{ link.status_tone }} !text-[9px]">{{ link.status_label }}</span></td>
+          <td class="rf-num">{{ link.photos_uploaded }}</td>
+          <td class="rf-num text-text-3 text-[12px]">{{ link.created_at|date:"d M Y" }}</td>
+          <td class="rf-num text-text-3 text-[12px]">{{ link.expires_at|date:"d M Y" }}</td>
+          <td class="text-right"><a href="{% url 'dashboard:photographer_list' %}?event={{ event.slug }}" class="text-[12px] text-data hover:underline">{% trans "Gestionar" %} →</a></td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  <div class="rf-card p-10 text-center text-text-3 text-sm">{% trans "No hay links de subida para este evento." %}</div>
+{% endif %}

@@ -500,7 +500,7 @@ En la carpeta `reference/runfoto-design/` está el zip de Claude Design extraíd
 
 ---
 
-**Última actualización**: Fase 4 (reconocimiento facial + búsqueda por selfie). Actualizar este archivo al final de cada fase con aprendizajes y decisiones nuevas.
+**Última actualización**: Fase 5 (dashboard admin custom + cola de aprobación). Actualizar este archivo al final de cada fase con aprendizajes y decisiones nuevas.
 
 ## Cambios introducidos en Fase 1
 - Política de retención escalonada de eventos (§3) — nueva tabla con 4 ventanas temporales y el flag `permanent_archive`.
@@ -551,3 +551,15 @@ En la carpeta `reference/runfoto-design/` está el zip de Claude Design extraíd
 - **Verificación local del matching real**: con `allowed_modules`, misma persona 0.963 vs distinta 0.199 — el reconocimiento NO se degrada sin los landmarks (usa los 5 keypoints del detector). Embedding 512-d, edad y género OK.
 - **Pendiente prod**: (1) worker + beat en Railway (sin ellos, el procesamiento facial de uploads, el borrado de delete-my-data y el cron de retención no corren en prod); (2) la RAM del web para re-habilitar `FACE_SEARCH_ENABLED`. Verificación de la pipeline se hizo con worker local.
 - Cobertura: 263 tests, ml/privacy/search 85-93%.
+
+## Cambios introducidos en Fase 5
+- **Dashboard admin custom** (`apps/dashboard/`, montado en `/dashboard/`) — herramienta de uso diario. Reemplaza al Django admin (django-unfold) como interfaz principal; el admin queda como **fallback de emergencia movido a `/admin/django/`** (ADR 0008). Replica pantallas 08-13 del design system.
+- **Acceso**: `StaffRequiredMixin` (login + `is_staff`). Un user sin permiso se **redirige al login** (override de `handle_no_permission`), no un 403 que revele el panel. Login custom en `/dashboard/login/` con rate limit 5/15min. Settings nuevos: `SESSION_SAVE_EVERY_REQUEST`, `SAMESITE=Strict` en base, `LOGIN_URL`/`LOGIN_REDIRECT_URL`/`LOGOUT_REDIRECT_URL`.
+- **Vistas** (paquete `apps/dashboard/views/`): home (stats+chart), eventos (list/create/detail con tabs HTMX/update), generar link (modal + QR + WhatsApp), cola de aprobación (grid multi-select + bulk + atajos de teclado Alpine), drawer de detalle (EXIF + dorsales editables vía HTMX), fotógrafos (revocar/regenerar), audit log, stats, configuración (cambiar pass + 2FA stub).
+- **Counters de Event recalculados SÍNCRONO** (`services.recalculate_event_counters`), NO con Celery — el worker no corre en prod y son baratos (un par de COUNTs). Decisión nueva vs el prompt (que usaba `update_event_counters.delay`).
+- **Stats SIN `SearchLog`** (decisión de Jair, respeta privacidad de Fase 3): las métricas se derivan de datos existentes (fotos por día/hora, totales por evento). NO hay "búsquedas por día" ni "top dorsales buscados" (requerirían guardar qué busca cada visitante). El prompt asumía `SearchLog` — se descartó.
+- **QR**: librería `qrcode` (dep nueva, liviana) generando PNG base64 inline. **TODA acción admin va al `AuditLog`** (crear/editar evento, aprobar/rechazar/bulk, generar/revocar/regenerar link, editar dorsales, cambiar pass).
+- **Decisiones nuevas vs el prompt**: (1) counters síncronos; (2) sin SearchLog; (3) pantallas "login" y "lista/form de eventos" no estaban en el design de referencia → construidas coherentes con el lenguaje visual; (4) en el tab "Links" del evento las acciones de gestión (revocar/regenerar) viven en la página de Fotógrafos (evita duplicar). El "merge de dorsales duplicados" del prompt quedó como listado (no merge) — pendiente si hace falta.
+- **Bug sutil encontrado por tests**: el mensaje de rate limit del login no aparecía porque `form.add_error()` sobre el `AuthenticationForm` disparaba `authenticate()` y el error de auth quedaba primero. Fix: pasar el mensaje por contexto (`rate_limit_error`), sin tocar el form. También `select_for_update()`+`.distinct()` no es compatible en el bulk → se lockean IDs y se consulta aparte.
+- **Cobertura**: 40 tests nuevos del dashboard (91% en `apps/dashboard/`), 303 tests totales. ruff/black/mypy/django-check limpios.
+- **Pendiente prod (sin cambios)**: worker + beat en Railway; RAM para `FACE_SEARCH_ENABLED`. El dashboard NO depende de ninguno de los dos (recalcula counters síncrono).

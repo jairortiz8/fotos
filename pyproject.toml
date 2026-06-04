@@ -36,6 +36,8 @@ dependencies = [
     "boto3>=1.34",
     # --- Imágenes ---
     "pillow>=10.4",
+    # --- QR codes para links de fotógrafo (Fase 5, dashboard) ---
+    "qrcode>=7.4",
     # --- Crypto (EncryptedCharField via Fernet) ---
     "cryptography>=43.0",
     # --- ML / OCR (Fase 2) — ADR 0004 ---
@@ -194,6 +196,7 @@ module = [
     "insightface.*",
     "onnxruntime.*",
     "cv2.*",
+    "qrcode.*",
 ]
 ignore_missing_imports = true
 

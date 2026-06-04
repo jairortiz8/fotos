@@ -1,0 +1,110 @@
+{% extends "dashboard/base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Dashboard" %} · {{ site_name }}{% endblock %}
+
+{% block dashboard_content %}
+<div class="px-6 md:px-8 py-6">
+
+  {# Header #}
+  <div class="flex flex-wrap items-start justify-between gap-3 mb-7">
+    <div>
+      <h1 class="font-display font-bold text-2xl tracking-tight">{% trans "Dashboard" %}</h1>
+      <p class="rf-num text-[11px] text-text-3 uppercase tracking-wider mt-1">{% now "l · d M Y · h:i A" %}</p>
+    </div>
+    <a href="{% url 'dashboard:stats' %}" class="rf-ghost" style="padding:.5rem .85rem">{% trans "Ver estadísticas" %}</a>
+  </div>
+
+  {# Stat cards #}
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-7">
+    <div class="rf-statcard">
+      <div class="rf-statcard__label">{% trans "Total eventos" %}</div>
+      <div class="rf-statcard__value mt-1.5">{{ stats.total_events }}</div>
+      <div class="text-[11px] text-success mt-1 rf-num">+{{ stats.events_this_month }} {% trans "este mes" %}</div>
+    </div>
+    <div class="rf-statcard">
+      <div class="rf-statcard__label">{% trans "Total fotos" %}</div>
+      <div class="rf-statcard__value mt-1.5">{{ stats.total_photos }}</div>
+      <div class="text-[11px] text-success mt-1 rf-num">+{{ stats.photos_this_week }} {% trans "esta semana" %}</div>
+    </div>
+    <div class="rf-statcard">
+      <div class="rf-statcard__label">{% trans "Almacenamiento" %}</div>
+      <div class="rf-statcard__value mt-1.5">{{ stats.storage_used_gb }}<span class="text-text-3 text-base ml-1">GB</span></div>
+      <div class="text-[11px] text-text-3 mt-1">{% trans "originales + previews" %}</div>
+    </div>
+    <div class="rf-statcard">
+      <div class="rf-statcard__label">{% trans "Búsquedas" %}</div>
+      <div class="rf-statcard__value mt-1.5">{{ stats.searches_total }}</div>
+      <div class="text-[11px] text-text-3 mt-1">{% trans "acumuladas" %}</div>
+    </div>
+  </div>
+
+  <div class="grid lg:grid-cols-[1.4fr_1fr] gap-5">
+    {# Eventos activos #}
+    <section class="rf-card overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-border">
+        <h2 class="font-display font-bold text-[15px]">{% trans "Eventos activos" %}</h2>
+        <a href="{% url 'dashboard:event_list' %}" class="text-[12px] text-text-2 hover:text-text-1">{% trans "Ver todos" %} →</a>
+      </div>
+      {% for event in active_events %}
+        <a href="{% url 'dashboard:event_detail' slug=event.slug %}"
+           class="grid grid-cols-[44px_1fr_auto_auto] items-center gap-3 px-5 py-3.5 {% if not forloop.last %}border-b border-ink-2{% endif %} hover:bg-ink-1/50 transition">
+          <div class="w-11 h-11 rounded-md bg-ink-2 overflow-hidden">
+            {% if event.cover_image %}<img src="{{ event.cover_image.url }}" alt="" class="w-full h-full object-cover">{% endif %}
+          </div>
+          <div class="min-w-0">
+            <div class="text-[13px] font-semibold truncate">{{ event.name }}</div>
+            <div class="rf-num text-[10px] text-text-3 uppercase tracking-wider">{{ event.date|date:"d M Y" }}{% if event.location %} · {{ event.location }}{% endif %}</div>
+          </div>
+          {% include "dashboard/partials/_status_pill.html" with status=event.status display=event.get_status_display %}
+          <div class="text-right">
+            <div class="rf-num text-[13px] font-semibold text-data">{{ event.photo_count }}</div>
+            <div class="text-[9px] text-text-3 uppercase tracking-wider">{% trans "fotos" %}</div>
+          </div>
+        </a>
+      {% empty %}
+        <div class="px-5 py-8 text-center text-text-3 text-sm">{% trans "No hay eventos activos." %}</div>
+      {% endfor %}
+    </section>
+
+    {# Pendientes #}
+    <section class="rf-card overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-border">
+        <h2 class="font-display font-bold text-[15px] flex items-center gap-2">
+          {% trans "Pendientes" %}
+          {% if pending.count %}<span class="rf-num text-[10px] font-semibold bg-brand text-white rounded-full px-2 py-0.5">{{ pending.count }}</span>{% endif %}
+        </h2>
+      </div>
+      <div class="p-5">
+        <div class="grid grid-cols-3 gap-1.5 mb-4">
+          {% for photo in pending.sample_photos %}
+            <div class="aspect-[4/5] rounded bg-ink-2 overflow-hidden">
+              {% if photo.thumbnail_key %}<img src="{{ photo.get_thumbnail_url }}" alt="" class="w-full h-full object-cover">{% endif %}
+            </div>
+          {% empty %}
+            <div class="col-span-3 py-6 text-center text-text-3 text-sm">{% trans "Nada pendiente. ✨" %}</div>
+          {% endfor %}
+        </div>
+        {% if pending.count %}
+          <a href="{% url 'dashboard:pending_photos' %}" class="rf-cta rf-cta--full">{% trans "Revisar todas" %}</a>
+          <p class="text-center text-[11px] text-text-3 mt-3">{% trans "Antigüedad promedio" %}: <span class="rf-num text-text-2">{{ pending.avg_age_label }}</span></p>
+        {% endif %}
+      </div>
+    </section>
+  </div>
+
+  {# Chart subidas por hora #}
+  <section class="rf-card p-5 mt-5">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="font-display font-bold text-[15px]">{% trans "Subidas por hora · hoy" %}</h2>
+      <span class="rf-num text-[11px] text-text-3">00:00 → {% now "H:i" %}</span>
+    </div>
+    <div class="flex items-end gap-1 h-20">
+      {% for count in uploads_by_hour %}
+        <div class="flex-1 rounded-sm {% if forloop.counter0 == current_hour %}bg-brand{% else %}bg-ink-2{% endif %}"
+             style="height: {% widthratio count uploads_max 100 %}%; min-height: 2px;"
+             title="{{ forloop.counter0 }}:00 — {{ count }}"></div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}

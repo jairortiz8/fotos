@@ -1,0 +1,87 @@
+{% extends "dashboard/base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Estadísticas" %} · {{ site_name }}{% endblock %}
+
+{% block dashboard_content %}
+<div class="px-6 md:px-8 py-6">
+
+  {# Header #}
+  <div class="flex flex-wrap items-start justify-between gap-3 mb-2">
+    <h1 class="font-display font-bold text-2xl tracking-tight">{% trans "Estadísticas" %}</h1>
+    <a href="?export=csv" class="rf-ghost" style="padding:.5rem .85rem">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg>
+      {% trans "Exportar CSV" %}
+    </a>
+  </div>
+  <p class="text-text-3 text-xs mb-6">{% trans "Las métricas de búsquedas por día no se registran por privacidad (no guardamos qué busca cada visitante)." %}</p>
+
+  {# Fotos subidas · últimos 30 días #}
+  <section class="rf-card p-5 mb-5">
+    <h2 class="font-display font-bold text-[15px] mb-4">{% trans "Fotos subidas · últimos 30 días" %}</h2>
+    <div class="flex items-end gap-0.5 h-32">
+      {% for day, n in uploads_daily %}
+        <div class="flex-1 bg-data/60 rounded-sm" style="height: {% widthratio n uploads_daily_max 100 %}%; min-height:2px" title="{{ day|date:'d M' }}: {{ n }}"></div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <div class="grid lg:grid-cols-2 gap-5">
+
+    {# Top eventos por fotos aprobadas #}
+    <section class="rf-card overflow-hidden">
+      <div class="px-5 py-4 border-b border-border">
+        <h2 class="font-display font-bold text-[15px]">{% trans "Top eventos por fotos aprobadas" %}</h2>
+      </div>
+      {% if top_events %}
+      <table class="rf-table">
+        <thead>
+          <tr>
+            <th>{% trans "Evento" %}</th>
+            <th class="text-right">{% trans "Aprobadas" %}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for event in top_events %}
+          <tr class="hover:bg-ink-1/50 transition">
+            <td><a href="{% url 'dashboard:event_detail' slug=event.slug %}" class="text-[13px] text-text-1 hover:text-text-2">{{ event.name }}</a></td>
+            <td class="text-right"><span class="rf-num text-[13px] font-semibold text-data">{{ event.approved }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="px-5 py-10 text-center text-text-3 text-sm">{% trans "Todavía no hay fotos aprobadas." %}</div>
+      {% endif %}
+    </section>
+
+    {# Fotos por estado #}
+    <section class="rf-card overflow-hidden">
+      <div class="px-5 py-4 border-b border-border">
+        <h2 class="font-display font-bold text-[15px]">{% trans "Fotos por estado" %}</h2>
+      </div>
+      {% if status_distribution %}
+      <table class="rf-table">
+        <thead>
+          <tr>
+            <th>{% trans "Estado" %}</th>
+            <th class="text-right">{% trans "Cantidad" %}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for key, value in status_distribution.items %}
+          <tr>
+            <td><span class="rf-num text-[12px] text-text-2">{{ key }}</span></td>
+            <td class="text-right"><span class="rf-num text-[13px] font-semibold">{{ value }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="px-5 py-10 text-center text-text-3 text-sm">{% trans "Sin datos." %}</div>
+      {% endif %}
+    </section>
+
+  </div>
+
+</div>
+{% endblock %}

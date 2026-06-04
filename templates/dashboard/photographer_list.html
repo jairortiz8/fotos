@@ -1,0 +1,100 @@
+{% extends "dashboard/base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Fotógrafos" %} · {{ site_name }}{% endblock %}
+
+{% block dashboard_content %}
+<div class="px-6 md:px-8 py-6">
+
+  {# Header #}
+  <div class="flex flex-wrap items-start justify-between gap-3 mb-6">
+    <div>
+      <h1 class="font-display font-bold text-2xl tracking-tight">{% trans "Fotógrafos" %}</h1>
+      <p class="rf-num text-[11px] text-text-3 uppercase tracking-wider mt-1">
+        {{ paginator.count }} {% trans "links de subida" %}
+      </p>
+    </div>
+  </div>
+
+  {# Filtro de estado #}
+  <form method="get" class="mb-4">
+    <select name="state" onchange="this.form.submit()" class="rf-input !w-auto !py-2 text-xs">
+      <option value="">{% trans "Todos" %}</option>
+      <option value="active" {% if filter_state == "active" %}selected{% endif %}>{% trans "Activos" %}</option>
+      <option value="expired" {% if filter_state == "expired" %}selected{% endif %}>{% trans "Expirados" %}</option>
+      <option value="revoked" {% if filter_state == "revoked" %}selected{% endif %}>{% trans "Revocados" %}</option>
+    </select>
+  </form>
+
+  {# Tabla #}
+  {% if links %}
+  <div class="rf-card overflow-hidden">
+    <table class="rf-table">
+      <thead>
+        <tr>
+          <th>{% trans "Fotógrafo" %}</th>
+          <th>{% trans "Evento" %}</th>
+          <th>{% trans "Estado" %}</th>
+          <th class="text-right">{% trans "Fotos" %}</th>
+          <th class="text-right">{% trans "Aprobación" %}</th>
+          <th>{% trans "Última actividad" %}</th>
+          <th class="text-right">{% trans "Acciones" %}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for link in links %}
+        <tr class="hover:bg-ink-1/50 transition">
+          <td>
+            <div class="font-semibold text-[13px]">{{ link.photographer_name }}</div>
+            {% if link.photographer_email %}
+              <div class="rf-num text-[10px] text-text-3 mt-0.5">{{ link.photographer_email }}</div>
+            {% endif %}
+          </td>
+          <td>
+            <a href="{% url 'dashboard:event_detail' slug=link.event.slug %}" class="text-[12px] text-text-2 hover:text-text-1">{{ link.event.name }}</a>
+          </td>
+          <td><span class="rf-pill rf-pill--{{ link.status_tone }}">{{ link.status_label }}</span></td>
+          <td class="text-right">
+            <span class="rf-num text-[13px] text-data">{{ link.photos_uploaded }}{% if link.photo_limit %}<span class="text-text-3"> / {{ link.photo_limit }}</span>{% endif %}</span>
+          </td>
+          <td class="text-right"><span class="rf-num text-[13px] text-text-2">{{ link.approval_pct }}%</span></td>
+          <td><span class="rf-num text-[11px] text-text-3">{{ link.last_used_at|date:"d M H:i"|default:"—" }}</span></td>
+          <td>
+            <div class="flex items-center justify-end gap-2">
+              <a href="{% url 'dashboard:event_detail' slug=link.event.slug %}?tab=fotos" class="rf-ghost" style="padding:.35rem .7rem; font-size:11px">{% trans "Ver fotos" %}</a>
+              {% if link.is_active %}
+                <form method="post" action="{% url 'dashboard:revoke_link' pk=link.id %}"
+                      onsubmit="return confirm('{% trans "¿Revocar este link? El fotógrafo ya no podrá subir." %}')">
+                  {% csrf_token %}
+                  <button type="submit" class="rf-ghost" style="padding:.35rem .7rem; font-size:11px; color:var(--color-danger); border-color:rgba(239,68,68,.4)">{% trans "Revocar" %}</button>
+                </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# Paginación #}
+  {% if page_obj.has_other_pages %}
+    <div class="flex justify-center items-center gap-2 mt-6">
+      {% if page_obj.has_previous %}
+        <a href="?page={{ page_obj.previous_page_number }}{% if filter_state %}&state={{ filter_state }}{% endif %}" class="rf-ghost" style="padding:.5rem .9rem">←</a>
+      {% endif %}
+      <span class="rf-num text-[12px] text-text-3 px-2">{{ page_obj.number }} / {{ paginator.num_pages }}</span>
+      {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}{% if filter_state %}&state={{ filter_state }}{% endif %}" class="rf-ghost" style="padding:.5rem .9rem">→</a>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% else %}
+  <div class="rf-card p-12 text-center">
+    <p class="text-text-2 text-sm mb-1">{% trans "No hay links de fotógrafo." %}</p>
+    <p class="text-text-3 text-xs">{% trans "Generá un link desde la página de un evento para invitar a un fotógrafo." %}</p>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

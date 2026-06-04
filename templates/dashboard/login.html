@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Ingreso admin" %} · {{ site_name }}{% endblock %}
+{% block privacy_banner %}{% endblock %}
+
+{% block body %}
+<main class="min-h-screen flex items-center justify-center px-6">
+  <div class="w-full max-w-sm">
+    <div class="flex items-center gap-2 justify-center mb-8">
+      {% include "_partials/wordmark.html" with size="26px" %}
+      <span class="font-mono text-[10px] tracking-[0.16em] text-text-3 uppercase">{% trans "Admin" %}</span>
+    </div>
+
+    <div class="rf-card p-7">
+      <h1 class="font-display font-bold text-xl mb-1">{% trans "Iniciar sesión" %}</h1>
+      <p class="text-text-3 text-[13px] mb-6">{% trans "Panel de administración de RunFoto." %}</p>
+
+      {% if rate_limit_error %}
+        <div class="rf-pill rf-pill--red !text-xs mb-4 w-full justify-center">{{ rate_limit_error }}</div>
+      {% elif form.non_field_errors %}
+        <div class="rf-pill rf-pill--red !text-xs mb-4 w-full justify-center">
+          {{ form.non_field_errors.0 }}
+        </div>
+      {% endif %}
+
+      <form method="post" class="space-y-4">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ next }}">
+        <div>
+          <label class="rf-label" for="id_username">{% trans "Usuario" %}</label>
+          <input type="text" name="username" id="id_username" autocomplete="username"
+                 autofocus required class="rf-input">
+        </div>
+        <div>
+          <label class="rf-label" for="id_password">{% trans "Contraseña" %}</label>
+          <input type="password" name="password" id="id_password" autocomplete="current-password"
+                 required class="rf-input">
+        </div>
+        <button type="submit" class="rf-cta rf-cta--full rf-cta--lg">{% trans "Iniciar sesión" %}</button>
+      </form>
+    </div>
+
+    <p class="text-center text-text-3 text-[11px] mt-5">
+      {% trans "Sesión de 12 horas. Sin “recordarme”." %}
+    </p>
+  </div>
+</main>
+{% endblock %}

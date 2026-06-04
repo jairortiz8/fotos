@@ -1,0 +1,24 @@
+{% load i18n %}
+<div class="flex justify-end mb-4">
+  <button type="button" class="rf-cta" style="padding:.5rem .9rem"
+          hx-get="{% url 'dashboard:generate_link' slug=event.slug %}" hx-target="#modal-root" hx-swap="innerHTML">+ {% trans "Generar link" %}</button>
+</div>
+{% if links %}
+<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+  {% for link in links %}
+    <div class="rf-card p-4">
+      <div class="flex items-center gap-3 mb-3">
+        <span class="rf-avatar w-10 h-10 text-[12px]">{{ link.photographer_name|slice:":2"|upper }}</span>
+        <div class="flex-1 min-w-0">
+          <div class="text-[13px] font-semibold truncate">{{ link.photographer_name }}</div>
+          {% if link.photographer_email %}<div class="text-[11px] text-text-3 truncate">{{ link.photographer_email }}</div>{% endif %}
+        </div>
+        <span class="rf-pill rf-pill--{{ link.status_tone }} !text-[9px]">{{ link.status_label }}</span>
+      </div>
+      <div class="rf-num text-[11px] text-text-3">{{ link.photos_uploaded }} {% trans "subidas" %}{% if link.photo_limit %} / {{ link.photo_limit }}{% endif %}</div>
+    </div>
+  {% endfor %}
+</div>
+{% else %}
+  <div class="rf-card p-10 text-center text-text-3 text-sm">{% trans "Ningún fotógrafo. Generá un link para invitar a uno." %}</div>
+{% endif %}

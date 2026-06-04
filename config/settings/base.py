@@ -221,7 +221,16 @@ AUTH_PASSWORD_VALIDATORS = [
 SESSION_COOKIE_AGE = 12 * 60 * 60
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Strict"
+# Extender la sesión en cada request (12h desde la última actividad, no desde login).
+SESSION_SAVE_EVERY_REQUEST = True
 CSRF_COOKIE_HTTPONLY = True
+
+# Dashboard admin (Fase 5). El login custom vive en /dashboard/login/; el Django
+# admin (django-unfold) queda como fallback de emergencia en /admin/django/.
+LOGIN_URL = "dashboard:dashboard_login"
+LOGIN_REDIRECT_URL = "dashboard:dashboard_home"
+LOGOUT_REDIRECT_URL = "core:index"
 
 # ----------------------------------------------------------------------------
 # i18n / l10n
@@ -328,17 +337,17 @@ UNFOLD = {
                     {
                         "title": "Eventos",
                         "icon": "event",
-                        "link": "/admin/events/event/",
+                        "link": "/admin/django/events/event/",
                     },
                     {
                         "title": "Fotos",
                         "icon": "photo_library",
-                        "link": "/admin/photos/photo/",
+                        "link": "/admin/django/photos/photo/",
                     },
                     {
                         "title": "Dorsales",
                         "icon": "tag",
-                        "link": "/admin/photos/bib/",
+                        "link": "/admin/django/photos/bib/",
                     },
                 ],
             },
@@ -349,7 +358,7 @@ UNFOLD = {
                     {
                         "title": "Fotógrafos",
                         "icon": "camera",
-                        "link": "/admin/photographers/photographerlink/",
+                        "link": "/admin/django/photographers/photographerlink/",
                     },
                 ],
             },
@@ -360,7 +369,7 @@ UNFOLD = {
                     {
                         "title": "Solicitudes de borrado",
                         "icon": "delete_forever",
-                        "link": "/admin/privacy/datadeletionrequest/",
+                        "link": "/admin/django/privacy/datadeletionrequest/",
                     },
                 ],
             },
@@ -371,12 +380,12 @@ UNFOLD = {
                     {
                         "title": "Auditoría",
                         "icon": "history",
-                        "link": "/admin/core/auditlog/",
+                        "link": "/admin/django/core/auditlog/",
                     },
                     {
                         "title": "Usuarios",
                         "icon": "people",
-                        "link": "/admin/core/user/",
+                        "link": "/admin/django/core/user/",
                     },
                 ],
             },

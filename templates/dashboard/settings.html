@@ -1,0 +1,118 @@
+{% extends "dashboard/base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Configuración" %} · {{ site_name }}{% endblock %}
+
+{% block dashboard_content %}
+<div class="px-6 md:px-8 py-6">
+
+  {# Header #}
+  <div class="mb-6">
+    <h1 class="font-display font-bold text-2xl tracking-tight">{% trans "Configuración" %}</h1>
+  </div>
+
+  <div class="max-w-2xl space-y-5">
+
+    {# Tu cuenta #}
+    <section class="rf-card p-6">
+      <h2 class="font-display font-bold text-[15px] mb-4">{% trans "Tu cuenta" %}</h2>
+      <div class="space-y-3">
+        <div class="flex justify-between items-center">
+          <span class="rf-label !mb-0">{% trans "Usuario" %}</span>
+          <span class="rf-num text-[13px] text-text-1">{{ request.user.username }}</span>
+        </div>
+        <div class="flex justify-between items-center">
+          <span class="rf-label !mb-0">{% trans "Email" %}</span>
+          <span class="rf-num text-[13px] text-text-1">{{ request.user.email|default:"—" }}</span>
+        </div>
+      </div>
+    </section>
+
+    {# Cambiar contraseña #}
+    <section class="rf-card p-6">
+      <h2 class="font-display font-bold text-[15px] mb-4">{% trans "Cambiar contraseña" %}</h2>
+      <form method="post">
+        {% csrf_token %}
+        {% if password_form.non_field_errors %}
+          <div class="rf-pill rf-pill--red !text-xs w-full justify-start mb-4 !py-2">
+            {{ password_form.non_field_errors }}
+          </div>
+        {% endif %}
+        <div class="space-y-4">
+          <div>
+            <label class="rf-label" for="{{ password_form.old_password.id_for_label }}">{{ password_form.old_password.label }}</label>
+            {{ password_form.old_password }}
+            {% if password_form.old_password.errors %}<p class="text-danger text-[11px] mt-1">{{ password_form.old_password.errors.0 }}</p>{% endif %}
+          </div>
+          <div>
+            <label class="rf-label" for="{{ password_form.new_password1.id_for_label }}">{{ password_form.new_password1.label }}</label>
+            {{ password_form.new_password1 }}
+            {% if password_form.new_password1.help_text %}<p class="text-[11px] text-text-3 mt-1">{{ password_form.new_password1.help_text|safe }}</p>{% endif %}
+            {% if password_form.new_password1.errors %}<p class="text-danger text-[11px] mt-1">{{ password_form.new_password1.errors.0 }}</p>{% endif %}
+          </div>
+          <div>
+            <label class="rf-label" for="{{ password_form.new_password2.id_for_label }}">{{ password_form.new_password2.label }}</label>
+            {{ password_form.new_password2 }}
+            {% if password_form.new_password2.errors %}<p class="text-danger text-[11px] mt-1">{{ password_form.new_password2.errors.0 }}</p>{% endif %}
+          </div>
+        </div>
+        <div class="mt-5">
+          <button type="submit" class="rf-cta" style="padding:.6rem 1.1rem">{% trans "Actualizar contraseña" %}</button>
+        </div>
+      </form>
+    </section>
+
+    {# 2FA #}
+    <section class="rf-card p-6">
+      <h2 class="font-display font-bold text-[15px] mb-2">{% trans "Autenticación en dos pasos (2FA)" %}</h2>
+      <p class="text-text-2 text-[13px] mb-4">{% trans "Agregá una capa extra de seguridad pidiendo un código de tu teléfono al iniciar sesión. Todavía no está disponible." %}</p>
+      <button type="button" disabled class="rf-ghost opacity-50 cursor-not-allowed" style="padding:.6rem 1.1rem">{% trans "Próximamente" %}</button>
+    </section>
+
+    {# Política de retención por defecto #}
+    <section class="rf-card p-6">
+      <h2 class="font-display font-bold text-[15px] mb-4">{% trans "Política de retención por defecto" %}</h2>
+      <div class="space-y-3">
+        <div class="flex justify-between items-center">
+          <span class="text-[13px] text-text-2">{% trans "Galería pública" %}</span>
+          <span class="rf-num text-[13px] text-text-1">{{ retention_defaults.public }} {% trans "días" %}</span>
+        </div>
+        <div class="flex justify-between items-center">
+          <span class="text-[13px] text-text-2">{% trans "Solo búsqueda" %}</span>
+          <span class="rf-num text-[13px] text-text-1">{{ retention_defaults.searchable }} {% trans "días" %}</span>
+        </div>
+        <div class="flex justify-between items-center">
+          <span class="text-[13px] text-text-2">{% trans "Archivo" %}</span>
+          <span class="rf-num text-[13px] text-text-1">{{ retention_defaults.archive }} {% trans "días" %}</span>
+        </div>
+      </div>
+      <p class="text-[11px] text-text-3 mt-4">{% trans "Configurables por evento al crearlo." %}</p>
+    </section>
+
+    {# Branding #}
+    <section class="rf-card p-6">
+      <h2 class="font-display font-bold text-[15px] mb-4">{% trans "Branding" %}</h2>
+      <div class="space-y-3">
+        <div class="flex justify-between items-center">
+          <span class="rf-label !mb-0">{% trans "Nombre del sitio" %}</span>
+          <span class="rf-num text-[13px] text-text-1">{{ site_name }}</span>
+        </div>
+        <div class="flex justify-between items-center">
+          <span class="rf-label !mb-0">{% trans "Dominio" %}</span>
+          <span class="rf-num text-[13px] text-text-1">{{ site_domain }}</span>
+        </div>
+      </div>
+      <p class="text-[11px] text-text-3 mt-4">{% trans "Se configuran por variables de entorno." %}</p>
+    </section>
+
+    {# Documentación #}
+    <section class="rf-card p-6">
+      <h2 class="font-display font-bold text-[15px] mb-4">{% trans "Documentación" %}</h2>
+      <div class="flex flex-col gap-2">
+        <a href="#" class="text-data underline text-[13px]">{% trans "README — instrucciones de setup" %}</a>
+        <a href="#" class="text-data underline text-[13px]">{% trans "Runbook operacional" %}</a>
+      </div>
+    </section>
+
+  </div>
+</div>
+{% endblock %}

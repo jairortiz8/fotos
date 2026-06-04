@@ -15,7 +15,10 @@ sitemaps = {
 }
 
 urlpatterns = [
-    path("admin/", admin.site.urls),
+    # Dashboard admin custom (Fase 5) — herramienta principal de uso diario.
+    path("dashboard/", include("apps.dashboard.urls", namespace="dashboard")),
+    # Django admin (django-unfold) — fallback de emergencia, NO uso diario.
+    path("admin/django/", admin.site.urls),
     path("i18n/", include("django.conf.urls.i18n")),
     path(
         "sitemap.xml",

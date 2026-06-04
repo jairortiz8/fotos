@@ -22,6 +22,8 @@
 - **GitHub**: <https://github.com/jairortiz8/fotos>.
 - **Sentry**: `<pendiente, llega en Fase 6>`.
 - **Site público**: <https://fotos-production-9304.up.railway.app>.
+- **Dashboard admin** (Fase 5, uso diario): <https://fotos-production-9304.up.railway.app/dashboard/> · login con la cuenta super admin.
+- **Django admin** (fallback de emergencia): `/admin/django/`.
 
 ## Cómo deployar
 
@@ -35,6 +37,48 @@ el flujo será:
    arrancar `gunicorn`.
 5. Los servicios `worker` y `beat` reciben la misma imagen pero arrancan
    con comandos distintos (`celery -A config worker` / `celery -A config beat`).
+
+## Usar el dashboard admin (Fase 5)
+
+El dashboard custom (`/dashboard/`) es la herramienta de uso diario. Login con la
+cuenta super admin; la sesión dura 12 h. **Toda acción queda en el Audit Log.**
+
+### Flujo típico de un evento
+
+1. **Crear evento**: sidebar → `+ Nuevo evento` → nombre, fecha, visibilidad.
+   Las fechas de retención se autocalculan (90/180/365); dejalas vacías salvo
+   que quieras override.
+2. **Generar link de upload**: en el evento → `+ Generar link` → nombre del
+   fotógrafo + días de expiración. Se muestra **una sola vez** la URL con el
+   token, un QR descargable y un botón "Copiar p/ WhatsApp" con el mensaje
+   pre-armado. Mandáselo al fotógrafo por WhatsApp.
+3. **Aprobar fotos**: sidebar → `Aprobación` (badge con el pendiente). 
+   - Grilla con multi-select. Seleccioná varias (click en el checkbox) y usá la
+     barra de **Aprobar / Rechazar en bloque** (máximo 100 por vez).
+   - O usá **atajos de teclado** sobre la foto enfocada: `A` aprobar, `R`
+     rechazar, `←/→` navegar, `Space` seleccionar, `Enter` abrir el detalle,
+     `Esc` limpiar selección.
+   - En el detalle (drawer): ves EXIF, podés **agregar/quitar dorsales** a mano
+     y aprobar/rechazar; al aprobar te carga la siguiente pendiente.
+4. Las fotos aprobadas aparecen al instante en la galería pública del evento.
+
+### Revocar o regenerar un link
+
+Sidebar → `Fotógrafos` → fila del fotógrafo → **Revocar** (pide confirmación; el
+link deja de funcionar al instante) o **Regenerar** (crea un token nuevo e
+invalida el viejo — útil si el fotógrafo perdió el link).
+
+### Investigar una queja con el Audit Log
+
+Sidebar → `Audit log`. Filtrá por acción (ej. `photo.rejected`,
+`photographer_link.revoked`), por tipo de objetivo o por rango de fechas. Es de
+**solo lectura** — no se puede borrar ni editar. Útil para responder "¿quién
+borró/aprobó/revocó esto y cuándo?".
+
+### Si el dashboard falla
+
+Usá el Django admin de emergencia en `/admin/django/` para editar cualquier
+registro a mano (misma cuenta de login).
 
 ## Cómo levantar el stack local
 
