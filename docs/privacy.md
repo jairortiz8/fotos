@@ -82,3 +82,21 @@ Antes de tener clientes reales, las pruebas se hicieron con **caras GAN
 sintéticas** (personas que no existen — sin problemas de consentimiento ni
 copyright). Cuando se pruebe con personas reales, debe ser **con su
 consentimiento explícito**. Nunca usar datasets de caras pirateados.
+
+## Retención de datos (consolidado, Fase 6)
+
+Toda la maquinaria de retención corre en crons de Celery beat (ver runbook).
+
+| Dato | Retención | Cómo se aplica |
+|---|---|---|
+| Embeddings faciales | 90 días desde el último uso | `cleanup_old_embeddings` (3 AM) |
+| Fotos de un evento | ~365 días + 30 de gracia | `enforce_event_retention_policy` → `delete_event_photos_permanently` |
+| Audit logs | 2 años | `cleanup_old_audit_logs` (mensual) |
+| Links de fotógrafo | se inactivan al vencer (no se borran) | `cleanup_expired_photographer_links` |
+| IP en AuditLog | indefinida, **anonimizada** (último octeto a 0) | `anonymize_ip` al guardar |
+| IP para rate limiting | no se guarda cruda; **hash con salt diaria** | `hash_ip` (el hash cambia cada día → no se puede correlacionar) |
+| Selfie de búsqueda/borrado | **no se guarda** — en memoria y se descarta | síncrono en la vista |
+
+Eventos con `permanent_archive=True` quedan exentos de TODO el borrado automático.
+El registro del `Event` nunca se borra (queda `status=deleted` para historial),
+solo sus fotos/embeddings/bibs.

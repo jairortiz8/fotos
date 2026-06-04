@@ -310,12 +310,85 @@ Para calibrar con datos reales:
 python manage.py tune_threshold --selfie s.jpg --positives pos/ --negatives neg/
 ```
 
-## Backups
+## Crons de retención y cleanup (Fase 6)
 
-> **Fase 0**: no aplica todavía (no hay datos en producción).
->
-> **Fase 1+**: Railway hace snapshots automáticos de Postgres. Documentar
-> acá la frecuencia y cómo restaurar.
+Corren en el servicio `beat` (Celery beat). **Recordá: el worker + beat todavía
+no existen en Railway** (pendiente) — hasta crearlos, estos crons NO corren en
+prod. Horarios (`CELERY_BEAT_SCHEDULE` en `config/settings/base.py`):
+
+| Task | Horario | Qué hace |
+|---|---|---|
+| `enforce_event_retention_policy` | 02:00 diario | avanza estados de eventos según fechas |
+| `cleanup_old_embeddings` | 03:00 diario | borra embeddings inactivos > 90 días |
+| `cleanup_expired_photographer_links` | 04:00 diario | marca inactivos los links vencidos |
+| `cleanup_failed_processing` | cada 6 h | marca failed fotos atascadas > 1 h |
+| `cleanup_expired_zips` | cada hora (:15) | borra ZIPs vencidos de R2 |
+| `backup_database` | 01:00 diario | pg_dump → R2 (ver ADR 0010) |
+| `cleanup_orphaned_r2_objects` | Domingo 05:00 | detecta objetos huérfanos en R2 |
+| `cleanup_old_audit_logs` | día 1 del mes 06:00 | borra audit logs > 2 años |
+
+**Forzar un cron a mano** (ej. para probar la retención sin esperar a las 2 AM):
+```bash
+railway run python manage.py shell
+```
+```python
+from apps.privacy.tasks import enforce_event_retention_policy
+enforce_event_retention_policy()   # corre síncrono en el shell
+```
+
+## Backups y recuperación
+
+**Estrategia (ADR 0010):**
+- **PRIMARIO — snapshots de Railway**: el servicio Postgres de Railway hace
+  snapshots automáticos. Es la fuente de verdad para restaurar.
+- **SECUNDARIO — dump a R2**: `backup_database` (beat 1 AM) sube un `pg_dump`
+  gzipeado a `runfoto-prod/backups/db/`. Hoy requiere `postgresql-client-18` en
+  la imagen (pendiente; ver ADR 0010). Backup manual: `python manage.py backup_db`.
+
+**Restaurar desde un snapshot de Railway:**
+1. Railway → proyecto → servicio `Postgres` → pestaña **Backups/Snapshots**.
+2. Elegí el snapshot por fecha → **Restore** (Railway crea una DB nueva o
+   restaura sobre la actual según la opción).
+3. Verificá con `railway run python manage.py shell` → contar eventos/fotos.
+4. Re-deployar el servicio web si hace falta que tome la DB restaurada.
+
+**Restaurar desde el dump de R2** (si Railway no estuviera disponible):
+```bash
+# bajar el último dump de R2 (vía dashboard de Cloudflare o boto3) y:
+gunzip runfoto_backup.sql.gz
+psql "$DATABASE_URL" < runfoto_backup.sql
+```
+
+## Manejar un incidente de seguridad
+
+1. **Contené**: si se filtró una credencial (R2, SECRET_KEY, DB), rotala YA
+   (ver "Rotación de credenciales") y redeployá.
+2. **Revocá accesos**: cambiá el password del super admin desde
+   `/dashboard/configuracion/`. Revocá links de fotógrafo sospechosos.
+3. **Investigá con el Audit Log**: `/dashboard/audit-log/` — filtrá por acción y
+   fecha para ver qué pasó y cuándo.
+4. **Revisá Sentry**: errores anómalos (picos de 500, rate-limit) suelen aparecer ahí.
+5. **Documentá** el incidente acá abajo (síntoma → causa → fix) para la próxima.
+
+## Investigar una foto reportada (alguien pide que la bajemos)
+
+1. Pedile a la persona que use `/privacidad/borrar-mis-datos/` (sube un selfie,
+   se borran sus fotos de todos los eventos). Es lo más rápido y no necesita admin.
+2. Si no puede (no aparece bien en el selfie, etc.): buscá la foto en el dashboard
+   (evento → tab Fotos), abrí el detalle y rechazala/borrala. Queda en el Audit Log.
+3. Para menores: el preview ya se blurea automático (Fase 4). Si piden borrado
+   total, borrá la foto original desde el dashboard.
+
+## Escalar si crece el tráfico
+
+- **Vertical (lo primero)**: subí RAM/CPU del servicio `fotos` en Railway. La
+  búsqueda facial necesita ≥2 GB para `buffalo_l` (ver Incidentes).
+- **Workers**: agregá más concurrencia al `worker` (`--concurrency=N`) o un
+  segundo worker para el procesamiento de uploads (OCR + caras) en eventos grandes.
+- **DB**: si las queries se ponen lentas, PgBouncer (Railway lo ofrece) o subir
+  el plan de Postgres. Hoy `CONN_MAX_AGE=60` alcanza.
+- **Horizontal (web)**: Railway permite múltiples réplicas del servicio web; el
+  estado vive en Postgres/Redis/R2, así que el web es stateless y escala bien.
 
 ## Rotación de credenciales
 

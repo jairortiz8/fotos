@@ -51,6 +51,9 @@ dependencies = [
     # --- Server / ops ---
     "gunicorn>=23.0",
     "sentry-sdk[django]>=2.0",
+    # --- Seguridad / observabilidad (Fase 6) ---
+    "django-csp>=3.8",
+    "python-json-logger>=2.0",
 ]
 
 [project.optional-dependencies]

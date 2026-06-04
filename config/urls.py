@@ -33,6 +33,10 @@ urlpatterns = [
     path("", include("apps.core.urls", namespace="core")),
 ]
 
+# Páginas de error custom (Fase 6). Django las usa con DEBUG=False.
+handler404 = "apps.core.views.handler404"
+handler500 = "apps.core.views.handler500"
+
 # Debug toolbar solo en dev.
 if settings.DEBUG:
     import debug_toolbar

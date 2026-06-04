@@ -7,9 +7,11 @@ las reusen sin duplicar.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import re
 
 from django.http import HttpRequest
+from django.utils import timezone
 from django_ratelimit.core import is_ratelimited
 
 
@@ -24,9 +26,34 @@ def get_client_ip(request: HttpRequest) -> str | None:
     return request.META.get("REMOTE_ADDR")
 
 
-def hash_ip(ip: str | None) -> str:
-    """sha256 de la IP para rate-limiting / logging sin guardar la IP cruda."""
-    return hashlib.sha256((ip or "").encode("utf-8")).hexdigest()
+def anonymize_ip(ip_str: str | None) -> str | None:
+    """Anonimiza una IP truncándola (la guardamos parcial, no cruda).
+
+    IPv4: pone en 0 el último octeto       1.2.3.4    → 1.2.3.0
+    IPv6: pone en 0 los últimos 80 bits    2001:db8::1 → 2001:db8::
+    Devuelve None si el input no es una IP válida.
+    """
+    if not ip_str:
+        return None
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return None
+    if isinstance(ip, ipaddress.IPv4Address):
+        return str(ipaddress.IPv4Address(ip.packed[:3] + b"\x00"))
+    return str(ipaddress.IPv6Address(ip.packed[:6] + b"\x00" * 10))
+
+
+def hash_ip(ip: str | None, salt: str | None = None) -> str:
+    """sha256 de la IP para rate-limiting / logging sin guardar la IP cruda.
+
+    Usa una salt DIARIA por default (fecha UTC): el hash de una misma IP cambia
+    cada día, así no se puede correlacionar la actividad de una IP a lo largo del
+    tiempo ni hacer reverse-lookup con un diccionario de IPs.
+    """
+    if salt is None:
+        salt = timezone.now().strftime("%Y-%m-%d")
+    return hashlib.sha256(f"{ip or ''}:{salt}".encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------

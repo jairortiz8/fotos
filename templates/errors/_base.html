@@ -1,0 +1,28 @@
+{% load static i18n %}<!doctype html>
+{% comment %}
+Base self-contained para páginas de error. NO extiende base.html ni usa context
+processors ({{ site_name }} etc.) — así el 500 renderiza aunque el contexto falle.
+El wordmark va hardcodeado a "RunFoto".
+{% endcomment %}
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a0a0b">
+  <title>{% block title %}RunFoto{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
+</head>
+<body class="min-h-screen bg-ink-0 text-text-1 font-body antialiased grid place-items-center px-6 py-12">
+  <div class="max-w-md w-full text-center">
+    <div class="mb-6 flex justify-center">
+      <span class="rf-wordmark" style="font-size:30px"><span>RunFoto</span><span class="rf-wordmark__dot" aria-hidden="true"></span></span>
+    </div>
+    <div class="rf-num text-5xl text-text-3 mb-3">{% block code %}{% endblock %}</div>
+    <h1 class="font-display font-bold text-2xl mb-3">{% block heading %}{% endblock %}</h1>
+    <p class="text-text-2 leading-relaxed mb-7">{% block message %}{% endblock %}</p>
+    <div class="flex flex-wrap gap-3 justify-center">{% block actions %}
+      <a href="/" class="rf-cta">{% trans "Volver al inicio" %}</a>
+    {% endblock %}</div>
+  </div>
+</body>
+</html>

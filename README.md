@@ -118,6 +118,20 @@ Hoy todavía no está conectado Railway al repo. Cuando se conecte:
 
 Más detalle en [`docs/runbook.md`](docs/runbook.md).
 
+## Troubleshooting común
+
+| Síntoma | Causa probable / Solución |
+|---|---|
+| Búsqueda por selfie da 503 en prod | Es a propósito: `FACE_SEARCH_ENABLED=false` (el modelo no entra en 1 GB). Subir RAM del servicio web → ver runbook. |
+| Tests fallan con `relation ... does not exist` | La DB local no está migrada: `python manage.py migrate`. |
+| `cv2`/`libGL.so.1` al importar en local | Faltan libs del sistema; en mac: `brew install`. En Docker ya están (ver Dockerfile). |
+| Las fotos suben pero quedan en `processing` | El `worker` de Celery no está corriendo (en prod sigue pendiente de crear). |
+| Los crons de retención no corren | El `beat` de Celery no está corriendo (pendiente en prod). |
+| CSP rompe algo en el browser | Revisar `CONTENT_SECURITY_POLICY` en `config/settings/base.py` y la consola del navegador. |
+| El backup `pg_dump` falla en prod | Falta `postgresql-client-18` en la imagen (ver ADR 0010); usar snapshots de Railway. |
+
+Más incidentes y cómo resolverlos en [`docs/runbook.md`](docs/runbook.md) → Incidentes.
+
 ## Modelos principales (Fase 1)
 
 | Modelo                                 | Para qué sirve                                                                                                              |

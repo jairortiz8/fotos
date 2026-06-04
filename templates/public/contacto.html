@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Contacto" %} · {{ site_name }}{% endblock %}
+
+{% block body %}
+<main class="max-w-2xl mx-auto px-6 py-12">
+  <h1 class="font-display font-bold text-3xl mb-2">{% trans "Contacto" %}</h1>
+  <p class="text-text-3 text-sm mb-8">{% trans "Estamos para ayudarte." %}</p>
+
+  <p class="text-text-2 leading-relaxed mb-3">
+    {% blocktrans %}¿Tenés una consulta, querés reportar una foto o pedir que borremos tus datos? Acá te contamos cómo.{% endblocktrans %}
+  </p>
+
+  <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "Para borrar tus fotos" %}</h2>
+  <p class="text-text-2 leading-relaxed mb-3">
+    {% blocktrans %}Si querés que borremos tus fotos y datos, podés hacerlo vos mismo de forma inmediata. Subís una selfie, encontramos tus fotos en todos los eventos y las borramos.{% endblocktrans %}
+  </p>
+  <div class="rf-card p-5">
+    <p class="text-text-1 font-display font-bold text-base mb-1">{% trans "Borrá tus fotos al instante" %}</p>
+    <p class="text-text-2 leading-relaxed mb-3">
+      {% trans "Es un proceso automático y gratuito. No necesitás cuenta." %}
+    </p>
+    <a href="{% url 'privacy:delete_my_data' %}" class="rf-cta">{% trans "Borrar mis datos" %}</a>
+  </div>
+
+  <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "Reportar una foto u otras consultas" %}</h2>
+  <p class="text-text-2 leading-relaxed mb-3">
+    {% blocktrans %}Si aparecés en una foto y no querés que esté publicada, o si tenés cualquier otra consulta, escribinos por WhatsApp o por email:{% endblocktrans %}
+  </p>
+  <ul class="list-disc pl-5 text-text-2 space-y-1.5 mb-3">
+    <li>{% trans "WhatsApp:" %} <span class="font-mono text-data">[{% trans "contacto del organizador" %}]</span></li>
+    <li>{% trans "Email:" %} <span class="font-mono text-data">[{% trans "contacto del organizador" %}]</span></li>
+  </ul>
+  <p class="text-text-2 leading-relaxed mb-3">
+    {% blocktrans %}Te respondemos lo antes posible.{% endblocktrans %}
+  </p>
+
+  <a href="{% url 'core:index' %}" class="text-data hover:underline text-sm">{% trans "← Volver al inicio" %}</a>
+</main>
+{% endblock %}

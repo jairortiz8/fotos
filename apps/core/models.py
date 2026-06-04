@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ipaddress
 from typing import Any
 
 from django.conf import settings
@@ -12,6 +11,7 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from apps.core.fields import EncryptedCharField
+from apps.core.utils import anonymize_ip
 
 
 # ---------------------------------------------------------------------------
@@ -171,21 +171,8 @@ class AuditLog(TimeStampedModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def anonymize_ip(raw: str | None) -> str | None:
-    """Anonimizar IP: zero last octet en IPv4, zero últimos 80 bits en IPv6."""
-    if not raw:
-        return None
-    try:
-        ip = ipaddress.ip_address(raw)
-    except (ValueError, TypeError):
-        return None
-    if isinstance(ip, ipaddress.IPv4Address):
-        parts = str(ip).split(".")
-        parts[-1] = "0"
-        return ".".join(parts)
-    # IPv6: dejamos solo los primeros 48 bits, ceros el resto.
-    network = ipaddress.ip_network(f"{ip}/48", strict=False)
-    return str(network.network_address)
+# `anonymize_ip` se movió a apps/core/utils.py (Fase 6) para centralizar todos
+# los helpers de IP. Se re-exporta en los imports de arriba.
 
 
 def utc_now() -> Any:

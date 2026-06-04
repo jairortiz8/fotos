@@ -152,6 +152,18 @@ class R2Storage:
             logger.exception("R2 batch delete failed for %d keys", len(keys))
             raise R2UploadError(str(exc)) from exc
 
+    def list_keys(self, prefix: str = "") -> list[str]:
+        """Lista TODAS las keys del bucket bajo `prefix` (paginado, sin límite)."""
+        keys: list[str] = []
+        try:
+            paginator = self.client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+                keys.extend(obj["Key"] for obj in page.get("Contents", []))
+        except (BotoCoreError, ClientError) as exc:
+            logger.exception("R2 list_keys failed for prefix %s", prefix)
+            raise R2UploadError(str(exc)) from exc
+        return keys
+
 
 # ---------------------------------------------------------------------------
 # Helpers de keys

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Política de cookies" %} · {{ site_name }}{% endblock %}
+
+{% block body %}
+<main class="max-w-2xl mx-auto px-6 py-12">
+  <h1 class="font-display font-bold text-3xl mb-2">{% trans "Política de cookies" %}</h1>
+  <p class="text-text-3 text-sm mb-8">{% trans "Última actualización: junio 2026" %}</p>
+
+  <p class="text-text-2 leading-relaxed mb-3">
+    {% blocktrans with site_name=site_name %}{{ site_name }} usa muy pocas cookies. Solo las técnicas que son indispensables para que el sitio funcione de forma segura. No usamos cookies para seguirte ni para mostrarte publicidad.{% endblocktrans %}
+  </p>
+
+  <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "Qué cookies usamos" %}</h2>
+  <ul class="list-disc pl-5 text-text-2 space-y-1.5 mb-3">
+    <li>{% trans "Cookie de sesión: se usa solo para el panel de administración. Como corredor, no la necesitás para buscar ni descargar tus fotos." %}</li>
+    <li>{% trans "Cookie CSRF: protege los formularios contra ataques. Es una medida de seguridad estándar." %}</li>
+  </ul>
+
+  <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "Qué cookies NO usamos" %}</h2>
+  <p class="text-text-2 leading-relaxed mb-3">
+    {% blocktrans %}No usamos cookies de seguimiento, de analítica ni de publicidad. No armamos perfiles tuyos ni compartimos tus datos con terceros.{% endblocktrans %}
+  </p>
+
+  <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "Por qué no hay banner de cookies" %}</h2>
+  <p class="text-text-2 leading-relaxed mb-3">
+    {% blocktrans %}No mostramos un banner de cookies porque solo usamos cookies esenciales para que el sitio funcione. Este tipo de cookies no requiere tu consentimiento previo.{% endblocktrans %}
+  </p>
+
+  <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "Cómo controlar las cookies" %}</h2>
+  <p class="text-text-2 leading-relaxed mb-3">
+    {% blocktrans %}Podés bloquear o borrar las cookies desde la configuración de tu navegador. Tené en cuenta que, si las bloqueás, el panel de administración puede dejar de funcionar. A los corredores no les afecta: vas a poder seguir buscando y descargando tus fotos normalmente.{% endblocktrans %}
+  </p>
+
+  <a href="{% url 'core:index' %}" class="text-data hover:underline text-sm">{% trans "← Volver al inicio" %}</a>
+</main>
+{% endblock %}

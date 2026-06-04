@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Términos de uso" %} · {{ site_name }}{% endblock %}
+
+{% block body %}
+<main class="max-w-2xl mx-auto px-6 py-12">
+  <h1 class="font-display font-bold text-3xl mb-2">{% trans "Términos de uso" %}</h1>
+  <p class="text-text-3 text-sm mb-8">{% trans "Última actualización: junio 2026" %}</p>
+
+  <p class="text-text-2 leading-relaxed mb-3">
+    {% blocktrans with site_name=site_name %}{{ site_name }} es un servicio gratuito para que encuentres y descargues tus fotos de carreras deportivas. Al usar el sitio, aceptás estos términos. Si no estás de acuerdo, te pedimos que no lo uses.{% endblocktrans %}
+  </p>
+
+  <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "El servicio" %}</h2>
+  <p class="text-text-2 leading-relaxed mb-3">
+    {% blocktrans with site_name=site_name %}{{ site_name }} es totalmente gratuito. No necesitás crear una cuenta para buscar ni descargar tus fotos. Cuando encontrás tus fotos, las descargás en alta resolución y sin marca de agua.{% endblocktrans %}
+  </p>
+  <p class="text-text-2 leading-relaxed mb-3">
+    {% blocktrans %}El servicio se ofrece "tal cual", sin garantías de disponibilidad continua. Podemos hacer mantenimiento, cambios o interrupciones en cualquier momento. Hacemos lo posible para que todo funcione, pero no garantizamos que el sitio esté siempre disponible ni libre de errores.{% endblocktrans %}
+  </p>
+
+  <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "Uso permitido" %}</h2>
+  <p class="text-text-2 leading-relaxed mb-3">
+    {% blocktrans %}Las fotos que descargás son para tu uso personal como corredor. Podés guardarlas, imprimirlas y compartirlas en tus redes.{% endblocktrans %}
+  </p>
+  <ul class="list-disc pl-5 text-text-2 space-y-1.5 mb-3">
+    <li>{% trans "No revendas las fotos ni las uses con fines comerciales sin permiso del organizador o del fotógrafo." %}</li>
+    <li>{% trans "No uses el sitio para descargar fotos de otras personas de forma masiva o automatizada." %}</li>
+    <li>{% trans "No intentes acceder a fotos originales o a áreas del sistema que no son públicas." %}</li>
+  </ul>
+
+  <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "Propiedad de las fotos" %}</h2>
+  <p class="text-text-2 leading-relaxed mb-3">
+    {% blocktrans with site_name=site_name %}Las fotos pertenecen a los fotógrafos y organizadores de cada evento. {{ site_name }} solo las distribuye para que las puedas encontrar y descargar; no reclama propiedad sobre ellas.{% endblocktrans %}
+  </p>
+
+  <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "Privacidad y datos" %}</h2>
+  <p class="text-text-2 leading-relaxed mb-3">
+    {% blocktrans %}Tu privacidad nos importa. Te recomendamos leer nuestra política de privacidad para entender qué datos procesamos y por cuánto tiempo. Si en algún momento querés que borremos tus fotos y datos, podés hacerlo vos mismo en cualquier momento.{% endblocktrans %}
+  </p>
+  <ul class="list-disc pl-5 text-text-2 space-y-1.5 mb-3">
+    <li><a href="{% url 'privacy:policy' %}" class="text-data hover:underline">{% trans "Política de privacidad" %}</a></li>
+    <li><a href="{% url 'privacy:delete_my_data' %}" class="text-data hover:underline">{% trans "Borrar mis datos" %}</a></li>
+  </ul>
+
+  <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "Cambios en estos términos" %}</h2>
+  <p class="text-text-2 leading-relaxed mb-3">
+    {% blocktrans %}Podemos actualizar estos términos cuando sea necesario. La fecha que ves arriba indica cuál es la última versión. Si seguís usando el sitio después de un cambio, entendemos que aceptás los términos actualizados.{% endblocktrans %}
+  </p>
+
+  <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "Contacto" %}</h2>
+  <p class="text-text-2 leading-relaxed mb-3">
+    {% blocktrans %}Si tenés alguna consulta sobre estos términos, escribinos. Encontrás cómo contactarnos en la página de contacto.{% endblocktrans %}
+  </p>
+
+  <a href="{% url 'core:index' %}" class="text-data hover:underline text-sm">{% trans "← Volver al inicio" %}</a>
+</main>
+{% endblock %}

@@ -33,6 +33,8 @@ env = environ.Env(
     SENTRY_DSN=(str, ""),
     SENTRY_ENVIRONMENT=(str, "development"),
     SENTRY_TRACES_SAMPLE_RATE=(float, 0.0),
+    LOG_LEVEL=(str, "INFO"),
+    GIT_SHA=(str, "unknown"),
     NOTIFIER_BACKEND=(str, "whatsapp_manual"),
     LANGUAGE_CODE=(str, "es"),
     TIME_ZONE=(str, "America/Guatemala"),
@@ -95,6 +97,7 @@ DJANGO_APPS = [
 THIRD_PARTY_APPS = [
     "rest_framework",
     "django_htmx",
+    "csp",  # Content Security Policy (Fase 6)
     "tailwind",
     # "theme" se agrega después de `python manage.py tailwind init theme`.
     "theme",
@@ -129,7 +132,39 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "django_htmx.middleware.HtmxMiddleware",
+    "csp.middleware.CSPMiddleware",
 ]
+
+# ----------------------------------------------------------------------------
+# Content Security Policy (django-csp 4.x). Ajustada a lo que RunFoto usa de
+# verdad (NO Google Fonts — auto-hospedamos). 'unsafe-inline' en script/style
+# es necesario por las directivas inline de Alpine.js y estilos puntuales.
+# ----------------------------------------------------------------------------
+# NOTA sobre script-src:
+#   - 'unsafe-eval' es OBLIGATORIO para Alpine.js: su build estándar (cdn.min.js)
+#     evalúa las expresiones de los directivos (x-data, x-show, @click, ...) con
+#     `new Function()`. Sin 'unsafe-eval' el navegador real bloquea TODA la
+#     interactividad de Alpine (multi-select, bottom sheet de descarga, menú y
+#     drawer del dashboard, navegación del lightbox). Verificado en navegador.
+#     Alternativa más estricta a futuro: migrar al build @alpinejs/csp (sin eval)
+#     reescribiendo las expresiones inline como componentes Alpine.data(). Ver
+#     docs/adr/0009-security-headers.md.
+#   - 'unsafe-inline' cubre los pocos <script> inline y los handlers; junto con
+#     'unsafe-eval' es el perfil habitual de un sitio HTMX + Alpine + Tailwind.
+CONTENT_SECURITY_POLICY = {
+    "DIRECTIVES": {
+        "default-src": ["'self'"],
+        "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://unpkg.com"],
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "font-src": ["'self'"],
+        "img-src": ["'self'", "data:", "https://*.r2.cloudflarestorage.com"],
+        "connect-src": ["'self'", "https://*.ingest.sentry.io", "https://*.ingest.us.sentry.io"],
+        "frame-ancestors": ["'none'"],
+        "form-action": ["'self'"],
+        "base-uri": ["'self'"],
+        "object-src": ["'none'"],
+    }
+}
 
 # ----------------------------------------------------------------------------
 # URL / WSGI / ASGI
@@ -192,15 +227,45 @@ CELERY_TIMEZONE = env("TIME_ZONE")
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 60 * 30  # 30 min
 CELERY_BEAT_SCHEDULE: dict[str, dict] = {
-    # Borra ZIPs expirados de R2 cada hora (Fase 3).
-    "cleanup-expired-zips": {
-        "task": "downloads.cleanup_expired_zips",
-        "schedule": 60 * 60,  # cada hora
+    # Retención escalonada de eventos: avanza estados según fechas (Fase 6).
+    "enforce-event-retention": {
+        "task": "privacy.enforce_event_retention_policy",
+        "schedule": crontab(hour=2, minute=0),  # 2 AM diario
     },
-    # Borra embeddings faciales inactivos > 90 días, diario a las 3 AM (Fase 4).
+    # Borra embeddings faciales inactivos > 90 días (Fase 4).
     "cleanup-old-embeddings": {
         "task": "privacy.cleanup_old_embeddings",
-        "schedule": crontab(hour=3, minute=0),
+        "schedule": crontab(hour=3, minute=0),  # 3 AM diario
+    },
+    # Marca inactivos los links de fotógrafo vencidos (Fase 6).
+    "cleanup-expired-links": {
+        "task": "privacy.cleanup_expired_photographer_links",
+        "schedule": crontab(hour=4, minute=0),  # 4 AM diario
+    },
+    # Marca failed las fotos atascadas en uploading/processing > 1h (Fase 6).
+    "cleanup-stuck-photos": {
+        "task": "privacy.cleanup_failed_processing",
+        "schedule": crontab(minute=0, hour="*/6"),  # cada 6 horas
+    },
+    # Borra ZIPs expirados de R2 (Fase 3).
+    "cleanup-expired-zips": {
+        "task": "downloads.cleanup_expired_zips",
+        "schedule": crontab(minute=15),  # cada hora :15
+    },
+    # Detecta objetos huérfanos en R2 (Fase 6).
+    "cleanup-orphaned-r2": {
+        "task": "privacy.cleanup_orphaned_r2_objects",
+        "schedule": crontab(hour=5, minute=0, day_of_week=0),  # Domingo 5 AM
+    },
+    # Backup de la DB a R2 (Fase 6).
+    "backup-database": {
+        "task": "core.backup_database",
+        "schedule": crontab(hour=1, minute=0),  # 1 AM diario
+    },
+    # Borra audit logs > 2 años (Fase 6).
+    "cleanup-old-audit-logs": {
+        "task": "privacy.cleanup_old_audit_logs",
+        "schedule": crontab(hour=6, minute=0, day_of_month=1),  # día 1 del mes, 6 AM
     },
 }
 
@@ -422,24 +487,33 @@ PHOTO_UPLOAD_MAX_BYTES = env("PHOTO_UPLOAD_MAX_MB") * 1024 * 1024
 # ----------------------------------------------------------------------------
 # Logging — JSON-ish para Sentry / Railway
 # ----------------------------------------------------------------------------
+# En prod usamos logs JSON (fáciles de parsear/filtrar en Railway); en dev,
+# texto legible. GIT_SHA y release se exponen para correlacionar con Sentry.
+GIT_SHA = env("GIT_SHA")
+LOG_LEVEL = env("LOG_LEVEL")
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
+        "json": {
+            "()": "pythonjsonlogger.json.JsonFormatter",
+            "format": "%(asctime)s %(name)s %(levelname)s %(message)s",
+        },
         "verbose": {
-            "format": "{asctime} {levelname} {name} {message}",
+            "format": "{levelname} {asctime} {module} {message}",
             "style": "{",
         },
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
-            "formatter": "verbose",
+            "formatter": "verbose" if DEBUG else "json",
         },
     },
     "root": {"handlers": ["console"], "level": "INFO"},
     "loggers": {
-        "django": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "django": {"handlers": ["console"], "level": LOG_LEVEL, "propagate": False},
+        "apps": {"handlers": ["console"], "level": LOG_LEVEL, "propagate": False},
         "celery": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
 }

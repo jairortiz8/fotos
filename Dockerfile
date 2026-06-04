@@ -139,7 +139,7 @@ EXPOSE 8000
 
 # Healthcheck (Docker; Railway tiene el suyo en railway.toml).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:${PORT}/healthz || exit 1
+    CMD curl -fsS http://127.0.0.1:${PORT}/healthz/lite || exit 1
 
 # Default command: web. Worker y beat overridean en railway.toml / compose.
 #  --timeout 120: la 1ª búsqueda por selfie carga buffalo_l en memoria (~5-10s).

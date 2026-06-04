@@ -1,0 +1,6 @@
+{% extends "errors/_base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Error del servidor" %} · RunFoto{% endblock %}
+{% block code %}500{% endblock %}
+{% block heading %}{% trans "Algo salió mal" %}{% endblock %}
+{% block message %}{% trans "Tuvimos un problema de nuestro lado. Ya nos enteramos y lo estamos arreglando. Probá de nuevo en un rato." %}{% endblock %}

@@ -1,0 +1,7 @@
+{% extends "errors/_base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Link no válido" %} · RunFoto{% endblock %}
+{% block code %}410{% endblock %}
+{% block heading %}{% trans "Este link ya no es válido" %}{% endblock %}
+{% block message %}{% trans "El link de subida venció o fue revocado. Contactá al organizador para que te genere uno nuevo." %}{% endblock %}
+{% block actions %}<a href="/" class="rf-ghost">{% trans "Ir al inicio" %}</a>{% endblock %}

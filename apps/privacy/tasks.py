@@ -7,21 +7,34 @@ descartó en la vista (síncrono).
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import logging
+from typing import Any
 
 from celery import shared_task
 from django.db.models import Q
 from django.utils import timezone
 
 from apps.core.models import AuditLog
-from apps.photos.models import Bib, FaceEmbedding, Photo
-from apps.photos.storage import R2NotConfiguredError, default_storage
+from apps.events.models import Event, EventStatus
+from apps.photographers.models import PhotographerLink
+from apps.photos.models import Bib, FaceEmbedding, Photo, PhotoStatus
+from apps.photos.storage import R2NotConfiguredError, R2UploadError, default_storage
 from apps.privacy.models import DataDeletionRequest, DeletionStatus
 
 logger = logging.getLogger(__name__)
 
 EMBEDDING_RETENTION_DAYS = 90
+ARCHIVED_GRACE_DAYS = 30  # tiempo en `archived` antes de pasar a pending_deletion
+AUDIT_LOG_RETENTION_DAYS = 2 * 365
+STUCK_PHOTO_HOURS = 1
+ORPHAN_ALERT_THRESHOLD = 100  # si hay más huérfanos que esto, NO borramos: alertamos
+R2_DELETE_BATCH = 1000  # límite de delete_objects de R2/S3
+
+
+def _chunked(seq: list[str], size: int) -> list[list[str]]:
+    return [seq[i : i + size] for i in range(0, len(seq), size)]
 
 
 @shared_task(name="privacy.delete_photos_for_request", bind=True, max_retries=2)
@@ -111,3 +124,192 @@ def cleanup_old_embeddings() -> dict[str, int]:
 
     AuditLog.log("privacy.embeddings_cleanup", metadata={"deleted_count": count})
     return {"deleted_count": count}
+
+
+# ---------------------------------------------------------------------------
+# Retención escalonada de EVENTOS (Fase 6)
+# ---------------------------------------------------------------------------
+@shared_task(name="privacy.enforce_event_retention_policy")
+def enforce_event_retention_policy() -> dict[str, int]:
+    """Avanza el estado de los eventos según sus fechas de retención (beat 2 AM).
+
+    live → public_closed → searchable_only → archived → pending_deletion.
+    `permanent_archive=True` ignora todas las transiciones. Idempotente: cada
+    transición filtra por el estado actual + la fecha, así re-correr no hace nada.
+    """
+    now = timezone.now()
+
+    def _advance(qs: Any, new_status: str, reason: str) -> int:
+        n = 0
+        for event in qs:
+            old = event.status
+            event.status = new_status
+            event.save(update_fields=["status", "updated_at"])
+            AuditLog.log(
+                "event.status_changed",
+                target=event,
+                metadata={"from": old, "to": new_status, "reason": reason},
+            )
+            n += 1
+        return n
+
+    counts = {
+        "public_closed": _advance(
+            Event.objects.filter(
+                status=EventStatus.LIVE, public_until__lt=now, permanent_archive=False
+            ),
+            EventStatus.PUBLIC_CLOSED,
+            "public_until_passed",
+        ),
+        "searchable_only": _advance(
+            Event.objects.filter(
+                status=EventStatus.PUBLIC_CLOSED,
+                searchable_until__lt=now,
+                permanent_archive=False,
+            ),
+            EventStatus.SEARCHABLE_ONLY,
+            "searchable_until_passed",
+        ),
+        "archived": _advance(
+            Event.objects.filter(
+                status=EventStatus.SEARCHABLE_ONLY,
+                archive_until__lt=now,
+                permanent_archive=False,
+            ),
+            EventStatus.ARCHIVED,
+            "archive_until_passed",
+        ),
+    }
+
+    # archived → pending_deletion (tras ARCHIVED_GRACE_DAYS desde archive_until)
+    grace_cutoff = now - dt.timedelta(days=ARCHIVED_GRACE_DAYS)
+    pending = 0
+    for event in Event.objects.filter(
+        status=EventStatus.ARCHIVED, archive_until__lt=grace_cutoff, permanent_archive=False
+    ):
+        event.status = EventStatus.PENDING_DELETION
+        event.save(update_fields=["status", "updated_at"])
+        AuditLog.log("event.scheduled_for_deletion", target=event)
+        pending += 1
+    counts["pending_deletion"] = pending
+
+    # Disparar el borrado real de los que están en pending_deletion.
+    for event in Event.objects.filter(status=EventStatus.PENDING_DELETION):
+        delete_event_photos_permanently.delay(event.id)
+
+    return counts
+
+
+@shared_task(name="privacy.delete_event_photos_permanently", bind=True, max_retries=2)
+def delete_event_photos_permanently(self, event_id: int) -> dict[str, int]:
+    """Borra TODAS las fotos de un evento (R2 + DB). Deja el Event con
+    status='deleted' para historial. Idempotente: re-correr no rompe ni duplica.
+    `permanent_archive=True` lo salta (red de seguridad)."""
+    event = Event.objects.get(id=event_id)
+    if event.permanent_archive:
+        logger.warning("delete_event %s saltado: permanent_archive=True", event_id)
+        return {"skipped": 1}
+
+    photos = Photo.objects.filter(event=event)
+    keys: list[str] = []
+    for photo in photos.iterator(chunk_size=500):
+        keys.extend(k for k in (photo.original_key, photo.preview_key, photo.thumbnail_key) if k)
+
+    if keys:
+        try:
+            for batch in _chunked(keys, R2_DELETE_BATCH):
+                default_storage().delete_many(batch)
+        except (R2NotConfiguredError, R2UploadError):
+            logger.warning("delete_event %s: R2 omitido/parcial; sigo con la DB", event_id)
+
+    emb_deleted = FaceEmbedding.objects.filter(photo__event=event).delete()[0]
+    bib_deleted = Bib.objects.filter(photo__event=event).delete()[0]
+    photo_deleted = Photo.objects.filter(event=event).delete()[0]
+
+    photo_count_at_deletion = event.photo_count
+    event.status = EventStatus.DELETED
+    event.photo_count = 0
+    event.pending_count = 0
+    event.save(update_fields=["status", "photo_count", "pending_count", "updated_at"])
+
+    AuditLog.log(
+        "event.permanently_deleted",
+        target=event,
+        metadata={
+            "photos_deleted": photo_deleted,
+            "embeddings_deleted": emb_deleted,
+            "bibs_deleted": bib_deleted,
+            "r2_keys_deleted": len(keys),
+            "photo_count_at_deletion": photo_count_at_deletion,
+        },
+    )
+    return {"photos_deleted": photo_deleted, "r2_keys_deleted": len(keys)}
+
+
+# ---------------------------------------------------------------------------
+# Cleanups varios (Fase 6)
+# ---------------------------------------------------------------------------
+@shared_task(name="privacy.cleanup_expired_photographer_links")
+def cleanup_expired_photographer_links() -> dict[str, int]:
+    """Marca inactivos los links vencidos (NO los borra: sirven para audit/stats)."""
+    expired = PhotographerLink.objects.filter(is_active=True, expires_at__lt=timezone.now())
+    count = expired.update(is_active=False)
+    if count:
+        AuditLog.log("photographer_links.auto_expired", metadata={"count": count})
+    return {"expired": count}
+
+
+@shared_task(name="privacy.cleanup_old_audit_logs")
+def cleanup_old_audit_logs() -> dict[str, int]:
+    """Borra audit logs > 2 años. ESTA es la única política que permite borrarlos."""
+    cutoff = timezone.now() - dt.timedelta(days=AUDIT_LOG_RETENTION_DAYS)
+    deleted = AuditLog.objects.filter(created_at__lt=cutoff).delete()[0]
+    logger.info("cleanup_old_audit_logs: borrados %d logs > 2 años", deleted)
+    return {"deleted": deleted}
+
+
+@shared_task(name="privacy.cleanup_failed_processing")
+def cleanup_failed_processing() -> dict[str, int]:
+    """Marca como failed las fotos atascadas en uploading/processing > 1 hora."""
+    cutoff = timezone.now() - dt.timedelta(hours=STUCK_PHOTO_HOURS)
+    stuck = Photo.objects.filter(
+        status__in=[PhotoStatus.UPLOADING, PhotoStatus.PROCESSING], updated_at__lt=cutoff
+    )
+    count = 0
+    for photo in stuck:
+        if photo.original_key:
+            with contextlib.suppress(R2NotConfiguredError, R2UploadError):
+                default_storage().delete(photo.original_key)
+        photo.status = PhotoStatus.PROCESSING_FAILED
+        photo.save(update_fields=["status", "updated_at"])
+        count += 1
+    return {"marked_failed": count}
+
+
+@shared_task(name="privacy.cleanup_orphaned_r2_objects")
+def cleanup_orphaned_r2_objects() -> dict[str, int | bool]:
+    """Detecta objetos en R2 sin registro en DB. Si son muchos (>100), alerta y NO
+    borra (señal de bug). Si son pocos, los borra."""
+    try:
+        all_keys = set(default_storage().list_keys(prefix="events/"))
+    except R2NotConfiguredError:
+        logger.warning("cleanup_orphaned_r2: R2 no configurado")
+        return {"orphaned": 0, "configured": False}
+
+    db_keys: set[str] = set()
+    for photo in Photo.objects.iterator(chunk_size=1000):
+        db_keys.update(k for k in (photo.original_key, photo.preview_key, photo.thumbnail_key) if k)
+
+    orphaned = all_keys - db_keys
+    if len(orphaned) > ORPHAN_ALERT_THRESHOLD:
+        logger.warning(
+            "cleanup_orphaned_r2: %d huérfanos (> %d). NO se borran; investigar.",
+            len(orphaned),
+            ORPHAN_ALERT_THRESHOLD,
+        )
+        return {"orphaned": len(orphaned), "deleted": False}
+
+    if orphaned:
+        default_storage().delete_many(list(orphaned))
+        AuditLog.log("r2.orphans_cleaned", metadata={"count": len(orphaned)})
+    return {"orphaned": len(orphaned), "deleted": True}
