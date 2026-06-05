@@ -22,9 +22,15 @@
         href="{% static 'fonts/space-grotesk-latin-700-normal.woff2' %}">
 
   <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
+
+  {# PWA: manifest + iconos (instalable en el celular del corredor) #}
+  <link rel="manifest" href="{% url 'core:manifest' %}">
+  <link rel="icon" type="image/png" sizes="32x32" href="{% static 'img/favicon-32.png' %}">
+  <link rel="apple-touch-icon" href="{% static 'img/apple-touch-icon.png' %}">
   {% block extra_head %}{% endblock %}
 </head>
 <body class="min-h-screen bg-ink-0 text-text-1 font-body antialiased">
+  <a href="#main-content" class="rf-skip-link">{% trans "Saltar al contenido" %}</a>
   {% block privacy_banner %}
   <div class="bg-ink-1 border-b border-border px-4 py-2 text-[11px] text-text-3 text-center">
     {% trans "Usamos reconocimiento facial solo para ayudarte a encontrar tus fotos." %}
@@ -33,7 +39,11 @@
     <a href="{% url 'privacy:delete_my_data' %}" class="text-data underline">{% trans "Borrar mis datos" %}</a>
   </div>
   {% endblock %}
-  {% block body %}{% endblock %}
+  {% block layout %}
+  <main id="main-content" tabindex="-1" class="focus:outline-none">
+    {% block body %}{% endblock %}
+  </main>
+  {% endblock %}
 
   {# HTMX para fragments y Alpine para estado de UI local — defer para no bloquear render. #}
   <script defer src="https://unpkg.com/htmx.org@1.9.12" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>

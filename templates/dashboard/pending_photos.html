@@ -57,7 +57,7 @@
            :class="{ 'ring-2 ring-brand': isSel({{ photo.id }}), 'ring-1 ring-data': focusedId() === {{ photo.id }} }"
            @click="openDrawer({{ photo.id }})">
         {% if photo.thumbnail_key %}
-          <img src="{{ photo.get_thumbnail_url }}" alt="" class="w-full h-full object-cover">
+          <img src="{{ photo.get_thumbnail_url }}" alt="" loading="lazy" decoding="async" class="w-full h-full object-cover">
         {% endif %}
         {# Checkbox #}
         <button type="button" @click.stop="toggle({{ photo.id }})"

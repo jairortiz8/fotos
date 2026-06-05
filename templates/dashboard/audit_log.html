@@ -30,7 +30,7 @@
       <option value="7d" {% if filter_range == "7d" %}selected{% endif %}>{% trans "Últimos 7 días" %}</option>
       <option value="30d" {% if filter_range == "30d" %}selected{% endif %}>{% trans "Últimos 30 días" %}</option>
     </select>
-    <input type="text" name="q" value="{{ filter_q }}" placeholder="{% trans 'Buscar acción…' %}" class="rf-input !w-auto !py-2 text-xs">
+    <input type="text" name="q" value="{{ filter_q }}" aria-label="{% trans 'Buscar acción' %}" placeholder="{% trans 'Buscar acción…' %}" class="rf-input !w-auto !py-2 text-xs">
     <button type="submit" class="rf-ghost" style="padding:.5rem .9rem">{% trans "Filtrar" %}</button>
   </form>
 

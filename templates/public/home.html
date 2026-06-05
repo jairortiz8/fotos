@@ -82,7 +82,7 @@
         <div class="relative h-32 overflow-hidden"
              style="background: linear-gradient(135deg, #1f1f23, #0e0e10);">
           {% if event.cover_image %}
-            <img src="{{ event.cover_image.url }}" alt="{{ event.name }}" class="w-full h-full object-cover">
+            <img src="{{ event.cover_image.url }}" alt="{{ event.name }}" loading="lazy" decoding="async" class="w-full h-full object-cover">
           {% endif %}
           {% if event.status == 'live' %}
           <div class="absolute top-2.5 left-2.5">

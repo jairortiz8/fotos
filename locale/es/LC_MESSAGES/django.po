@@ -1,0 +1,2744 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-06-05 16:19-0600\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=n == 1 ? 0 : n != 0 && n % 1000000 == 0 ? 1 : 2;\n"
+
+#: apps/core/admin.py:40 templates/dashboard/audit_log.html:44
+#: templates/dashboard/login.html:30 templates/dashboard/settings.html:20
+msgid "Usuario"
+msgstr "Usuario"
+
+#: apps/core/admin.py:44
+msgid "Estado MFA"
+msgstr "Estado MFA"
+
+#: apps/core/admin.py:48
+msgid "Secrets (sólo lectura)"
+msgstr "Secrets (sólo lectura)"
+
+#: apps/core/admin.py:52
+msgid "Estos campos quedan ocultos al admin; sólo el sistema los maneja."
+msgstr "Estos campos quedan ocultos al admin; sólo el sistema los maneja."
+
+#: apps/core/admin.py:57 apps/events/admin.py:76
+#: apps/photographers/admin.py:76
+msgid "Timestamps"
+msgstr "Timestamps"
+
+#: apps/core/models.py:26 apps/core/models.py:44
+msgid "creado en"
+msgstr "creado en"
+
+#: apps/core/models.py:27 apps/core/models.py:45
+msgid "actualizado en"
+msgstr "actualizado en"
+
+#: apps/core/models.py:48 apps/core/models.py:67 apps/core/models.py:113
+msgid "usuario"
+msgstr "usuario"
+
+#: apps/core/models.py:49
+msgid "usuarios"
+msgstr "usuarios"
+
+#: apps/core/models.py:70
+msgid "TOTP secret"
+msgstr "TOTP secret"
+
+#: apps/core/models.py:74
+msgid "Encriptado con Fernet (clave derivada de SECRET_KEY)."
+msgstr "Encriptado con Fernet (clave derivada de SECRET_KEY)."
+
+#: apps/core/models.py:77
+msgid "códigos de respaldo"
+msgstr "códigos de respaldo"
+
+#: apps/core/models.py:80
+msgid "Lista de hashes (no códigos en plano)."
+msgstr "Lista de hashes (no códigos en plano)."
+
+#: apps/core/models.py:82
+msgid "MFA activo"
+msgstr "MFA activo"
+
+#: apps/core/models.py:83
+msgid "activado el"
+msgstr "activado el"
+
+#: apps/core/models.py:86
+msgid "MFA de usuario"
+msgstr "MFA de usuario"
+
+#: apps/core/models.py:87
+msgid "MFA de usuarios"
+msgstr "MFA de usuarios"
+
+#: apps/core/models.py:115
+msgid "acción"
+msgstr "acción"
+
+#: apps/core/models.py:116
+msgid "tipo de objeto"
+msgstr "tipo de objeto"
+
+#: apps/core/models.py:117
+msgid "ID del objeto"
+msgstr "ID del objeto"
+
+#: apps/core/models.py:118
+msgid "metadata"
+msgstr "metadata"
+
+#: apps/core/models.py:120
+msgid "IP (anonimizada)"
+msgstr "IP (anonimizada)"
+
+#: apps/core/models.py:123
+msgid "Para IPv4 anonimizamos el último octeto a 0."
+msgstr "Para IPv4 anonimizamos el último octeto a 0."
+
+#: apps/core/models.py:127
+msgid "evento de auditoría"
+msgstr "evento de auditoría"
+
+#: apps/core/models.py:128
+msgid "eventos de auditoría"
+msgstr "eventos de auditoría"
+
+#: apps/dashboard/forms.py:59
+msgid "Opcional. Si lo dejás vacío usamos la política estándar."
+msgstr "Opcional. Si lo dejás vacío usamos la política estándar."
+
+#: apps/dashboard/forms.py:64
+msgid "7 días"
+msgstr "7 días"
+
+#: apps/dashboard/forms.py:65
+msgid "14 días"
+msgstr "14 días"
+
+#: apps/dashboard/forms.py:66
+msgid "30 días"
+msgstr "30 días"
+
+#: apps/dashboard/forms.py:67
+msgid "60 días"
+msgstr "60 días"
+
+#: apps/dashboard/forms.py:68
+msgid "90 días"
+msgstr "90 días"
+
+#: apps/dashboard/forms.py:76
+msgid "Nombre del fotógrafo"
+msgstr "Nombre del fotógrafo"
+
+#: apps/dashboard/forms.py:77
+#: templates/dashboard/partials/generate_link_modal.html:21
+msgid "Email (opcional)"
+msgstr "Email (opcional)"
+
+#: apps/dashboard/forms.py:79
+msgid "Teléfono (opcional)"
+msgstr "Teléfono (opcional)"
+
+#: apps/dashboard/forms.py:82
+#: templates/dashboard/partials/generate_link_modal.html:30
+msgid "Expira en"
+msgstr "Expira en"
+
+#: apps/dashboard/forms.py:85
+msgid "Límite de fotos (opcional)"
+msgstr "Límite de fotos (opcional)"
+
+#: apps/dashboard/forms.py:97
+msgid "Motivo del rechazo"
+msgstr "Motivo del rechazo"
+
+#: apps/dashboard/forms.py:101
+msgid "Opcional…"
+msgstr "Opcional…"
+
+#: apps/dashboard/forms.py:109
+#: templates/dashboard/partials/event_tab_dorsales.html:5
+msgid "Dorsal"
+msgstr "Dorsal"
+
+#: apps/dashboard/services.py:210
+msgid "Revocado"
+msgstr "Revocado"
+
+#: apps/dashboard/services.py:212
+msgid "Expirado"
+msgstr "Expirado"
+
+#: apps/dashboard/services.py:213
+msgid "Activo"
+msgstr "Activo"
+
+#: apps/dashboard/views/auth.py:36
+msgid "Demasiados intentos. Esperá 15 minutos antes de volver a probar."
+msgstr "Demasiados intentos. Esperá 15 minutos antes de volver a probar."
+
+#: apps/dashboard/views/auth.py:45
+msgid "Esta cuenta no tiene acceso al panel."
+msgstr "Esta cuenta no tiene acceso al panel."
+
+#: apps/dashboard/views/events.py:57
+msgid "Evento creado."
+msgstr "Evento creado."
+
+#: apps/dashboard/views/events.py:85
+msgid "Evento actualizado."
+msgstr "Evento actualizado."
+
+#: apps/dashboard/views/events.py:108
+msgid "Resumen"
+msgstr "Resumen"
+
+#: apps/dashboard/views/events.py:109 templates/dashboard/event_list.html:41
+#: templates/dashboard/partials/event_tab_dorsales.html:5
+#: templates/dashboard/partials/event_tab_links.html:10
+#: templates/dashboard/photographer_list.html:37
+msgid "Fotos"
+msgstr "Fotos"
+
+#: apps/dashboard/views/events.py:110
+#: templates/dashboard/partials/_sidebar.html:28
+#: templates/dashboard/partials/event_tab_resumen.html:27
+#: templates/dashboard/photographer_list.html:3
+#: templates/dashboard/photographer_list.html:11
+msgid "Fotógrafos"
+msgstr "Fotógrafos"
+
+#: apps/dashboard/views/events.py:111
+msgid "Links de subida"
+msgstr "Links de subida"
+
+#: apps/dashboard/views/events.py:112
+msgid "Dorsales"
+msgstr "Dorsales"
+
+#: apps/dashboard/views/misc.py:115
+msgid "Contraseña actualizada."
+msgstr "Contraseña actualizada."
+
+#: apps/dashboard/views/photographers.py:66
+msgid "Link revocado."
+msgstr "Link revocado."
+
+#: apps/downloads/models.py:16 apps/privacy/models.py:17
+msgid "Pendiente"
+msgstr "Pendiente"
+
+#: apps/downloads/models.py:17 apps/photos/models.py:26
+#: apps/privacy/models.py:18 templates/photographer/_upload_row.html:18
+#: templates/photographer/portal.html:228
+msgid "Procesando"
+msgstr "Procesando"
+
+#: apps/downloads/models.py:18 templates/photographer/portal.html:233
+msgid "Lista"
+msgstr "Lista"
+
+#: apps/downloads/models.py:19 apps/privacy/models.py:20
+msgid "Falló"
+msgstr "Falló"
+
+#: apps/downloads/models.py:20
+msgid "Expirada"
+msgstr "Expirada"
+
+#: apps/downloads/models.py:30
+msgid "hash de IP solicitante"
+msgstr "hash de IP solicitante"
+
+#: apps/downloads/models.py:32
+msgid "sha256 — sin guardar la IP cruda."
+msgstr "sha256 — sin guardar la IP cruda."
+
+#: apps/downloads/models.py:34
+msgid "IDs de fotos"
+msgstr "IDs de fotos"
+
+#: apps/downloads/models.py:35
+msgid "cantidad de fotos"
+msgstr "cantidad de fotos"
+
+#: apps/downloads/models.py:36
+msgid "tamaño total (MB)"
+msgstr "tamaño total (MB)"
+
+#: apps/downloads/models.py:39 apps/events/admin.py:81
+#: apps/events/models.py:66 apps/photographers/admin.py:82
+#: apps/photos/admin.py:74 apps/photos/models.py:84 apps/privacy/models.py:34
+msgid "estado"
+msgstr "estado"
+
+#: apps/downloads/models.py:44
+msgid "key del ZIP en R2"
+msgstr "key del ZIP en R2"
+
+#: apps/downloads/models.py:45
+msgid "URL firmada"
+msgstr "URL firmada"
+
+#: apps/downloads/models.py:46 apps/photographers/models.py:57
+msgid "expira el"
+msgstr "expira el"
+
+#: apps/downloads/models.py:48 apps/photos/models.py:108
+msgid "descargas"
+msgstr "descargas"
+
+#: apps/downloads/models.py:49 apps/privacy/models.py:46
+msgid "mensaje de error"
+msgstr "mensaje de error"
+
+#: apps/downloads/models.py:52
+msgid "descarga ZIP"
+msgstr "descarga ZIP"
+
+#: apps/downloads/models.py:53
+msgid "descargas ZIP"
+msgstr "descargas ZIP"
+
+#: apps/events/admin.py:43
+msgid "Información"
+msgstr "Información"
+
+#: apps/events/admin.py:46
+msgid "Estado y visibilidad"
+msgstr "Estado y visibilidad"
+
+#: apps/events/admin.py:48
+msgid "Retención"
+msgstr "Retención"
+
+#: apps/events/admin.py:57
+msgid ""
+"Si dejás vacíos los `*_until`, se calculan en base a la fecha del evento (90"
+" / 180 / 365 días). Marcá `permanent_archive` para excluir el evento de la "
+"política de borrado."
+msgstr ""
+"Si dejás vacíos los `*_until`, se calculan en base a la fecha del evento (90"
+" / 180 / 365 días). Marcá `permanent_archive` para excluir el evento de la "
+"política de borrado."
+
+#: apps/events/admin.py:64 templates/dashboard/partials/_sidebar.html:41
+#: templates/dashboard/stats.html:3 templates/dashboard/stats.html:10
+msgid "Estadísticas"
+msgstr "Estadísticas"
+
+#: apps/events/admin.py:105
+msgid "días para archivar"
+msgstr "días para archivar"
+
+#: apps/events/admin.py:112
+msgid "Marcar como archivado"
+msgstr "Marcar como archivado"
+
+#: apps/events/admin.py:117
+#, python-format
+msgid "%d evento archivado."
+msgid_plural "%d eventos archivados."
+msgstr[0] "%d evento archivado."
+msgstr[1] "%d eventos archivados."
+
+#: apps/events/admin.py:121
+msgid "Marcar como en vivo"
+msgstr "Marcar como en vivo"
+
+#: apps/events/admin.py:126
+#, python-format
+msgid "%d evento en vivo."
+msgid_plural "%d eventos en vivo."
+msgstr[0] "%d evento en vivo."
+msgstr[1] "%d eventos en vivo."
+
+#: apps/events/models.py:28
+msgid "Borrador"
+msgstr "Borrador"
+
+#: apps/events/models.py:29 templates/public/event_gallery.html:48
+msgid "Próximo"
+msgstr "Próximo"
+
+#: apps/events/models.py:30 templates/public/event_gallery.html:46
+#: templates/public/home.html:89
+msgid "En vivo"
+msgstr "En vivo"
+
+#: apps/events/models.py:31 templates/public/event_closed.html:4
+msgid "Galería cerrada"
+msgstr "Galería cerrada"
+
+#: apps/events/models.py:32
+msgid "Sólo búsqueda"
+msgstr "Sólo búsqueda"
+
+#: apps/events/models.py:33
+msgid "Archivado"
+msgstr "Archivado"
+
+#: apps/events/models.py:34
+msgid "Pendiente de borrado"
+msgstr "Pendiente de borrado"
+
+#: apps/events/models.py:35
+msgid "Borrado"
+msgstr "Borrado"
+
+#: apps/events/models.py:39
+msgid "Público — listado en home"
+msgstr "Público — listado en home"
+
+#: apps/events/models.py:40
+msgid "No listado — accesible por URL"
+msgstr "No listado — accesible por URL"
+
+#: apps/events/models.py:41
+msgid "Privado — solo admin"
+msgstr "Privado — solo admin"
+
+#: apps/events/models.py:53 apps/photographers/models.py:39
+msgid "nombre"
+msgstr "nombre"
+
+#: apps/events/models.py:54
+msgid "slug"
+msgstr "slug"
+
+#: apps/events/models.py:55
+msgid "fecha del evento"
+msgstr "fecha del evento"
+
+#: apps/events/models.py:56
+msgid "ubicación"
+msgstr "ubicación"
+
+#: apps/events/models.py:57
+msgid "descripción"
+msgstr "descripción"
+
+#: apps/events/models.py:59
+msgid "imagen de portada"
+msgstr "imagen de portada"
+
+#: apps/events/models.py:72
+msgid "visibilidad"
+msgstr "visibilidad"
+
+#: apps/events/models.py:80
+msgid "público hasta"
+msgstr "público hasta"
+
+#: apps/events/models.py:83
+msgid "Después de esta fecha la galería pública se cierra."
+msgstr "Después de esta fecha la galería pública se cierra."
+
+#: apps/events/models.py:86
+msgid "búsquedas habilitadas hasta"
+msgstr "búsquedas habilitadas hasta"
+
+#: apps/events/models.py:89
+msgid "Después de esta fecha solo el admin puede buscar."
+msgstr "Después de esta fecha solo el admin puede buscar."
+
+#: apps/events/models.py:92
+msgid "archivado hasta"
+msgstr "archivado hasta"
+
+#: apps/events/models.py:95
+msgid "Después de esta fecha el evento se borra (R2 + DB)."
+msgstr "Después de esta fecha el evento se borra (R2 + DB)."
+
+#: apps/events/models.py:98
+msgid "archivo permanente"
+msgstr "archivo permanente"
+
+#: apps/events/models.py:101
+msgid ""
+"Si está activado, el evento NUNCA cambia de estado por retención. Para "
+"organizadores que pagan por archivo permanente."
+msgstr ""
+"Si está activado, el evento NUNCA cambia de estado por retención. Para "
+"organizadores que pagan por archivo permanente."
+
+#: apps/events/models.py:107
+msgid "fotos totales"
+msgstr "fotos totales"
+
+#: apps/events/models.py:108
+msgid "fotos pendientes"
+msgstr "fotos pendientes"
+
+#: apps/events/models.py:109 templates/dashboard/pending_photos.html:14
+#: templates/public/event_gallery.html:57
+msgid "fotógrafos"
+msgstr "fotógrafos"
+
+#: apps/events/models.py:110
+msgid "búsquedas realizadas"
+msgstr "búsquedas realizadas"
+
+#: apps/events/models.py:111
+msgid "descargas de ZIP"
+msgstr "descargas de ZIP"
+
+#: apps/events/models.py:114 apps/photographers/models.py:37
+#: apps/photos/models.py:44
+msgid "evento"
+msgstr "evento"
+
+#: apps/events/models.py:115 templates/dashboard/pending_photos.html:14
+msgid "eventos"
+msgstr "eventos"
+
+#: apps/photographers/admin.py:37
+#: templates/dashboard/partials/event_tab_links.html:10
+#: templates/dashboard/partials/generate_link_modal.html:16
+#: templates/dashboard/partials/photo_drawer.html:47
+#: templates/dashboard/photographer_list.html:34
+#: templates/photographer/portal.html:34
+msgid "Fotógrafo"
+msgstr "Fotógrafo"
+
+#: apps/photographers/admin.py:48
+msgid "Vigencia"
+msgstr "Vigencia"
+
+#: apps/photographers/admin.py:60
+msgid "Token"
+msgstr "Token"
+
+#: apps/photographers/admin.py:64
+msgid ""
+"El token plano se ve UNA sola vez al generarlo. Acá guardamos sólo el "
+"SHA-256."
+msgstr ""
+"El token plano se ve UNA sola vez al generarlo. Acá guardamos sólo el "
+"SHA-256."
+
+#: apps/photographers/admin.py:69
+msgid "Uso"
+msgstr "Uso"
+
+#: apps/photographers/admin.py:100
+msgid "subidas / límite"
+msgstr "subidas / límite"
+
+#: apps/photographers/admin.py:106
+msgid "Revocar links seleccionados"
+msgstr "Revocar links seleccionados"
+
+#: apps/photographers/models.py:40
+msgid "email"
+msgstr "email"
+
+#: apps/photographers/models.py:42
+msgid "teléfono"
+msgstr "teléfono"
+
+#: apps/photographers/models.py:45
+msgid "Para mandar el link por WhatsApp."
+msgstr "Para mandar el link por WhatsApp."
+
+#: apps/photographers/models.py:50
+msgid "hash del token (sha256)"
+msgstr "hash del token (sha256)"
+
+#: apps/photographers/models.py:58
+msgid "activo"
+msgstr "activo"
+
+#: apps/photographers/models.py:59
+msgid "revocado el"
+msgstr "revocado el"
+
+#: apps/photographers/models.py:61
+msgid "motivo de revocación"
+msgstr "motivo de revocación"
+
+#: apps/photographers/models.py:68
+msgid "límite de fotos"
+msgstr "límite de fotos"
+
+#: apps/photographers/models.py:71
+msgid "Nulo = sin límite."
+msgstr "Nulo = sin límite."
+
+#: apps/photographers/models.py:75
+msgid "fotos subidas"
+msgstr "fotos subidas"
+
+#: apps/photographers/models.py:76
+msgid "último uso"
+msgstr "último uso"
+
+#: apps/photographers/models.py:78
+msgid "última IP usada (anonimizada)"
+msgstr "última IP usada (anonimizada)"
+
+#: apps/photographers/models.py:84 apps/photos/models.py:52
+msgid "link de fotógrafo"
+msgstr "link de fotógrafo"
+
+#: apps/photographers/models.py:85
+msgid "links de fotógrafos"
+msgstr "links de fotógrafos"
+
+#: apps/photos/admin.py:95 apps/photos/models.py:223
+msgid "dorsales"
+msgstr "dorsales"
+
+#: apps/photos/models.py:25 templates/photographer/portal.html:207
+msgid "Subiendo"
+msgstr "Subiendo"
+
+#: apps/photos/models.py:27
+msgid "Falló el procesamiento"
+msgstr "Falló el procesamiento"
+
+#: apps/photos/models.py:28 templates/dashboard/partials/photo_drawer.html:8
+msgid "Pendiente de revisión"
+msgstr "Pendiente de revisión"
+
+#: apps/photos/models.py:29
+msgid "Aprobada"
+msgstr "Aprobada"
+
+#: apps/photos/models.py:30
+msgid "Rechazada"
+msgstr "Rechazada"
+
+#: apps/photos/models.py:31
+msgid "Borrada"
+msgstr "Borrada"
+
+#: apps/photos/models.py:55
+msgid "subida por admin"
+msgstr "subida por admin"
+
+#: apps/photos/models.py:57
+msgid "Si True, fue subida por el super admin (no por un fotógrafo)."
+msgstr "Si True, fue subida por el super admin (no por un fotógrafo)."
+
+#: apps/photos/models.py:61
+msgid "key del original"
+msgstr "key del original"
+
+#: apps/photos/models.py:62
+msgid "key del preview"
+msgstr "key del preview"
+
+#: apps/photos/models.py:63
+msgid "key del thumbnail"
+msgstr "key del thumbnail"
+
+#: apps/photos/models.py:66
+msgid "nombre original"
+msgstr "nombre original"
+
+#: apps/photos/models.py:67
+msgid "ancho (px)"
+msgstr "ancho (px)"
+
+#: apps/photos/models.py:68
+msgid "alto (px)"
+msgstr "alto (px)"
+
+#: apps/photos/models.py:69
+msgid "tamaño (bytes)"
+msgstr "tamaño (bytes)"
+
+#: apps/photos/models.py:72
+msgid "fecha de captura"
+msgstr "fecha de captura"
+
+#: apps/photos/models.py:73
+msgid "marca cámara"
+msgstr "marca cámara"
+
+#: apps/photos/models.py:74
+msgid "modelo cámara"
+msgstr "modelo cámara"
+
+#: apps/photos/models.py:75
+msgid "lente"
+msgstr "lente"
+
+#: apps/photos/models.py:76
+msgid "apertura"
+msgstr "apertura"
+
+#: apps/photos/models.py:77
+msgid "velocidad obturador"
+msgstr "velocidad obturador"
+
+#: apps/photos/models.py:78
+msgid "ISO"
+msgstr "ISO"
+
+#: apps/photos/models.py:79
+msgid "focal"
+msgstr "focal"
+
+#: apps/photos/models.py:80
+msgid "EXIF crudo"
+msgstr "EXIF crudo"
+
+#: apps/photos/models.py:89
+msgid "motivo de rechazo"
+msgstr "motivo de rechazo"
+
+#: apps/photos/models.py:90
+msgid "aprobada el"
+msgstr "aprobada el"
+
+#: apps/photos/models.py:91
+msgid "aprobada manualmente"
+msgstr "aprobada manualmente"
+
+#: apps/photos/models.py:94
+msgid "tiene menores detectados"
+msgstr "tiene menores detectados"
+
+#: apps/photos/models.py:96
+msgid "necesita revisión de menores"
+msgstr "necesita revisión de menores"
+
+#: apps/photos/models.py:99
+msgid ""
+"El estimador de edad detectó una cara dudosa (<22). El admin revisa en la "
+"cola de aprobación si hace falta blurear."
+msgstr ""
+"El estimador de edad detectó una cara dudosa (<22). El admin revisa en la "
+"cola de aprobación si hace falta blurear."
+
+#: apps/photos/models.py:103
+msgid "tiene dorsales detectados"
+msgstr "tiene dorsales detectados"
+
+#: apps/photos/models.py:104
+msgid "tiene caras detectadas"
+msgstr "tiene caras detectadas"
+
+#: apps/photos/models.py:107
+msgid "vistas"
+msgstr "vistas"
+
+#: apps/photos/models.py:111 apps/photos/models.py:196
+#: apps/photos/models.py:258
+msgid "foto"
+msgstr "foto"
+
+#: apps/photos/models.py:112 templates/dashboard/home.html:61
+#: templates/dashboard/pending_photos.html:14
+#: templates/photographer/portal.html:56
+#: templates/public/event_gallery.html:55
+#: templates/public/event_gallery.html:117
+msgid "fotos"
+msgstr "fotos"
+
+#: apps/photos/models.py:183
+msgid "OCR PaddleOCR"
+msgstr "OCR PaddleOCR"
+
+#: apps/photos/models.py:184
+msgid "OCR EasyOCR"
+msgstr "OCR EasyOCR"
+
+#: apps/photos/models.py:185
+msgid "Corregido por admin"
+msgstr "Corregido por admin"
+
+#: apps/photos/models.py:186
+msgid "Reportado por usuario"
+msgstr "Reportado por usuario"
+
+#: apps/photos/models.py:199
+msgid "número"
+msgstr "número"
+
+#: apps/photos/models.py:201
+msgid "String — puede tener letras (ej. 'A123')."
+msgstr "String — puede tener letras (ej. 'A123')."
+
+#: apps/photos/models.py:204
+msgid "confianza"
+msgstr "confianza"
+
+#: apps/photos/models.py:205
+msgid "0.0 a 1.0 (1.0 si fue corregido manualmente)."
+msgstr "0.0 a 1.0 (1.0 si fue corregido manualmente)."
+
+#: apps/photos/models.py:207
+msgid "origen"
+msgstr "origen"
+
+#: apps/photos/models.py:209 apps/photos/models.py:262
+msgid "bounding box"
+msgstr "bounding box"
+
+#: apps/photos/models.py:212
+msgid "Coordenadas en porcentaje de la imagen: {x, y, w, h}."
+msgstr "Coordenadas en porcentaje de la imagen: {x, y, w, h}."
+
+#: apps/photos/models.py:214
+msgid "validado por admin"
+msgstr "validado por admin"
+
+#: apps/photos/models.py:216
+msgid "rechazado"
+msgstr "rechazado"
+
+#: apps/photos/models.py:218
+msgid "Marcado como falso positivo."
+msgstr "Marcado como falso positivo."
+
+#: apps/photos/models.py:222
+msgid "dorsal"
+msgstr "dorsal"
+
+#: apps/photos/models.py:260
+msgid "embedding"
+msgstr "embedding"
+
+#: apps/photos/models.py:265
+msgid "{x, y, w, h} en porcentaje de la imagen."
+msgstr "{x, y, w, h} en porcentaje de la imagen."
+
+#: apps/photos/models.py:268
+msgid "edad estimada"
+msgstr "edad estimada"
+
+#: apps/photos/models.py:273
+msgid "es menor"
+msgstr "es menor"
+
+#: apps/photos/models.py:275
+msgid "True si `estimated_age < 18`. Activa blur en preview público."
+msgstr "True si `estimated_age < 18`. Activa blur en preview público."
+
+#: apps/photos/models.py:279
+msgid "último match"
+msgstr "último match"
+
+#: apps/photos/models.py:280
+msgid "# de matches"
+msgstr "# de matches"
+
+#: apps/photos/models.py:283
+msgid "embedding facial"
+msgstr "embedding facial"
+
+#: apps/photos/models.py:284
+msgid "embeddings faciales"
+msgstr "embeddings faciales"
+
+#: apps/privacy/models.py:19
+msgid "Completada"
+msgstr "Completada"
+
+#: apps/privacy/models.py:26
+msgid "fotos encontradas"
+msgstr "fotos encontradas"
+
+#: apps/privacy/models.py:27
+msgid "fotos borradas"
+msgstr "fotos borradas"
+
+#: apps/privacy/models.py:29
+msgid "embeddings borrados"
+msgstr "embeddings borrados"
+
+#: apps/privacy/models.py:40
+msgid "hash de IP solicitante (sha256)"
+msgstr "hash de IP solicitante (sha256)"
+
+#: apps/privacy/models.py:42
+msgid "Para rate-limiting sin guardar IP cruda."
+msgstr "Para rate-limiting sin guardar IP cruda."
+
+#: apps/privacy/models.py:45
+msgid "completada el"
+msgstr "completada el"
+
+#: apps/privacy/models.py:49
+msgid "solicitud de borrado de datos"
+msgstr "solicitud de borrado de datos"
+
+#: apps/privacy/models.py:50
+msgid "solicitudes de borrado de datos"
+msgstr "solicitudes de borrado de datos"
+
+#: templates/base.html:8
+#, python-format
+msgid "%(site_name)s — plataforma gratuita de fotos de carrera."
+msgstr "%(site_name)s — plataforma gratuita de fotos de carrera."
+
+#: templates/base.html:14
+msgid "Encontrá tus fotos de carrera."
+msgstr "Encontrá tus fotos de carrera."
+
+#: templates/base.html:33
+msgid "Saltar al contenido"
+msgstr "Saltar al contenido"
+
+#: templates/base.html:36
+msgid "Usamos reconocimiento facial solo para ayudarte a encontrar tus fotos."
+msgstr ""
+"Usamos reconocimiento facial solo para ayudarte a encontrar tus fotos."
+
+#: templates/base.html:37 templates/public/selfie_search.html:39
+msgid "Más info"
+msgstr "Más info"
+
+#: templates/base.html:39 templates/public/contacto.html:24
+#: templates/public/face_unavailable.html:3
+#: templates/public/privacy_delete.html:4
+#: templates/public/privacy_delete.html:15
+#: templates/public/privacy_policy.html:39 templates/public/terminos.html:44
+#: tests/i18n/test_translations.py:49
+msgid "Borrar mis datos"
+msgstr "Borrar mis datos"
+
+#: templates/dashboard/audit_log.html:3 templates/dashboard/audit_log.html:10
+#: templates/dashboard/partials/_sidebar.html:45
+msgid "Audit log"
+msgstr "Audit log"
+
+#: templates/dashboard/audit_log.html:11
+msgid "Solo lectura. Registro de todas las acciones admin."
+msgstr "Solo lectura. Registro de todas las acciones admin."
+
+#: templates/dashboard/audit_log.html:17
+msgid "Todas"
+msgstr "Todas"
+
+#: templates/dashboard/audit_log.html:23
+#: templates/dashboard/photographer_list.html:21
+msgid "Todos"
+msgstr "Todos"
+
+#: templates/dashboard/audit_log.html:29
+msgid "Siempre"
+msgstr "Siempre"
+
+#: templates/dashboard/audit_log.html:30
+#: templates/dashboard/pending_photos.html:32
+msgid "Últimos 7 días"
+msgstr "Últimos 7 días"
+
+#: templates/dashboard/audit_log.html:31
+#: templates/dashboard/pending_photos.html:33
+msgid "Últimos 30 días"
+msgstr "Últimos 30 días"
+
+#: templates/dashboard/audit_log.html:33
+#| msgid "Buscar acción…"
+msgid "Buscar acción"
+msgstr "Buscar acción"
+
+#: templates/dashboard/audit_log.html:33
+msgid "Buscar acción…"
+msgstr "Buscar acción…"
+
+#: templates/dashboard/audit_log.html:34
+msgid "Filtrar"
+msgstr "Filtrar"
+
+#: templates/dashboard/audit_log.html:43
+msgid "Fecha"
+msgstr "Fecha"
+
+#: templates/dashboard/audit_log.html:45
+msgid "Acción"
+msgstr "Acción"
+
+#: templates/dashboard/audit_log.html:46
+msgid "Objetivo"
+msgstr "Objetivo"
+
+#: templates/dashboard/audit_log.html:47
+msgid "IP"
+msgstr "IP"
+
+#: templates/dashboard/audit_log.html:79
+msgid "No hay registros para estos filtros."
+msgstr "No hay registros para estos filtros."
+
+#: templates/dashboard/audit_log.html:80
+msgid "Las acciones admin van apareciendo acá a medida que ocurren."
+msgstr "Las acciones admin van apareciendo acá a medida que ocurren."
+
+#: templates/dashboard/base.html:17
+msgid "Abrir menú"
+msgstr "Abrir menú"
+
+#: templates/dashboard/event_detail.html:10
+#: templates/dashboard/event_list.html:3
+#: templates/dashboard/event_list.html:11
+#: templates/dashboard/partials/_sidebar.html:24 templates/public/home.html:73
+msgid "Eventos"
+msgstr "Eventos"
+
+#: templates/dashboard/event_detail.html:30
+msgid "Editar"
+msgstr "Editar"
+
+#: templates/dashboard/event_detail.html:33
+#: templates/dashboard/partials/event_tab_fotografos.html:4
+#: templates/dashboard/partials/event_tab_links.html:4
+#: templates/dashboard/partials/generate_link_modal.html:40
+msgid "Generar link"
+msgstr "Generar link"
+
+#: templates/dashboard/event_form.html:3
+#: templates/dashboard/event_form.html:15
+#: templates/dashboard/event_list.html:18
+#: templates/dashboard/partials/_sidebar.html:57
+msgid "Nuevo evento"
+msgstr "Nuevo evento"
+
+#: templates/dashboard/event_form.html:3
+#: templates/dashboard/event_form.html:15
+msgid "Editar evento"
+msgstr "Editar evento"
+
+#: templates/dashboard/event_form.html:12
+#: templates/public/event_gallery.html:36
+msgid "Volver a eventos"
+msgstr "Volver a eventos"
+
+#: templates/dashboard/event_form.html:86
+msgid "Política de retención (opcional)"
+msgstr "Política de retención (opcional)"
+
+#: templates/dashboard/event_form.html:87
+msgid ""
+"Si las dejás vacías, se usan los valores por defecto: 90 días de galería "
+"pública, 180 de solo búsqueda y 365 de archivo."
+msgstr ""
+"Si las dejás vacías, se usan los valores por defecto: 90 días de galería "
+"pública, 180 de solo búsqueda y 365 de archivo."
+
+#: templates/dashboard/event_form.html:131
+#: templates/dashboard/partials/generate_link_modal.html:39
+#: templates/public/_download_sheet.html:23
+msgid "Cancelar"
+msgstr "Cancelar"
+
+#: templates/dashboard/event_form.html:133
+#: templates/dashboard/event_list.html:92
+msgid "Crear evento"
+msgstr "Crear evento"
+
+#: templates/dashboard/event_form.html:133
+msgid "Guardar"
+msgstr "Guardar"
+
+#: templates/dashboard/event_list.html:13
+msgid "en total"
+msgstr "en total"
+
+#: templates/dashboard/event_list.html:25
+#: templates/dashboard/partials/event_tab_fotos.html:7
+msgid "Todos los estados"
+msgstr "Todos los estados"
+
+#: templates/dashboard/event_list.html:38
+#: templates/dashboard/photographer_list.html:35
+#: templates/dashboard/stats.html:39
+msgid "Evento"
+msgstr "Evento"
+
+#: templates/dashboard/event_list.html:39
+#: templates/dashboard/partials/event_tab_links.html:10
+#: templates/dashboard/photographer_list.html:36
+#: templates/dashboard/stats.html:66
+msgid "Estado"
+msgstr "Estado"
+
+#: templates/dashboard/event_list.html:40
+msgid "Visibilidad"
+msgstr "Visibilidad"
+
+#: templates/dashboard/event_list.html:42 templates/dashboard/home.html:73
+#: templates/dashboard/partials/event_tab_resumen.html:4
+msgid "Pendientes"
+msgstr "Pendientes"
+
+#: templates/dashboard/event_list.html:67
+msgid "Ver"
+msgstr "Ver"
+
+#: templates/dashboard/event_list.html:90
+msgid "Todavía no hay eventos."
+msgstr "Todavía no hay eventos."
+
+#: templates/dashboard/event_list.html:91
+msgid "Creá tu primer evento para empezar a recibir fotos."
+msgstr "Creá tu primer evento para empezar a recibir fotos."
+
+#: templates/dashboard/home.html:3 templates/dashboard/home.html:11
+#: templates/dashboard/partials/_sidebar.html:20
+msgid "Dashboard"
+msgstr "Dashboard"
+
+#: templates/dashboard/home.html:14
+msgid "Ver estadísticas"
+msgstr "Ver estadísticas"
+
+#: templates/dashboard/home.html:20
+msgid "Total eventos"
+msgstr "Total eventos"
+
+#: templates/dashboard/home.html:22
+msgid "este mes"
+msgstr "este mes"
+
+#: templates/dashboard/home.html:25
+msgid "Total fotos"
+msgstr "Total fotos"
+
+#: templates/dashboard/home.html:27
+msgid "esta semana"
+msgstr "esta semana"
+
+#: templates/dashboard/home.html:30
+msgid "Almacenamiento"
+msgstr "Almacenamiento"
+
+#: templates/dashboard/home.html:32
+msgid "originales + previews"
+msgstr "originales + previews"
+
+#: templates/dashboard/home.html:35
+#: templates/dashboard/partials/event_tab_resumen.html:6
+msgid "Búsquedas"
+msgstr "Búsquedas"
+
+#: templates/dashboard/home.html:37
+msgid "acumuladas"
+msgstr "acumuladas"
+
+#: templates/dashboard/home.html:45
+msgid "Eventos activos"
+msgstr "Eventos activos"
+
+#: templates/dashboard/home.html:46
+msgid "Ver todos"
+msgstr "Ver todos"
+
+#: templates/dashboard/home.html:65
+msgid "No hay eventos activos."
+msgstr "No hay eventos activos."
+
+#: templates/dashboard/home.html:84
+msgid "Nada pendiente. ✨"
+msgstr "Nada pendiente. ✨"
+
+#: templates/dashboard/home.html:88
+msgid "Revisar todas"
+msgstr "Revisar todas"
+
+#: templates/dashboard/home.html:89
+msgid "Antigüedad promedio"
+msgstr "Antigüedad promedio"
+
+#: templates/dashboard/home.html:98
+msgid "Subidas por hora · hoy"
+msgstr "Subidas por hora · hoy"
+
+#: templates/dashboard/login.html:3
+msgid "Ingreso admin"
+msgstr "Ingreso admin"
+
+#: templates/dashboard/login.html:11
+#: templates/dashboard/partials/_sidebar.html:9
+msgid "Admin"
+msgstr "Admin"
+
+#: templates/dashboard/login.html:15 templates/dashboard/login.html:39
+msgid "Iniciar sesión"
+msgstr "Iniciar sesión"
+
+#: templates/dashboard/login.html:16
+msgid "Panel de administración de RunFoto."
+msgstr "Panel de administración de RunFoto."
+
+#: templates/dashboard/login.html:35
+msgid "Contraseña"
+msgstr "Contraseña"
+
+#: templates/dashboard/login.html:44
+msgid "Sesión de 12 horas. Sin “recordarme”."
+msgstr "Sesión de 12 horas. Sin “recordarme”."
+
+#: templates/dashboard/partials/_sidebar.html:11
+#: templates/dashboard/partials/generate_link_modal.html:7
+#: templates/dashboard/partials/generate_link_success.html:7
+#: templates/dashboard/partials/photo_drawer.html:9
+#: templates/public/_lightbox_content.html:8
+#: templates/public/_lightbox_content.html:10
+msgid "Cerrar"
+msgstr "Cerrar"
+
+#: templates/dashboard/partials/_sidebar.html:33
+#: templates/dashboard/pending_photos.html:3
+#: templates/dashboard/photographer_list.html:38
+msgid "Aprobación"
+msgstr "Aprobación"
+
+#: templates/dashboard/partials/_sidebar.html:49
+#: templates/dashboard/settings.html:3 templates/dashboard/settings.html:10
+msgid "Configuración"
+msgstr "Configuración"
+
+#: templates/dashboard/partials/_sidebar.html:63
+msgid "Super admin"
+msgstr "Super admin"
+
+#: templates/dashboard/partials/_sidebar.html:67
+msgid "Cerrar sesión"
+msgstr "Cerrar sesión"
+
+#: templates/dashboard/partials/bibs_section.html:5
+msgid "Dorsales detectados"
+msgstr "Dorsales detectados"
+
+#: templates/dashboard/partials/bibs_section.html:11
+msgid "Marcar falso positivo"
+msgstr "Marcar falso positivo"
+
+#: templates/dashboard/partials/bibs_section.html:17
+msgid "Ninguno detectado."
+msgstr "Ninguno detectado."
+
+#: templates/dashboard/partials/bibs_section.html:23
+#| msgid "Tu número de dorsal"
+msgid "Número de dorsal a agregar"
+msgstr "Número de dorsal a agregar"
+
+#: templates/dashboard/partials/bibs_section.html:23
+msgid "Agregar dorsal…"
+msgstr "Agregar dorsal…"
+
+#: templates/dashboard/partials/bibs_section.html:24
+msgid "Agregar"
+msgstr "Agregar"
+
+#: templates/dashboard/partials/event_tab_dorsales.html:16
+msgid ""
+"Listado de dorsales detectados por OCR + corregidos a mano. Para corregir un"
+" dorsal puntual, abrí la foto en la cola de aprobación."
+msgstr ""
+"Listado de dorsales detectados por OCR + corregidos a mano. Para corregir un"
+" dorsal puntual, abrí la foto en la cola de aprobación."
+
+#: templates/dashboard/partials/event_tab_dorsales.html:18
+msgid "Todavía no se detectaron dorsales en este evento."
+msgstr "Todavía no se detectaron dorsales en este evento."
+
+#: templates/dashboard/partials/event_tab_fotografos.html:18
+#: templates/dashboard/partials/event_tab_resumen.html:37
+#: templates/dashboard/partials/photo_drawer.html:52
+msgid "subidas"
+msgstr "subidas"
+
+#: templates/dashboard/partials/event_tab_fotografos.html:23
+msgid "Ningún fotógrafo. Generá un link para invitar a uno."
+msgstr "Ningún fotógrafo. Generá un link para invitar a uno."
+
+#: templates/dashboard/partials/event_tab_fotos.html:27
+msgid "No hay fotos con ese filtro."
+msgstr "No hay fotos con ese filtro."
+
+#: templates/dashboard/partials/event_tab_links.html:11
+msgid "Creado"
+msgstr "Creado"
+
+#: templates/dashboard/partials/event_tab_links.html:11
+msgid "Expira"
+msgstr "Expira"
+
+#: templates/dashboard/partials/event_tab_links.html:21
+msgid "Gestionar"
+msgstr "Gestionar"
+
+#: templates/dashboard/partials/event_tab_links.html:28
+msgid "No hay links de subida para este evento."
+msgstr "No hay links de subida para este evento."
+
+#: templates/dashboard/partials/event_tab_resumen.html:3
+msgid "Fotos totales"
+msgstr "Fotos totales"
+
+#: templates/dashboard/partials/event_tab_resumen.html:5
+#: templates/dashboard/stats.html:40
+msgid "Aprobadas"
+msgstr "Aprobadas"
+
+#: templates/dashboard/partials/event_tab_resumen.html:12
+msgid "Fotos recientes"
+msgstr "Fotos recientes"
+
+#: templates/dashboard/partials/event_tab_resumen.html:19
+msgid "Sin fotos todavía."
+msgstr "Sin fotos todavía."
+
+#: templates/dashboard/partials/event_tab_resumen.html:29
+msgid "Link"
+msgstr "Link"
+
+#: templates/dashboard/partials/event_tab_resumen.html:41
+msgid "Ningún fotógrafo asignado."
+msgstr "Ningún fotógrafo asignado."
+
+#: templates/dashboard/partials/generate_link_modal.html:6
+msgid "Generar link de subida"
+msgstr "Generar link de subida"
+
+#: templates/dashboard/partials/generate_link_modal.html:25
+msgid "Teléfono / WhatsApp (opcional)"
+msgstr "Teléfono / WhatsApp (opcional)"
+
+#: templates/dashboard/partials/generate_link_modal.html:34
+msgid "Límite de fotos"
+msgstr "Límite de fotos"
+
+#: templates/dashboard/partials/generate_link_success.html:6
+msgid "Link generado"
+msgstr "Link generado"
+
+#: templates/dashboard/partials/generate_link_success.html:11
+msgid "Listo para compartir"
+msgstr "Listo para compartir"
+
+#: templates/dashboard/partials/generate_link_success.html:15
+msgid "Link de subida"
+msgstr "Link de subida"
+
+#: templates/dashboard/partials/generate_link_success.html:32
+msgid "✓ Copiado"
+msgstr "✓ Copiado"
+
+#: templates/dashboard/partials/generate_link_success.html:32
+msgid "Copiar p/ WhatsApp"
+msgstr "Copiar p/ WhatsApp"
+
+#: templates/dashboard/partials/generate_link_success.html:33
+msgid "Descargar QR"
+msgstr "Descargar QR"
+
+#: templates/dashboard/partials/generate_link_success.html:39
+#, python-format
+msgid "Compartilo solo con el fotógrafo. Expira el %(expires_label)s."
+msgstr "Compartilo solo con el fotógrafo. Expira el %(expires_label)s."
+
+#: templates/dashboard/partials/photo_drawer.html:15
+msgid "Capturada"
+msgstr "Capturada"
+
+#: templates/dashboard/partials/photo_drawer.html:30
+msgid "Datos técnicos"
+msgstr "Datos técnicos"
+
+#: templates/dashboard/partials/photo_drawer.html:32
+msgid "Cámara"
+msgstr "Cámara"
+
+#: templates/dashboard/partials/photo_drawer.html:33
+msgid "Lente"
+msgstr "Lente"
+
+#: templates/dashboard/partials/photo_drawer.html:34
+msgid "Apertura"
+msgstr "Apertura"
+
+#: templates/dashboard/partials/photo_drawer.html:35
+msgid "Velocidad"
+msgstr "Velocidad"
+
+#: templates/dashboard/partials/photo_drawer.html:37
+msgid "Tamaño"
+msgstr "Tamaño"
+
+#: templates/dashboard/partials/photo_drawer.html:52
+msgid "aprobadas"
+msgstr "aprobadas"
+
+#: templates/dashboard/partials/photo_drawer.html:60
+msgid "Menor detectado — preview blureado"
+msgstr "Menor detectado — preview blureado"
+
+#: templates/dashboard/partials/photo_drawer.html:69
+msgid "Motivo del rechazo (opcional)…"
+msgstr "Motivo del rechazo (opcional)…"
+
+#: templates/dashboard/partials/photo_drawer.html:71
+#: templates/dashboard/pending_photos.html:46
+msgid "Rechazar"
+msgstr "Rechazar"
+
+#: templates/dashboard/partials/photo_drawer.html:75
+#: templates/dashboard/pending_photos.html:47
+msgid "Aprobar"
+msgstr "Aprobar"
+
+#: templates/dashboard/partials/photo_drawer.html:78
+msgid "A aprobar · R rechazar · → siguiente"
+msgstr "A aprobar · R rechazar · → siguiente"
+
+#: templates/dashboard/pending_photos.html:12
+msgid "Aprobación pendiente"
+msgstr "Aprobación pendiente"
+
+#: templates/dashboard/pending_photos.html:19
+msgid "Atajos"
+msgstr "Atajos"
+
+#: templates/dashboard/pending_photos.html:26
+msgid "Todos los eventos"
+msgstr "Todos los eventos"
+
+#: templates/dashboard/pending_photos.html:34
+msgid "Todo"
+msgstr "Todo"
+
+#: templates/dashboard/pending_photos.html:36
+msgid "de"
+msgstr "de"
+
+#: templates/dashboard/pending_photos.html:43
+msgid "seleccionadas"
+msgstr "seleccionadas"
+
+#: templates/dashboard/pending_photos.html:75
+msgid "Sin detectar"
+msgstr "Sin detectar"
+
+#: templates/dashboard/pending_photos.html:90
+msgid "No hay fotos pendientes. ✨"
+msgstr "No hay fotos pendientes. ✨"
+
+#: templates/dashboard/photo_detail.html:15
+msgid "PENDING REVIEW"
+msgstr "PENDING REVIEW"
+
+#: templates/dashboard/photographer_list.html:13
+msgid "links de subida"
+msgstr "links de subida"
+
+#: templates/dashboard/photographer_list.html:22
+msgid "Activos"
+msgstr "Activos"
+
+#: templates/dashboard/photographer_list.html:23
+msgid "Expirados"
+msgstr "Expirados"
+
+#: templates/dashboard/photographer_list.html:24
+msgid "Revocados"
+msgstr "Revocados"
+
+#: templates/dashboard/photographer_list.html:39
+msgid "Última actividad"
+msgstr "Última actividad"
+
+#: templates/dashboard/photographer_list.html:40
+msgid "Acciones"
+msgstr "Acciones"
+
+#: templates/dashboard/photographer_list.html:63
+msgid "Ver fotos"
+msgstr "Ver fotos"
+
+#: templates/dashboard/photographer_list.html:66
+msgid "¿Revocar este link? El fotógrafo ya no podrá subir."
+msgstr "¿Revocar este link? El fotógrafo ya no podrá subir."
+
+#: templates/dashboard/photographer_list.html:68
+msgid "Revocar"
+msgstr "Revocar"
+
+#: templates/dashboard/photographer_list.html:94
+msgid "No hay links de fotógrafo."
+msgstr "No hay links de fotógrafo."
+
+#: templates/dashboard/photographer_list.html:95
+msgid ""
+"Generá un link desde la página de un evento para invitar a un fotógrafo."
+msgstr ""
+"Generá un link desde la página de un evento para invitar a un fotógrafo."
+
+#: templates/dashboard/settings.html:17
+msgid "Tu cuenta"
+msgstr "Tu cuenta"
+
+#: templates/dashboard/settings.html:24
+msgid "Email"
+msgstr "Email"
+
+#: templates/dashboard/settings.html:32
+msgid "Cambiar contraseña"
+msgstr "Cambiar contraseña"
+
+#: templates/dashboard/settings.html:59
+msgid "Actualizar contraseña"
+msgstr "Actualizar contraseña"
+
+#: templates/dashboard/settings.html:66
+msgid "Autenticación en dos pasos (2FA)"
+msgstr "Autenticación en dos pasos (2FA)"
+
+#: templates/dashboard/settings.html:67
+msgid ""
+"Agregá una capa extra de seguridad pidiendo un código de tu teléfono al "
+"iniciar sesión. Todavía no está disponible."
+msgstr ""
+"Agregá una capa extra de seguridad pidiendo un código de tu teléfono al "
+"iniciar sesión. Todavía no está disponible."
+
+#: templates/dashboard/settings.html:68
+msgid "Próximamente"
+msgstr "Próximamente"
+
+#: templates/dashboard/settings.html:73
+msgid "Política de retención por defecto"
+msgstr "Política de retención por defecto"
+
+#: templates/dashboard/settings.html:76
+msgid "Galería pública"
+msgstr "Galería pública"
+
+#: templates/dashboard/settings.html:77 templates/dashboard/settings.html:81
+#: templates/dashboard/settings.html:85
+msgid "días"
+msgstr "días"
+
+#: templates/dashboard/settings.html:80
+msgid "Solo búsqueda"
+msgstr "Solo búsqueda"
+
+#: templates/dashboard/settings.html:84
+msgid "Archivo"
+msgstr "Archivo"
+
+#: templates/dashboard/settings.html:88
+msgid "Configurables por evento al crearlo."
+msgstr "Configurables por evento al crearlo."
+
+#: templates/dashboard/settings.html:93
+msgid "Branding"
+msgstr "Branding"
+
+#: templates/dashboard/settings.html:96
+msgid "Nombre del sitio"
+msgstr "Nombre del sitio"
+
+#: templates/dashboard/settings.html:100
+msgid "Dominio"
+msgstr "Dominio"
+
+#: templates/dashboard/settings.html:104
+msgid "Se configuran por variables de entorno."
+msgstr "Se configuran por variables de entorno."
+
+#: templates/dashboard/settings.html:109
+msgid "Documentación"
+msgstr "Documentación"
+
+#: templates/dashboard/settings.html:111
+msgid "README — instrucciones de setup"
+msgstr "README — instrucciones de setup"
+
+#: templates/dashboard/settings.html:112
+msgid "Runbook operacional"
+msgstr "Runbook operacional"
+
+#: templates/dashboard/stats.html:13
+msgid "Exportar CSV"
+msgstr "Exportar CSV"
+
+#: templates/dashboard/stats.html:16
+msgid ""
+"Las métricas de búsquedas por día no se registran por privacidad (no "
+"guardamos qué busca cada visitante)."
+msgstr ""
+"Las métricas de búsquedas por día no se registran por privacidad (no "
+"guardamos qué busca cada visitante)."
+
+#: templates/dashboard/stats.html:20
+msgid "Fotos subidas · últimos 30 días"
+msgstr "Fotos subidas · últimos 30 días"
+
+#: templates/dashboard/stats.html:33
+msgid "Top eventos por fotos aprobadas"
+msgstr "Top eventos por fotos aprobadas"
+
+#: templates/dashboard/stats.html:53
+msgid "Todavía no hay fotos aprobadas."
+msgstr "Todavía no hay fotos aprobadas."
+
+#: templates/dashboard/stats.html:60
+msgid "Fotos por estado"
+msgstr "Fotos por estado"
+
+#: templates/dashboard/stats.html:67
+msgid "Cantidad"
+msgstr "Cantidad"
+
+#: templates/dashboard/stats.html:80
+msgid "Sin datos."
+msgstr "Sin datos."
+
+#: templates/errors/404.html:3
+msgid "Página no encontrada"
+msgstr "Página no encontrada"
+
+#: templates/errors/404.html:5
+msgid "No encontramos esa página"
+msgstr "No encontramos esa página"
+
+#: templates/errors/404.html:6
+msgid ""
+"El link puede estar mal escrito o la página ya no existe. ¿Volvemos al "
+"inicio?"
+msgstr ""
+"El link puede estar mal escrito o la página ya no existe. ¿Volvemos al "
+"inicio?"
+
+#: templates/errors/410.html:3
+msgid "Link no válido"
+msgstr "Link no válido"
+
+#: templates/errors/410.html:5
+msgid "Este link ya no es válido"
+msgstr "Este link ya no es válido"
+
+#: templates/errors/410.html:6
+msgid ""
+"El link de subida venció o fue revocado. Contactá al organizador para que te"
+" genere uno nuevo."
+msgstr ""
+"El link de subida venció o fue revocado. Contactá al organizador para que te"
+" genere uno nuevo."
+
+#: templates/errors/410.html:7
+msgid "Ir al inicio"
+msgstr "Ir al inicio"
+
+#: templates/errors/429.html:3
+msgid "Demasiadas solicitudes"
+msgstr "Demasiadas solicitudes"
+
+#: templates/errors/429.html:5
+msgid "Estás yendo muy rápido"
+msgstr "Estás yendo muy rápido"
+
+#: templates/errors/429.html:6
+msgid ""
+"Hiciste muchas búsquedas en poco tiempo. Esperá unos minutos y volvé a "
+"probar."
+msgstr ""
+"Hiciste muchas búsquedas en poco tiempo. Esperá unos minutos y volvé a "
+"probar."
+
+#: templates/errors/500.html:3
+msgid "Error del servidor"
+msgstr "Error del servidor"
+
+#: templates/errors/500.html:5
+msgid "Algo salió mal"
+msgstr "Algo salió mal"
+
+#: templates/errors/500.html:6
+msgid ""
+"Tuvimos un problema de nuestro lado. Ya nos enteramos y lo estamos "
+"arreglando. Probá de nuevo en un rato."
+msgstr ""
+"Tuvimos un problema de nuestro lado. Ya nos enteramos y lo estamos "
+"arreglando. Probá de nuevo en un rato."
+
+#: templates/errors/_base.html:24 templates/public/face_unavailable.html:16
+#: templates/public/face_unavailable.html:25
+#: templates/public/privacy_delete_pending.html:19
+#: templates/public/rate_limited.html:18
+msgid "Volver al inicio"
+msgstr "Volver al inicio"
+
+#: templates/photographer/invalid_link.html:4
+msgid "Link inválido"
+msgstr "Link inválido"
+
+#: templates/photographer/invalid_link.html:14
+msgid "410 · Link no válido"
+msgstr "410 · Link no válido"
+
+#: templates/photographer/invalid_link.html:18
+msgid "Este link ya no es válido."
+msgstr "Este link ya no es válido."
+
+#: templates/photographer/invalid_link.html:22
+msgid ""
+"\n"
+"        El link de subida que estás usando expiró, fue revocado, o llegó al límite de fotos.\n"
+"        Contactá al admin para que te genere uno nuevo.\n"
+"      "
+msgstr ""
+"\n"
+"        El link de subida que estás usando expiró, fue revocado, o llegó al límite de fotos.\n"
+"        Contactá al admin para que te genere uno nuevo.\n"
+"      "
+
+#: templates/photographer/invalid_link.html:30
+msgid "Referencia"
+msgstr "Referencia"
+
+#: templates/photographer/portal.html:4 templates/photographer/portal.html:17
+msgid "Portal de subida"
+msgstr "Portal de subida"
+
+#: templates/photographer/portal.html:23
+msgid "Sesión por token"
+msgstr "Sesión por token"
+
+#: templates/photographer/portal.html:51
+msgid "Válido hasta"
+msgstr "Válido hasta"
+
+#: templates/photographer/portal.html:86
+msgid "Arrastrá tus fotos acá"
+msgstr "Arrastrá tus fotos acá"
+
+#: templates/photographer/portal.html:89
+#, python-format
+msgid "Solo JPG · Máximo %(mb)s MB por foto · Sin límite de cantidad"
+msgstr "Solo JPG · Máximo %(mb)s MB por foto · Sin límite de cantidad"
+
+#: templates/photographer/portal.html:94
+msgid "Seleccionar archivos"
+msgstr "Seleccionar archivos"
+
+#: templates/photographer/portal.html:105
+msgid "Cola de subida"
+msgstr "Cola de subida"
+
+#: templates/photographer/portal.html:108
+msgid "archivos"
+msgstr "archivos"
+
+#: templates/photographer/portal.html:146
+msgid "Subidas recientes"
+msgstr "Subidas recientes"
+
+#: templates/photographer/portal.html:148
+#, python-format
+msgid "%(total)s foto subida"
+msgid_plural "%(total)s fotos subidas"
+msgstr[0] "%(total)s foto subida"
+msgstr[1] "%(total)s fotos subidas"
+
+#: templates/photographer/portal.html:238
+msgid "Error"
+msgstr "Error"
+
+#: templates/photographer/portal.html:244
+msgid "Sin conexión"
+msgstr "Sin conexión"
+
+#: templates/public/_download_sheet.html:8
+#| msgid "fotos seleccionadas"
+msgid "Descargar fotos seleccionadas"
+msgstr "Descargar fotos seleccionadas"
+
+#: templates/public/_download_sheet.html:17
+msgid "fotos seleccionadas"
+msgstr "fotos seleccionadas"
+
+#: templates/public/_download_sheet.html:18
+msgid "Se descargará como ZIP en alta resolución"
+msgstr "Se descargará como ZIP en alta resolución"
+
+#: templates/public/_download_sheet.html:21
+msgid "Descargar ZIP"
+msgstr "Descargar ZIP"
+
+#: templates/public/_download_sheet.html:26
+msgid "La descarga en alta resolución no tiene marca de agua."
+msgstr "La descarga en alta resolución no tiene marca de agua."
+
+#: templates/public/_download_sheet.html:35
+msgid "Preparando tu descarga..."
+msgstr "Preparando tu descarga..."
+
+#: templates/public/_download_sheet.html:36
+msgid "Empaquetando las fotos en alta resolución"
+msgstr "Empaquetando las fotos en alta resolución"
+
+#: templates/public/_download_sheet.html:46
+msgid "¡Descarga lista!"
+msgstr "¡Descarga lista!"
+
+#: templates/public/_download_sheet.html:47
+msgid "El link expira en 1 hora"
+msgstr "El link expira en 1 hora"
+
+#: templates/public/_download_sheet.html:48
+msgid "Guardar en dispositivo"
+msgstr "Guardar en dispositivo"
+
+#: templates/public/_download_sheet.html:55
+msgid "No se pudo generar el ZIP"
+msgstr "No se pudo generar el ZIP"
+
+#: templates/public/_download_sheet.html:56
+msgid "Probá de nuevo en unos minutos."
+msgstr "Probá de nuevo en unos minutos."
+
+#: templates/public/_download_sheet.html:57
+msgid "Reintentar"
+msgstr "Reintentar"
+
+#: templates/public/_lightbox_content.html:15
+msgid "Ver tamaño completo"
+msgstr "Ver tamaño completo"
+
+#: templates/public/_lightbox_content.html:23
+#: templates/public/_photo_card.html:11 templates/public/_selfie_card.html:9
+#: templates/public/lightbox_page.html:4
+msgid "Foto"
+msgstr "Foto"
+
+#: templates/public/_lightbox_content.html:26
+msgid "Preview no disponible"
+msgstr "Preview no disponible"
+
+#: templates/public/_lightbox_content.html:34
+msgid "Anterior"
+msgstr "Anterior"
+
+#: templates/public/_lightbox_content.html:41
+msgid "Siguiente"
+msgstr "Siguiente"
+
+#: templates/public/_lightbox_content.html:60
+#: templates/public/_lightbox_content.html:62
+#: templates/public/event_gallery.html:118
+msgid "Descargar"
+msgstr "Descargar"
+
+#: templates/public/_photo_card.html:35
+msgid "Seleccionar foto"
+msgstr "Seleccionar foto"
+
+#: templates/public/_zip_status.html:5
+msgid "Guardar ZIP"
+msgstr "Guardar ZIP"
+
+#: templates/public/_zip_status.html:7
+msgid "Error generando el ZIP."
+msgstr "Error generando el ZIP."
+
+#: templates/public/_zip_status.html:9
+msgid "Preparando..."
+msgstr "Preparando..."
+
+#: templates/public/contacto.html:4 templates/public/contacto.html:8
+#: templates/public/home.html:124 templates/public/privacy_policy.html:53
+#: templates/public/terminos.html:52
+msgid "Contacto"
+msgstr "Contacto"
+
+#: templates/public/contacto.html:9
+msgid "Estamos para ayudarte."
+msgstr "Estamos para ayudarte."
+
+#: templates/public/contacto.html:12
+msgid ""
+"¿Tenés una consulta, querés reportar una foto o pedir que borremos tus "
+"datos? Acá te contamos cómo."
+msgstr ""
+"¿Tenés una consulta, querés reportar una foto o pedir que borremos tus "
+"datos? Acá te contamos cómo."
+
+#: templates/public/contacto.html:15
+msgid "Para borrar tus fotos"
+msgstr "Para borrar tus fotos"
+
+#: templates/public/contacto.html:17
+msgid ""
+"Si querés que borremos tus fotos y datos, podés hacerlo vos mismo de forma "
+"inmediata. Subís una selfie, encontramos tus fotos en todos los eventos y "
+"las borramos."
+msgstr ""
+"Si querés que borremos tus fotos y datos, podés hacerlo vos mismo de forma "
+"inmediata. Subís una selfie, encontramos tus fotos en todos los eventos y "
+"las borramos."
+
+#: templates/public/contacto.html:20
+msgid "Borrá tus fotos al instante"
+msgstr "Borrá tus fotos al instante"
+
+#: templates/public/contacto.html:22
+msgid "Es un proceso automático y gratuito. No necesitás cuenta."
+msgstr "Es un proceso automático y gratuito. No necesitás cuenta."
+
+#: templates/public/contacto.html:27
+msgid "Reportar una foto u otras consultas"
+msgstr "Reportar una foto u otras consultas"
+
+#: templates/public/contacto.html:29
+msgid ""
+"Si aparecés en una foto y no querés que esté publicada, o si tenés cualquier"
+" otra consulta, escribinos por WhatsApp o por email:"
+msgstr ""
+"Si aparecés en una foto y no querés que esté publicada, o si tenés cualquier"
+" otra consulta, escribinos por WhatsApp o por email:"
+
+#: templates/public/contacto.html:32
+msgid "WhatsApp:"
+msgstr "WhatsApp:"
+
+#: templates/public/contacto.html:32 templates/public/contacto.html:33
+msgid "contacto del organizador"
+msgstr "contacto del organizador"
+
+#: templates/public/contacto.html:33
+msgid "Email:"
+msgstr "Email:"
+
+#: templates/public/contacto.html:36
+msgid "Te respondemos lo antes posible."
+msgstr "Te respondemos lo antes posible."
+
+#: templates/public/contacto.html:39 templates/public/cookies.html:36
+#: templates/public/terminos.html:57
+msgid "← Volver al inicio"
+msgstr "← Volver al inicio"
+
+#: templates/public/cookies.html:4 templates/public/cookies.html:8
+msgid "Política de cookies"
+msgstr "Política de cookies"
+
+#: templates/public/cookies.html:9 templates/public/terminos.html:9
+msgid "Última actualización: junio 2026"
+msgstr "Última actualización: junio 2026"
+
+#: templates/public/cookies.html:12
+#, python-format
+msgid ""
+"%(site_name)s usa muy pocas cookies. Solo las técnicas que son "
+"indispensables para que el sitio funcione de forma segura. No usamos cookies"
+" para seguirte ni para mostrarte publicidad."
+msgstr ""
+"%(site_name)s usa muy pocas cookies. Solo las técnicas que son "
+"indispensables para que el sitio funcione de forma segura. No usamos cookies"
+" para seguirte ni para mostrarte publicidad."
+
+#: templates/public/cookies.html:15
+msgid "Qué cookies usamos"
+msgstr "Qué cookies usamos"
+
+#: templates/public/cookies.html:17
+msgid ""
+"Cookie de sesión: se usa solo para el panel de administración. Como "
+"corredor, no la necesitás para buscar ni descargar tus fotos."
+msgstr ""
+"Cookie de sesión: se usa solo para el panel de administración. Como "
+"corredor, no la necesitás para buscar ni descargar tus fotos."
+
+#: templates/public/cookies.html:18
+msgid ""
+"Cookie CSRF: protege los formularios contra ataques. Es una medida de "
+"seguridad estándar."
+msgstr ""
+"Cookie CSRF: protege los formularios contra ataques. Es una medida de "
+"seguridad estándar."
+
+#: templates/public/cookies.html:21
+msgid "Qué cookies NO usamos"
+msgstr "Qué cookies NO usamos"
+
+#: templates/public/cookies.html:23
+msgid ""
+"No usamos cookies de seguimiento, de analítica ni de publicidad. No armamos "
+"perfiles tuyos ni compartimos tus datos con terceros."
+msgstr ""
+"No usamos cookies de seguimiento, de analítica ni de publicidad. No armamos "
+"perfiles tuyos ni compartimos tus datos con terceros."
+
+#: templates/public/cookies.html:26
+msgid "Por qué no hay banner de cookies"
+msgstr "Por qué no hay banner de cookies"
+
+#: templates/public/cookies.html:28
+msgid ""
+"No mostramos un banner de cookies porque solo usamos cookies esenciales para"
+" que el sitio funcione. Este tipo de cookies no requiere tu consentimiento "
+"previo."
+msgstr ""
+"No mostramos un banner de cookies porque solo usamos cookies esenciales para"
+" que el sitio funcione. Este tipo de cookies no requiere tu consentimiento "
+"previo."
+
+#: templates/public/cookies.html:31
+msgid "Cómo controlar las cookies"
+msgstr "Cómo controlar las cookies"
+
+#: templates/public/cookies.html:33
+msgid ""
+"Podés bloquear o borrar las cookies desde la configuración de tu navegador. "
+"Tené en cuenta que, si las bloqueás, el panel de administración puede dejar "
+"de funcionar. A los corredores no les afecta: vas a poder seguir buscando y "
+"descargando tus fotos normalmente."
+msgstr ""
+"Podés bloquear o borrar las cookies desde la configuración de tu navegador. "
+"Tené en cuenta que, si las bloqueás, el panel de administración puede dejar "
+"de funcionar. A los corredores no les afecta: vas a poder seguir buscando y "
+"descargando tus fotos normalmente."
+
+#: templates/public/event_archived.html:4
+msgid "Evento no disponible"
+msgstr "Evento no disponible"
+
+#: templates/public/event_archived.html:10
+msgid "404 · Archivado"
+msgstr "404 · Archivado"
+
+#: templates/public/event_archived.html:11
+msgid "Este evento ya no está disponible."
+msgstr "Este evento ya no está disponible."
+
+#: templates/public/event_archived.html:13
+#, python-format
+msgid "Las fotos de \"%(name)s\" se archivaron."
+msgstr "Las fotos de \"%(name)s\" se archivaron."
+
+#: templates/public/event_archived.html:15
+msgid "Contactá al administrador para más información."
+msgstr "Contactá al administrador para más información."
+
+#: templates/public/event_closed.html:18
+msgid "Galería cerrada al público"
+msgstr "Galería cerrada al público"
+
+#: templates/public/event_closed.html:19
+msgid "Esta galería ya no se muestra completa."
+msgstr "Esta galería ya no se muestra completa."
+
+#: templates/public/event_closed.html:20
+msgid "Para ver tus fotos, buscá por tu número de dorsal."
+msgstr "Para ver tus fotos, buscá por tu número de dorsal."
+
+#: templates/public/event_closed.html:25
+msgid "Tu número de dorsal"
+msgstr "Tu número de dorsal"
+
+#: templates/public/event_closed.html:28
+#: templates/public/event_gallery.html:81
+msgid "Buscar"
+msgstr "Buscar"
+
+#: templates/public/event_gallery.html:6
+#, python-format
+msgid "Buscá tus fotos de %(name)s por dorsal o selfie."
+msgstr "Buscá tus fotos de %(name)s por dorsal o selfie."
+
+#: templates/public/event_gallery.html:65 templates/public/home.html:63
+#: templates/public/selfie_search.html:22
+msgid "Por dorsal"
+msgstr "Por dorsal"
+
+#: templates/public/event_gallery.html:68 templates/public/home.html:64
+#: templates/public/selfie_search.html:23
+msgid "Por selfie"
+msgstr "Por selfie"
+
+#: templates/public/event_gallery.html:75
+#| msgid "Tu número de dorsal"
+msgid "Número de dorsal"
+msgstr "Número de dorsal"
+
+#: templates/public/event_gallery.html:76
+msgid "Ingresá tu número de dorsal (ej: 1042)"
+msgstr "Ingresá tu número de dorsal (ej: 1042)"
+
+#: templates/public/event_gallery.html:79 templates/public/home.html:52
+msgid "Buscar fotos"
+msgstr "Buscar fotos"
+
+#: templates/public/event_gallery.html:89
+msgid ""
+"Formato de dorsal inválido. Usá solo números (ej: 1042) o letra + números "
+"(ej: A123)."
+msgstr ""
+"Formato de dorsal inválido. Usá solo números (ej: 1042) o letra + números "
+"(ej: A123)."
+
+#: templates/public/event_gallery.html:96
+#, python-format
+msgid "Dorsal #%(bib_query)s · %(n)s foto"
+msgid_plural "Dorsal #%(bib_query)s · %(n)s fotos"
+msgstr[0] "Dorsal #%(bib_query)s · %(n)s foto"
+msgstr[1] "Dorsal #%(bib_query)s · %(n)s fotos"
+
+#: templates/public/event_no_results.html:4
+#: templates/public/selfie_no_results.html:3
+msgid "Sin resultados"
+msgstr "Sin resultados"
+
+#: templates/public/event_no_results.html:10
+#: templates/public/event_no_results.html:29
+#: templates/public/rate_limited.html:16
+#: templates/public/selfie_search.html:10
+msgid "Volver a la galería"
+msgstr "Volver a la galería"
+
+#: templates/public/event_no_results.html:21
+msgid "No encontramos fotos para el dorsal"
+msgstr "No encontramos fotos para el dorsal"
+
+#: templates/public/event_no_results.html:25
+msgid ""
+"Los fotógrafos todavía pueden estar subiendo fotos del evento. Probá de "
+"nuevo en unos minutos."
+msgstr ""
+"Los fotógrafos todavía pueden estar subiendo fotos del evento. Probá de "
+"nuevo en unos minutos."
+
+#: templates/public/event_no_results.html:36
+msgid "¿Quizá quisiste decir...?"
+msgstr "¿Quizá quisiste decir...?"
+
+#: templates/public/event_no_results.html:38
+msgid ""
+"Estos dorsales tienen lectura similar y fueron detectados en este evento:"
+msgstr ""
+"Estos dorsales tienen lectura similar y fueron detectados en este evento:"
+
+#: templates/public/face_unavailable.html:3
+msgid "Búsqueda por selfie"
+msgstr "Búsqueda por selfie"
+
+#: templates/public/face_unavailable.html:12
+msgid "Borrado por selfie no disponible"
+msgstr "Borrado por selfie no disponible"
+
+#: templates/public/face_unavailable.html:13
+msgid ""
+"Por ahora el borrado automático por selfie está desactivado. Si querés que "
+"borremos tus fotos, escribinos y lo hacemos manualmente."
+msgstr ""
+"Por ahora el borrado automático por selfie está desactivado. Si querés que "
+"borremos tus fotos, escribinos y lo hacemos manualmente."
+
+#: templates/public/face_unavailable.html:15
+msgid "Ver política de privacidad"
+msgstr "Ver política de privacidad"
+
+#: templates/public/face_unavailable.html:19
+msgid "Búsqueda por selfie no disponible"
+msgstr "Búsqueda por selfie no disponible"
+
+#: templates/public/face_unavailable.html:20
+msgid ""
+"Estamos afinando la búsqueda por selfie y la tenemos pausada por ahora. "
+"Mientras tanto, podés encontrar tus fotos buscando por tu número de dorsal."
+msgstr ""
+"Estamos afinando la búsqueda por selfie y la tenemos pausada por ahora. "
+"Mientras tanto, podés encontrar tus fotos buscando por tu número de dorsal."
+
+#: templates/public/face_unavailable.html:23
+#: templates/public/selfie_multiple_faces.html:15
+#: templates/public/selfie_no_face.html:15
+#: templates/public/selfie_no_results.html:16
+msgid "Buscar por dorsal"
+msgstr "Buscar por dorsal"
+
+#: templates/public/home.html:4
+msgid "Fotos de carrera"
+msgstr "Fotos de carrera"
+
+#: templates/public/home.html:5
+msgid "Encontrá tus fotos de carrera"
+msgstr "Encontrá tus fotos de carrera"
+
+#: templates/public/home.html:28
+#, python-format
+msgid "%(n)s evento en vivo"
+msgid_plural "%(n)s eventos en vivo"
+msgstr[0] "%(n)s evento en vivo"
+msgstr[1] "%(n)s eventos en vivo"
+
+#: templates/public/home.html:34
+msgid "Encontrá"
+msgstr "Encontrá"
+
+#: templates/public/home.html:34
+msgid "tus fotos."
+msgstr "tus fotos."
+
+#: templates/public/home.html:37
+msgid ""
+"Buscá por número de dorsal o por selfie. Descargá en alta resolución, sin "
+"costo y sin cuenta."
+msgstr ""
+"Buscá por número de dorsal o por selfie. Descargá en alta resolución, sin "
+"costo y sin cuenta."
+
+#: templates/public/home.html:47
+msgid "Ingresá tu número de dorsal"
+msgstr "Ingresá tu número de dorsal"
+
+#: templates/public/home.html:63
+msgid "OCR automático"
+msgstr "OCR automático"
+
+#: templates/public/home.html:64
+msgid "Reconocimiento facial"
+msgstr "Reconocimiento facial"
+
+#: templates/public/home.html:65
+msgid "Descarga gratis"
+msgstr "Descarga gratis"
+
+#: templates/public/home.html:65
+msgid "Sin marca de agua"
+msgstr "Sin marca de agua"
+
+#: templates/public/home.html:66
+msgid "Alta resolución"
+msgstr "Alta resolución"
+
+#: templates/public/home.html:66
+msgid "Sin recortes"
+msgstr "Sin recortes"
+
+#: templates/public/home.html:94
+msgid "FOTOS"
+msgstr "FOTOS"
+
+#: templates/public/home.html:109
+msgid "Todavía no hay eventos publicados."
+msgstr "Todavía no hay eventos publicados."
+
+#: templates/public/home.html:118
+msgid "Plataforma gratuita de fotos de carrera."
+msgstr "Plataforma gratuita de fotos de carrera."
+
+#: templates/public/home.html:119
+msgid "Sin cuentas. Sin costo. Solo tus fotos."
+msgstr "Sin cuentas. Sin costo. Solo tus fotos."
+
+#: templates/public/home.html:122 templates/public/privacy_policy.html:4
+msgid "Privacidad"
+msgstr "Privacidad"
+
+#: templates/public/home.html:123
+msgid "Términos"
+msgstr "Términos"
+
+#: templates/public/home.html:125
+msgid "Borrar mis fotos"
+msgstr "Borrar mis fotos"
+
+#: templates/public/lightbox_page.html:11
+msgid "Foto ampliada"
+msgstr "Foto ampliada"
+
+#: templates/public/privacy_delete.html:16
+msgid ""
+"Subí una selfie y borramos TODAS tus fotos y vectores de cara de TODOS los "
+"eventos. Esta acción es permanente y no se puede deshacer."
+msgstr ""
+"Subí una selfie y borramos TODAS tus fotos y vectores de cara de TODOS los "
+"eventos. Esta acción es permanente y no se puede deshacer."
+
+#: templates/public/privacy_delete.html:19
+msgid "Atención:"
+msgstr "Atención:"
+
+#: templates/public/privacy_delete.html:20
+msgid ""
+"esto borra tus fotos del evento permanentemente. Si querés conservarlas, "
+"descargalas antes."
+msgstr ""
+"esto borra tus fotos del evento permanentemente. Si querés conservarlas, "
+"descargalas antes."
+
+#: templates/public/privacy_delete.html:29
+msgid "Subí tu selfie"
+msgstr "Subí tu selfie"
+
+#: templates/public/privacy_delete.html:30
+msgid "JPG o PNG, máximo 10MB"
+msgstr "JPG o PNG, máximo 10MB"
+
+#: templates/public/privacy_delete.html:36
+msgid ""
+"Entiendo que esto borra mis fotos permanentemente y no se puede deshacer."
+msgstr ""
+"Entiendo que esto borra mis fotos permanentemente y no se puede deshacer."
+
+#: templates/public/privacy_delete.html:40
+msgid "Borrar todos mis datos"
+msgstr "Borrar todos mis datos"
+
+#: templates/public/privacy_delete.html:41
+msgid "Procesando..."
+msgstr "Procesando..."
+
+#: templates/public/privacy_delete_pending.html:3
+msgid "Borrado en proceso"
+msgstr "Borrado en proceso"
+
+#: templates/public/privacy_delete_pending.html:12
+msgid "Recibimos tu solicitud"
+msgstr "Recibimos tu solicitud"
+
+#: templates/public/privacy_delete_pending.html:14
+#, python-format
+msgid "Encontramos %(n)s foto tuya y la estamos borrando."
+msgid_plural "Encontramos %(n)s fotos tuyas y las estamos borrando."
+msgstr[0] "Encontramos %(n)s foto tuya y la estamos borrando."
+msgstr[1] "Encontramos %(n)s fotos tuyas y las estamos borrando."
+
+#: templates/public/privacy_delete_pending.html:16
+msgid ""
+"No encontramos fotos asociadas a tu cara. Si tenías datos, ya no quedan."
+msgstr ""
+"No encontramos fotos asociadas a tu cara. Si tenías datos, ya no quedan."
+
+#: templates/public/privacy_delete_pending.html:18
+msgid "Solicitud"
+msgstr "Solicitud"
+
+#: templates/public/privacy_policy.html:14
+msgid "Privacidad y reconocimiento facial"
+msgstr "Privacidad y reconocimiento facial"
+
+#: templates/public/privacy_policy.html:15
+#, python-format
+msgid ""
+"En %(site_name)s las fotos son gratis y sin cuenta. Para que puedas "
+"encontrarte usamos reconocimiento facial, y manejamos esos datos con el "
+"mayor cuidado. Acá te explicamos exactamente cómo."
+msgstr ""
+"En %(site_name)s las fotos son gratis y sin cuenta. Para que puedas "
+"encontrarte usamos reconocimiento facial, y manejamos esos datos con el "
+"mayor cuidado. Acá te explicamos exactamente cómo."
+
+#: templates/public/privacy_policy.html:19
+msgid "Qué datos procesamos"
+msgstr "Qué datos procesamos"
+
+#: templates/public/privacy_policy.html:21
+msgid ""
+"Tu selfie de búsqueda: se procesa en memoria y se descarta inmediatamente. "
+"No se guarda en ningún lado."
+msgstr ""
+"Tu selfie de búsqueda: se procesa en memoria y se descarta inmediatamente. "
+"No se guarda en ningún lado."
+
+#: templates/public/privacy_policy.html:22
+msgid ""
+"Vectores de cara (embeddings) extraídos de las fotos del evento: "
+"representaciones matemáticas que permiten el matching. No son fotos ni se "
+"pueden revertir a una imagen."
+msgstr ""
+"Vectores de cara (embeddings) extraídos de las fotos del evento: "
+"representaciones matemáticas que permiten el matching. No son fotos ni se "
+"pueden revertir a una imagen."
+
+#: templates/public/privacy_policy.html:23
+msgid ""
+"Direcciones IP: las guardamos hasheadas (no la IP real) solo para limitar "
+"abuso."
+msgstr ""
+"Direcciones IP: las guardamos hasheadas (no la IP real) solo para limitar "
+"abuso."
+
+#: templates/public/privacy_policy.html:28
+msgid "Cuánto tiempo los guardamos"
+msgstr "Cuánto tiempo los guardamos"
+
+#: templates/public/privacy_policy.html:30
+msgid "Selfie de búsqueda: cero. Se descarta al terminar la búsqueda."
+msgstr "Selfie de búsqueda: cero. Se descarta al terminar la búsqueda."
+
+#: templates/public/privacy_policy.html:31
+msgid "Embeddings de las fotos: se borran a los 90 días desde el último uso."
+msgstr "Embeddings de las fotos: se borran a los 90 días desde el último uso."
+
+#: templates/public/privacy_policy.html:32
+msgid ""
+"Fotos del evento: según la política de retención del evento (entre 3 meses y"
+" 1 año)."
+msgstr ""
+"Fotos del evento: según la política de retención del evento (entre 3 meses y"
+" 1 año)."
+
+#: templates/public/privacy_policy.html:37
+msgid "Cómo borrar tus datos"
+msgstr "Cómo borrar tus datos"
+
+#: templates/public/privacy_policy.html:38
+msgid ""
+"Subí una selfie y borramos todas tus fotos y embeddings de todos los "
+"eventos, al instante."
+msgstr ""
+"Subí una selfie y borramos todas tus fotos y embeddings de todos los "
+"eventos, al instante."
+
+#: templates/public/privacy_policy.html:43
+msgid "Protección de menores"
+msgstr "Protección de menores"
+
+#: templates/public/privacy_policy.html:44
+msgid ""
+"Detectamos automáticamente caras de menores y las difuminamos en las "
+"versiones públicas de las fotos. El reconocimiento sigue funcionando para "
+"que un menor (o su familia) pueda encontrar y borrar sus fotos."
+msgstr ""
+"Detectamos automáticamente caras de menores y las difuminamos en las "
+"versiones públicas de las fotos. El reconocimiento sigue funcionando para "
+"que un menor (o su familia) pueda encontrar y borrar sus fotos."
+
+#: templates/public/privacy_policy.html:48
+msgid "Quién tiene acceso"
+msgstr "Quién tiene acceso"
+
+#: templates/public/privacy_policy.html:49
+msgid ""
+"Sólo el administrador del sistema. No vendemos ni compartimos datos con "
+"terceros. Los embeddings se usan exclusivamente para el matching directo — "
+"nunca para analytics ni entrenamiento."
+msgstr ""
+"Sólo el administrador del sistema. No vendemos ni compartimos datos con "
+"terceros. Los embeddings se usan exclusivamente para el matching directo — "
+"nunca para analytics ni entrenamiento."
+
+#: templates/public/privacy_policy.html:54
+msgid "Para cualquier consulta sobre tus datos, escribinos."
+msgstr "Para cualquier consulta sobre tus datos, escribinos."
+
+#: templates/public/rate_limited.html:4
+msgid "Demasiadas búsquedas"
+msgstr "Demasiadas búsquedas"
+
+#: templates/public/rate_limited.html:10
+msgid "429 · Límite alcanzado"
+msgstr "429 · Límite alcanzado"
+
+#: templates/public/rate_limited.html:11
+msgid "Hiciste demasiadas búsquedas."
+msgstr "Hiciste demasiadas búsquedas."
+
+#: templates/public/rate_limited.html:13
+msgid ""
+"Para proteger el servicio, limitamos la cantidad de búsquedas por hora. "
+"Esperá un rato y probá de nuevo."
+msgstr ""
+"Para proteger el servicio, limitamos la cantidad de búsquedas por hora. "
+"Esperá un rato y probá de nuevo."
+
+#: templates/public/selfie_multiple_faces.html:3
+#: templates/public/selfie_multiple_faces_delete.html:3
+msgid "Varias caras"
+msgstr "Varias caras"
+
+#: templates/public/selfie_multiple_faces.html:11
+#: templates/public/selfie_multiple_faces_delete.html:12
+msgid "Detectamos varias caras"
+msgstr "Detectamos varias caras"
+
+#: templates/public/selfie_multiple_faces.html:12
+msgid ""
+"Para buscar bien necesitamos una selfie con una sola cara: la tuya. Recortá "
+"la foto o sacate una solo."
+msgstr ""
+"Para buscar bien necesitamos una selfie con una sola cara: la tuya. Recortá "
+"la foto o sacate una solo."
+
+#: templates/public/selfie_multiple_faces.html:14
+#: templates/public/selfie_multiple_faces_delete.html:14
+#: templates/public/selfie_no_face.html:14
+#: templates/public/selfie_no_face_delete.html:14
+#: templates/public/selfie_no_results.html:15
+msgid "Probar con otra foto"
+msgstr "Probar con otra foto"
+
+#: templates/public/selfie_multiple_faces_delete.html:13
+msgid ""
+"Para borrar solo TUS datos necesitamos una selfie con una sola cara: la "
+"tuya. Así no borramos fotos de otra persona por error."
+msgstr ""
+"Para borrar solo TUS datos necesitamos una selfie con una sola cara: la "
+"tuya. Así no borramos fotos de otra persona por error."
+
+#: templates/public/selfie_no_face.html:3
+#: templates/public/selfie_no_face_delete.html:3
+msgid "Sin cara detectada"
+msgstr "Sin cara detectada"
+
+#: templates/public/selfie_no_face.html:11
+#: templates/public/selfie_no_face_delete.html:12
+msgid "No detectamos una cara"
+msgstr "No detectamos una cara"
+
+#: templates/public/selfie_no_face.html:12
+msgid ""
+"Probá con una foto más clara, de frente, con buena luz y tu cara bien "
+"visible."
+msgstr ""
+"Probá con una foto más clara, de frente, con buena luz y tu cara bien "
+"visible."
+
+#: templates/public/selfie_no_face_delete.html:13
+msgid ""
+"No pudimos identificar tu cara en la foto. Probá con una selfie clara, de "
+"frente, para poder borrar tus datos."
+msgstr ""
+"No pudimos identificar tu cara en la foto. Probá con una selfie clara, de "
+"frente, para poder borrar tus datos."
+
+#: templates/public/selfie_no_results.html:12
+msgid "No encontramos tus fotos"
+msgstr "No encontramos tus fotos"
+
+#: templates/public/selfie_no_results.html:13
+msgid ""
+"No hay coincidencias claras para tu selfie en este evento. Los fotógrafos "
+"pueden estar subiendo más fotos — probá de nuevo más tarde, o buscá por tu "
+"dorsal."
+msgstr ""
+"No hay coincidencias claras para tu selfie en este evento. Los fotógrafos "
+"pueden estar subiendo más fotos — probá de nuevo más tarde, o buscá por tu "
+"dorsal."
+
+#: templates/public/selfie_results.html:4
+msgid "Resultados"
+msgstr "Resultados"
+
+#: templates/public/selfie_results.html:10
+msgid "Cambiar selfie"
+msgstr "Cambiar selfie"
+
+#: templates/public/selfie_results.html:18
+#, python-format
+msgid "%(n)s coincidencia"
+msgid_plural "%(n)s coincidencias"
+msgstr[0] "%(n)s coincidencia"
+msgstr[1] "%(n)s coincidencias"
+
+#: templates/public/selfie_results.html:24
+#, python-format
+msgid "%(n)s alta confianza"
+msgid_plural "%(n)s alta confianza"
+msgstr[0] "%(n)s alta confianza"
+msgstr[1] "%(n)s alta confianza"
+
+#: templates/public/selfie_results.html:31
+#, python-format
+msgid "%(n)s confianza media"
+msgid_plural "%(n)s confianza media"
+msgstr[0] "%(n)s confianza media"
+msgstr[1] "%(n)s confianza media"
+
+#: templates/public/selfie_results.html:38
+#, python-format
+msgid "%(n)s confianza baja"
+msgid_plural "%(n)s confianza baja"
+msgstr[0] "%(n)s confianza baja"
+msgstr[1] "%(n)s confianza baja"
+
+#: templates/public/selfie_search.html:4
+msgid "Buscar por selfie"
+msgstr "Buscar por selfie"
+
+#: templates/public/selfie_search.html:37
+msgid "Tu selfie no se guarda."
+msgstr "Tu selfie no se guarda."
+
+#: templates/public/selfie_search.html:38
+msgid ""
+"Lo usamos solo para encontrar tus fotos y se descarta inmediatamente después"
+" de la búsqueda. Los vectores de cara extraídos de las fotos del evento se "
+"borran a los 90 días."
+msgstr ""
+"Lo usamos solo para encontrar tus fotos y se descarta inmediatamente después"
+" de la búsqueda. Los vectores de cara extraídos de las fotos del evento se "
+"borran a los 90 días."
+
+#: templates/public/selfie_search.html:51
+msgid "Subí una selfie clara, mirando a cámara"
+msgstr "Subí una selfie clara, mirando a cámara"
+
+#: templates/public/selfie_search.html:53
+#, python-format
+msgid "JPG o PNG, máximo 10MB. Buscamos en %(n)s foto del evento."
+msgid_plural "JPG o PNG, máximo 10MB. Buscamos en %(n)s fotos del evento."
+msgstr[0] "JPG o PNG, máximo 10MB. Buscamos en %(n)s foto del evento."
+msgstr[1] "JPG o PNG, máximo 10MB. Buscamos en %(n)s fotos del evento."
+
+#: templates/public/selfie_search.html:59
+msgid "Buscar mis fotos"
+msgstr "Buscar mis fotos"
+
+#: templates/public/selfie_search.html:60
+msgid "Buscando..."
+msgstr "Buscando..."
+
+#: templates/public/terminos.html:4 templates/public/terminos.html:8
+msgid "Términos de uso"
+msgstr "Términos de uso"
+
+#: templates/public/terminos.html:12
+#, python-format
+msgid ""
+"%(site_name)s es un servicio gratuito para que encuentres y descargues tus "
+"fotos de carreras deportivas. Al usar el sitio, aceptás estos términos. Si "
+"no estás de acuerdo, te pedimos que no lo uses."
+msgstr ""
+"%(site_name)s es un servicio gratuito para que encuentres y descargues tus "
+"fotos de carreras deportivas. Al usar el sitio, aceptás estos términos. Si "
+"no estás de acuerdo, te pedimos que no lo uses."
+
+#: templates/public/terminos.html:15
+msgid "El servicio"
+msgstr "El servicio"
+
+#: templates/public/terminos.html:17
+#, python-format
+msgid ""
+"%(site_name)s es totalmente gratuito. No necesitás crear una cuenta para "
+"buscar ni descargar tus fotos. Cuando encontrás tus fotos, las descargás en "
+"alta resolución y sin marca de agua."
+msgstr ""
+"%(site_name)s es totalmente gratuito. No necesitás crear una cuenta para "
+"buscar ni descargar tus fotos. Cuando encontrás tus fotos, las descargás en "
+"alta resolución y sin marca de agua."
+
+#: templates/public/terminos.html:20
+msgid ""
+"El servicio se ofrece \"tal cual\", sin garantías de disponibilidad "
+"continua. Podemos hacer mantenimiento, cambios o interrupciones en cualquier"
+" momento. Hacemos lo posible para que todo funcione, pero no garantizamos "
+"que el sitio esté siempre disponible ni libre de errores."
+msgstr ""
+"El servicio se ofrece \"tal cual\", sin garantías de disponibilidad "
+"continua. Podemos hacer mantenimiento, cambios o interrupciones en cualquier"
+" momento. Hacemos lo posible para que todo funcione, pero no garantizamos "
+"que el sitio esté siempre disponible ni libre de errores."
+
+#: templates/public/terminos.html:23
+msgid "Uso permitido"
+msgstr "Uso permitido"
+
+#: templates/public/terminos.html:25
+msgid ""
+"Las fotos que descargás son para tu uso personal como corredor. Podés "
+"guardarlas, imprimirlas y compartirlas en tus redes."
+msgstr ""
+"Las fotos que descargás son para tu uso personal como corredor. Podés "
+"guardarlas, imprimirlas y compartirlas en tus redes."
+
+#: templates/public/terminos.html:28
+msgid ""
+"No revendas las fotos ni las uses con fines comerciales sin permiso del "
+"organizador o del fotógrafo."
+msgstr ""
+"No revendas las fotos ni las uses con fines comerciales sin permiso del "
+"organizador o del fotógrafo."
+
+#: templates/public/terminos.html:29
+msgid ""
+"No uses el sitio para descargar fotos de otras personas de forma masiva o "
+"automatizada."
+msgstr ""
+"No uses el sitio para descargar fotos de otras personas de forma masiva o "
+"automatizada."
+
+#: templates/public/terminos.html:30
+msgid ""
+"No intentes acceder a fotos originales o a áreas del sistema que no son "
+"públicas."
+msgstr ""
+"No intentes acceder a fotos originales o a áreas del sistema que no son "
+"públicas."
+
+#: templates/public/terminos.html:33
+msgid "Propiedad de las fotos"
+msgstr "Propiedad de las fotos"
+
+#: templates/public/terminos.html:35
+#, python-format
+msgid ""
+"Las fotos pertenecen a los fotógrafos y organizadores de cada evento. "
+"%(site_name)s solo las distribuye para que las puedas encontrar y descargar;"
+" no reclama propiedad sobre ellas."
+msgstr ""
+"Las fotos pertenecen a los fotógrafos y organizadores de cada evento. "
+"%(site_name)s solo las distribuye para que las puedas encontrar y descargar;"
+" no reclama propiedad sobre ellas."
+
+#: templates/public/terminos.html:38
+msgid "Privacidad y datos"
+msgstr "Privacidad y datos"
+
+#: templates/public/terminos.html:40
+msgid ""
+"Tu privacidad nos importa. Te recomendamos leer nuestra política de "
+"privacidad para entender qué datos procesamos y por cuánto tiempo. Si en "
+"algún momento querés que borremos tus fotos y datos, podés hacerlo vos mismo"
+" en cualquier momento."
+msgstr ""
+"Tu privacidad nos importa. Te recomendamos leer nuestra política de "
+"privacidad para entender qué datos procesamos y por cuánto tiempo. Si en "
+"algún momento querés que borremos tus fotos y datos, podés hacerlo vos mismo"
+" en cualquier momento."
+
+#: templates/public/terminos.html:43
+msgid "Política de privacidad"
+msgstr "Política de privacidad"
+
+#: templates/public/terminos.html:47
+msgid "Cambios en estos términos"
+msgstr "Cambios en estos términos"
+
+#: templates/public/terminos.html:49
+msgid ""
+"Podemos actualizar estos términos cuando sea necesario. La fecha que ves "
+"arriba indica cuál es la última versión. Si seguís usando el sitio después "
+"de un cambio, entendemos que aceptás los términos actualizados."
+msgstr ""
+"Podemos actualizar estos términos cuando sea necesario. La fecha que ves "
+"arriba indica cuál es la última versión. Si seguís usando el sitio después "
+"de un cambio, entendemos que aceptás los términos actualizados."
+
+#: templates/public/terminos.html:54
+msgid ""
+"Si tenés alguna consulta sobre estos términos, escribinos. Encontrás cómo "
+"contactarnos en la página de contacto."
+msgstr ""
+"Si tenés alguna consulta sobre estos términos, escribinos. Encontrás cómo "
+"contactarnos en la página de contacto."

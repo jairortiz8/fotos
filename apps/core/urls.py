@@ -16,6 +16,15 @@ urlpatterns = [
     path("healthz", views.healthz, name="healthz"),
     path("healthz/lite", views.healthz_lite, name="healthz_lite"),
     path("robots.txt", views.robots_txt, name="robots"),
+    # PWA: manifest dinámico (usa site_name, no hardcodea el nombre)
+    path(
+        "manifest.webmanifest",
+        TemplateView.as_view(
+            template_name="manifest.webmanifest",
+            content_type="application/manifest+json",
+        ),
+        name="manifest",
+    ),
     # Páginas legales (Fase 6)
     path(
         "terminos/",

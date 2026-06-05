@@ -19,6 +19,6 @@
 <form hx-post="{% url 'dashboard:add_bib' pk=photo.id %}"
       hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
       hx-target="#bibs-section" hx-swap="innerHTML" class="flex gap-2">
-  <input type="text" name="number" placeholder="{% trans 'Agregar dorsal…' %}" class="rf-input !py-2 text-xs flex-1" required>
+  <input type="text" name="number" aria-label="{% trans 'Número de dorsal a agregar' %}" placeholder="{% trans 'Agregar dorsal…' %}" class="rf-input !py-2 text-xs flex-1" required>
   <button type="submit" class="rf-ghost" style="padding:.5rem .85rem">{% trans "Agregar" %}</button>
 </form>

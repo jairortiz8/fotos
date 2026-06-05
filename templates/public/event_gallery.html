@@ -5,6 +5,26 @@
 {% block og_title %}{{ event.name }} — {{ site_name }}{% endblock %}
 {% block og_description %}{% blocktrans with name=event.name %}Buscá tus fotos de {{ name }} por dorsal o selfie.{% endblocktrans %}{% endblock %}
 
+{% block extra_head %}
+{# SEO: datos estructurados schema.org para que Google muestre el evento como SportsEvent. #}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SportsEvent",
+  "name": "{{ event.name|escapejs }}",
+  "sport": "Running",
+  "startDate": "{{ event.date|date:'Y-m-d' }}",
+  "eventStatus": "https://schema.org/EventScheduled",
+  "eventAttendanceMode": "https://schema.org/OfflineEventAttendanceMode",
+  {% if event.location %}"location": {"@type": "Place", "name": "{{ event.location|escapejs }}"},{% endif %}
+  {% if event.description %}"description": "{{ event.description|escapejs }}",{% endif %}
+  {% if event.cover_image %}"image": "{{ request.scheme }}://{{ request.get_host }}{{ event.cover_image.url }}",{% endif %}
+  "url": "{{ request.scheme }}://{{ request.get_host }}{% url 'events:gallery' slug=event.slug %}",
+  "organizer": {"@type": "Organization", "name": "{{ site_name|escapejs }}"}
+}
+</script>
+{% endblock %}
+
 {% block body %}
 <div class="min-h-screen pb-24" x-data="photoSelection('{{ event.slug }}')">
 
@@ -52,11 +72,12 @@
       <div class="flex-1 flex items-center gap-2.5 bg-ink-0 border border-border rounded-lg px-3.5 py-2.5">
         <span class="font-mono font-semibold text-data text-sm">#</span>
         <input name="bib" value="{{ bib_query|default:'' }}" inputmode="numeric" autocomplete="off"
+               aria-label="{% trans 'Número de dorsal' %}"
                placeholder="{% trans 'Ingresá tu número de dorsal (ej: 1042)' %}"
                class="bg-transparent border-0 outline-none text-text-1 text-sm flex-1 placeholder:text-text-3 font-mono">
       </div>
-      <button type="submit" class="rf-cta">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <button type="submit" class="rf-cta" aria-label="{% trans 'Buscar fotos' %}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
         <span class="hidden sm:inline">{% trans "Buscar" %}</span>
       </button>
     </form>

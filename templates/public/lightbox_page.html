@@ -8,6 +8,8 @@
 {% block body %}
 <div class="fixed inset-0 z-50" style="background: #050506;"
      x-data="lightbox()"
+     role="dialog" aria-modal="true" aria-label="{% trans 'Foto ampliada' %}"
+     tabindex="-1" x-init="$el.focus()"
      @keydown.escape.window="close()"
      @keydown.arrow-left.window="go(prevUrl)"
      @keydown.arrow-right.window="go(nextUrl)">

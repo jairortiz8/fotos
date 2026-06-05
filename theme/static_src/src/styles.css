@@ -30,7 +30,9 @@
   /* Texto */
   --color-text-1: #fafafa;
   --color-text-2: #a1a1a6;
-  --color-text-3: #6b6b70;
+  /* text-3: subido de #6b6b70 → #8a8a93 en Fase 7 para cumplir WCAG AA
+     (contraste ≥4.5:1 en texto chico sobre ink-0/1/2). Verificado con axe. */
+  --color-text-3: #8a8a93;
 
   /* Brand + data */
   --color-brand: #fc5200;
@@ -128,6 +130,14 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
+
+  /* Foco visible para navegación por teclado (anillo naranja).
+     Sólo aparece con teclado (:focus-visible), no al clickear con mouse. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
 }
 
 /* ============================================================================
@@ -138,6 +148,29 @@
  * se agregan en las fases que los usen.
  * ============================================================================ */
 @layer components {
+  /* --- Skip link "Saltar al contenido" (a11y / teclado) ---
+     Oculto fuera de pantalla hasta recibir foco con Tab; ahí se desliza. */
+  .rf-skip-link {
+    position: fixed;
+    left: 0.5rem;
+    top: 0.5rem;
+    z-index: 100;
+    transform: translateY(-150%);
+    transition: transform 0.15s ease;
+    background: var(--color-brand);
+    color: #fff;
+    padding: 0.625rem 1rem;
+    border-radius: var(--radius-control);
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .rf-skip-link:focus {
+    transform: translateY(0);
+  }
+
   .rf-wordmark {
     display: inline-flex;
     align-items: baseline;
@@ -477,4 +510,20 @@
 /* Hide Alpine elements until initialized */
 [x-cloak] {
   display: none !important;
+}
+
+/* ============================================================================
+ * Accesibilidad: respetar "prefers-reduced-motion".
+ * Quien tenga animaciones reducidas en su sistema (vértigo, mareo, etc.)
+ * recibe el sitio casi sin animaciones ni transiciones.
+ * ============================================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

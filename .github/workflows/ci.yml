@@ -85,6 +85,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      # Compila el CSS de Tailwind (valida que el build no se rompió) y
+      # verifica el presupuesto de tamaño del bundle (Fase 7).
+      - name: Build Tailwind CSS
+        run: |
+          npm --prefix theme/static_src ci
+          npm --prefix theme/static_src run build
+
+      - name: Bundle-size budget
+        run: bash scripts/check_bundle_size.sh
+
       - name: Ruff (lint)
         run: ruff check .
 
@@ -101,7 +111,7 @@ jobs:
         run: python manage.py check --deploy --fail-level WARNING || python manage.py check
 
       - name: Pytest
-        run: pytest -m "not slow" --cov=apps --cov=config --cov-report=term-missing --cov-report=xml
+        run: pytest -m "not slow and not e2e" --cov=apps --cov=config --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage artifact
         if: always()
@@ -110,3 +120,78 @@ jobs:
           name: coverage-xml
           path: coverage.xml
           if-no-files-found: ignore
+
+  # ==========================================================================
+  # E2E con Playwright (job aparte: pesado, descarga un navegador).
+  # ==========================================================================
+  e2e:
+    name: e2e (playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: runfoto
+          POSTGRES_PASSWORD: runfoto
+          POSTGRES_DB: runfoto
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U runfoto -d runfoto"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      SECRET_KEY: ci-secret-key-not-real
+      DEBUG: "True"
+      ALLOWED_HOSTS: "*"
+      DATABASE_URL: postgres://runfoto:runfoto@localhost:5432/runfoto
+      REDIS_URL: redis://localhost:6379/0
+      CELERY_BROKER_URL: redis://localhost:6379/1
+      CELERY_RESULT_BACKEND: redis://localhost:6379/2
+      SITE_NAME: RunFoto
+      SITE_DOMAIN: localhost:8000
+      NOTIFIER_BACKEND: whatsapp_manual
+      LANGUAGE_CODE: es
+      TIME_ZONE: America/Guatemala
+      DJANGO_ALLOW_ASYNC_UNSAFE: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system libs for OpenCV/onnxruntime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libglib2.0-0 libgomp1 libxcb1 libsm6 libxext6 libxrender1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install Python deps (incl. e2e)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,e2e]"
+
+      - name: Install Playwright Chromium (+ deps)
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        run: pytest tests/e2e -m e2e

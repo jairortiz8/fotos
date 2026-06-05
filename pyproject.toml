@@ -79,6 +79,13 @@ dev = [
     # --- Test infra (Fase 2 — boto3 mocks) ---
     "moto[s3]>=5.0",
 ]
+# E2E (Fase 7) — pesado (descarga un navegador), por eso va en su propio extra
+# y corre en un job de CI separado. Instalar con: pip install -e ".[dev,e2e]"
+# y después `playwright install chromium`.
+e2e = [
+    "pytest-playwright>=0.5",
+    "playwright>=1.40",
+]
 
 [project.urls]
 Repository = "https://github.com/jairortiz8/fotos"
@@ -200,6 +207,8 @@ module = [
     "onnxruntime.*",
     "cv2.*",
     "qrcode.*",
+    "playwright.*",
+    "pytest_playwright.*",
 ]
 ignore_missing_imports = true
 
@@ -221,6 +230,7 @@ addopts = [
 ]
 markers = [
     "slow: tests que tardan (no se corren por default)",
+    "e2e: tests end-to-end con Playwright (navegador real; corren en su propio job de CI)",
 ]
 
 # ============================================================================

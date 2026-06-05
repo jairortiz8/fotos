@@ -5,15 +5,15 @@
 <div class="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-5 md:px-8 py-5"
      style="background: linear-gradient(180deg, rgba(0,0,0,0.7), transparent);">
   <a href="{% url 'events:gallery' slug=event.slug %}{% if bib_filter %}?bib={{ bib_filter }}{% endif %}"
-     class="flex items-center gap-2.5 text-text-1 hover:opacity-80 transition">
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+     class="flex items-center gap-2.5 text-text-1 hover:opacity-80 transition" aria-label="{% trans 'Cerrar' %}">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
     <span class="text-[13px] hidden sm:inline">{% trans "Cerrar" %}</span>
   </a>
   <a href="{{ preview_url }}" target="_blank" rel="noopener"
      class="w-9 h-9 rounded-lg grid place-items-center text-text-1 hover:bg-white/10 transition"
      style="background: rgba(255,255,255,0.06); border: 1px solid var(--color-border);"
-     title="{% trans 'Ver tamaño completo' %}">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+     aria-label="{% trans 'Ver tamaño completo' %}" title="{% trans 'Ver tamaño completo' %}">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
   </a>
 </div>
 
@@ -57,8 +57,8 @@
       <span class="text-[12px] md:text-[13px] text-text-1 truncate">{{ photographer_name }}</span>
     </div>
   </div>
-  <a href="{{ preview_url }}" target="_blank" rel="noopener" class="rf-cta shrink-0">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+  <a href="{{ preview_url }}" target="_blank" rel="noopener" class="rf-cta shrink-0" aria-label="{% trans 'Descargar' %}">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
     <span class="hidden sm:inline">{% trans "Descargar" %}</span>
   </a>
 </div>

@@ -17,7 +17,29 @@
 
 Más detalle en [`docs/adr/0001-stack-selection.md`](docs/adr/0001-stack-selection.md).
 
-## Cómo levantar el proyecto localmente
+## Quick start (lo más rápido: Docker)
+
+Si tenés Docker Desktop, es el camino de menos pasos. Levanta el stack completo
+(Postgres + pgvector, Redis, web, worker y beat):
+
+```bash
+cp .env.example .env                                              # 1. variables
+python3 -c "import secrets; print(secrets.token_urlsafe(50))"     # 2. generá un SECRET_KEY y pegalo en .env
+docker compose up                                                 # 3. levantá todo
+```
+
+El primer build tarda unos minutos (baja imágenes ML). Cuando termine:
+
+- Sitio: <http://localhost:8000/>
+- Health check: <http://localhost:8000/healthz/lite>
+
+`docker compose` ya corre `migrate` solo al arrancar el servicio web. Para
+sembrar data de prueba: `docker compose exec web python manage.py seed_data --clean`.
+
+Si preferís correrlo **sin Docker** (Python + Postgres + Redis nativos), seguí la
+sección detallada de abajo.
+
+## Cómo levantar el proyecto localmente (sin Docker)
 
 Requiere macOS o Linux con `brew` (o equivalente), y los siguientes
 binarios disponibles antes de empezar:
@@ -71,19 +93,8 @@ python manage.py tailwind build
 python manage.py runserver
 ```
 
-Abrí http://localhost:8000/ → debería ver la landing temporal.
-Health check: http://localhost:8000/healthz → `{"status":"ok",...}`
-
-### Alternativa: Docker Compose
-
-Si tenés Docker Desktop instalado:
-
-```bash
-docker compose up
-```
-
-Levanta `db` (pgvector/pgvector:pg16), `redis`, `web` (Django con autoreload),
-`worker` y `beat` (Celery). El primer build tarda unos minutos.
+Abrí http://localhost:8000/ → debería ver la landing.
+Health check: http://localhost:8000/healthz/lite → `{"status":"ok"}`
 
 ## Cómo correr los tests + linter
 
@@ -106,17 +117,24 @@ pre-commit install
 
 ## Cómo deployar
 
-Hoy todavía no está conectado Railway al repo. Cuando se conecte:
+RunFoto deploya a **Railway** (backend + Postgres + Redis + workers). El flujo
+normal de un cambio:
 
 1. Mergeás PR en `main`.
 2. GitHub Actions corre lint + tests (verde antes de mergear).
 3. Railway detecta el push, builda con el `Dockerfile` multi-stage
-   y deploya 3 servicios: `web` (gunicorn), `worker` (celery worker),
-   `beat` (celery beat).
+   y deploya los servicios de código: `web` (gunicorn), `worker` (celery worker),
+   `beat` (celery beat). El `web` corre `migrate --noinput` al arrancar.
 4. Postgres + Redis se aprovisionan desde el dashboard de Railway,
    no desde código.
 
-Más detalle en [`docs/runbook.md`](docs/runbook.md).
+> **Estado prod**: hoy corren `web` + `Postgres` + `Redis`. Los servicios
+> `worker` y `beat` están **pendientes de crear** — hasta entonces no corre nada
+> async en prod (OCR, caras, crons de retención, backup). Es lo principal a
+> destrabar.
+
+- **Deploy desde cero** (Railway nuevo, paso a paso): [`docs/deployment.md`](docs/deployment.md).
+- **Operación diaria, rollback, backups**: [`docs/runbook.md`](docs/runbook.md).
 
 ## Troubleshooting común
 
@@ -129,8 +147,10 @@ Más detalle en [`docs/runbook.md`](docs/runbook.md).
 | Los crons de retención no corren | El `beat` de Celery no está corriendo (pendiente en prod). |
 | CSP rompe algo en el browser | Revisar `CONTENT_SECURITY_POLICY` en `config/settings/base.py` y la consola del navegador. |
 | El backup `pg_dump` falla en prod | Falta `postgresql-client-18` en la imagen (ver ADR 0010); usar snapshots de Railway. |
+| Alpine sin interactividad (selección, lightbox, drawer) | Hash SRI de Alpine mal o falta `'unsafe-eval'` en la CSP. Ver [`docs/troubleshooting.md`](docs/troubleshooting.md). |
 
-Más incidentes y cómo resolverlos en [`docs/runbook.md`](docs/runbook.md) → Incidentes.
+Guía completa síntoma → causa → solución en [`docs/troubleshooting.md`](docs/troubleshooting.md).
+Más incidentes de operación en [`docs/runbook.md`](docs/runbook.md) → Incidentes.
 
 ## Modelos principales (Fase 1)
 
@@ -323,23 +343,57 @@ runfoto/
 │
 ├── tests/                    # pytest
 │   ├── conftest.py
-│   ├── factories.py          # vacío en Fase 0
+│   ├── factories.py          # factory-boy
 │   └── test_*.py
 │
 ├── docs/
 │   ├── adr/                  # Architecture Decision Records
-│   └── runbook.md            # operaciones (deploy, rollback, etc.)
+│   ├── runbook.md            # operación (deploy, rollback, backups, incidentes)
+│   ├── deployment.md         # deploy a Railway desde cero, paso a paso
+│   ├── troubleshooting.md    # problemas comunes (síntoma → causa → solución)
+│   ├── api.md                # endpoints públicos (SSR/HTMX, no API JSON)
+│   ├── contributing.md       # cómo contribuir
+│   ├── privacy.md            # manejo de datos biométricos
+│   ├── performance.md        # notas de performance
+│   └── erd.md                # diagrama ER (Mermaid)
 │
 └── reference/
     └── runfoto-design/       # zip de Claude Design (referencia visual)
 ```
 
+## Documentación
+
+- [`CHANGELOG.md`](CHANGELOG.md) — qué cambió en cada fase.
+- [`docs/deployment.md`](docs/deployment.md) — deploy a Railway desde cero.
+- [`docs/troubleshooting.md`](docs/troubleshooting.md) — problemas comunes y cómo resolverlos.
+- [`docs/api.md`](docs/api.md) — endpoints públicos del sitio.
+- [`docs/runbook.md`](docs/runbook.md) — operación diaria, rollback, backups, incidentes.
+- [`docs/privacy.md`](docs/privacy.md) — manejo de datos biométricos.
+- [`docs/adr/`](docs/adr/) — decisiones de arquitectura (ADRs).
+
+## Cómo contribuir
+
+Este es un proyecto de un solo dueño (Jair), construido **en fases** (ver
+`CLAUDE.md` §6). La guía corta —cómo dejar todo en verde antes de commitear,
+estilo de commits (Conventional Commits) y qué **no** hacer— está en
+[`docs/contributing.md`](docs/contributing.md).
+
+Regla de oro: `ruff` + `black` + `mypy` + `pytest`, todo en verde, antes de cada
+commit.
+
 ## Estado actual
 
-**Fase 0 — Setup** completada.
+Fases 0 a 6 completadas (setup, modelos, upload + OCR, galería + búsqueda por
+dorsal, búsqueda por selfie, dashboard admin, privacidad + retención +
+hardening). **Fase 7** (i18n completo, accesibilidad, performance, PWA, SEO,
+tests E2E, docs finales) en progreso. Historial detallado en
+[`CHANGELOG.md`](CHANGELOG.md).
 
-Fase 1 (modelos + admin) arranca cuando se dé OK explícito.
+**Pendiente para producción** (heredado de fases anteriores): crear los servicios
+`worker` + `beat` en Railway (sin ellos no corre nada async en prod) y subir la
+RAM del web para reactivar la búsqueda por selfie (`FACE_SEARCH_ENABLED`).
 
 ## Licencia
 
-Proprietary. Todos los derechos reservados.
+**Propietario** — RunFoto / Jair. Todos los derechos reservados. (No hay una
+licencia open source definida; si en el futuro se elige una, se documenta acá.)
