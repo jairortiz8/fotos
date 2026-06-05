@@ -62,6 +62,9 @@ dev = [
     "pytest>=8.0",
     "pytest-django>=4.8",
     "pytest-cov>=5.0",
+    # Convierte las fallas de pytest en anotaciones de GitHub Actions (visibles
+    # en la UI de checks) — útil para diagnosticar fallas que sólo pasan en CI.
+    "pytest-github-actions-annotate-failures>=0.2",
     "factory-boy>=3.3",
     # --- Lint / format / typing ---
     # mypy + django-stubs van PINEADOS (==): con deps sin pinear, cada release
