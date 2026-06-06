@@ -646,3 +646,12 @@ Jair pasó a Hobby y decidió bancar el costo para tener búsqueda por selfie (s
 - **Dep nueva**: `pillow-heif>=0.18` (wheel manylinux, **sin libheif del sistema** → bajo riesgo de deploy; verificado: build de Railway OK). Agregada al override de mypy.
 - **Verificado E2E en prod**: POST de un HEIC real → `200` + key `.jpg` (convertido). Test `test_upload_converts_heic_to_jpeg`.
 - **Nota**: la conversión corre **síncrona en el web** (~1-2s por HEIC). El web también carga InsightFace para el selfie; si el volumen de HEIC fuera alto, evaluar mover la conversión al worker. Por ahora OK para la escala.
+
+## Subida por lotes (300+ fotos) + no-cache del portal (2026-06-06)
+
+**El problema real que Jair quería**: soltar ~300 fotos de una. El portal disparaba TODAS las subidas a la vez (`handleFiles` → un XHR por archivo simultáneo) → con 300 chocaba con el rate limit (100/m) y "algunas" fallaban. Sumado a que el navegador tenía el portal **cacheado** (no veía el estado actualizado).
+
+- **Cola de concurrencia en el cliente** (`templates/photographer/portal.html`): `MAX_CONCURRENT = 4`. `handleFiles` empuja todo a `_pending` con estado "En cola"; `pump()` mantiene 4 subiendo a la vez y arranca la siguiente cuando se libera un slot (`_slotDone`). Soltás 300 de una y suben ordenadas, ninguna se pierde. Verificado en navegador (10 archivos → 4 "Subiendo" + 6 "En cola"; al terminar 2, arrancan 2).
+- **Rate limit del upload: 100/m → 600/m** (`UploadView`). La cola de 4 del cliente es el freno real (~2-4/s); el 600/m sólo evita 429 en ráfagas. El 429 igual libera el slot + reintenta con backoff (red de seguridad).
+- **`never_cache` en `PhotographerPortalView`**: el navegador siempre trae el portal fresco (antes servía una copia vieja donde no se veía el estado). Jair tuvo que hacer un hard-refresh una vez para tomar la versión nueva; de ahí en más, siempre fresco.
+- **Estado por foto, siempre visible** (ya venía de los fixes anteriores): En cola → Subiendo → Procesando → ✓ Lista / ✗ Error, con resumen "X listas · Y en curso · Z con error".
