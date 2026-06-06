@@ -169,7 +169,7 @@ class PhotographerPortalView(View):
 # ---------------------------------------------------------------------------
 @method_decorator(csrf_exempt, name="dispatch")
 @method_decorator(
-    ratelimit(key=upload_ratelimit_key, rate="100/m", method="POST", block=True),
+    ratelimit(key=upload_ratelimit_key, rate="600/m", method="POST", block=True),
     name="dispatch",
 )
 class PhotographerUploadView(View):

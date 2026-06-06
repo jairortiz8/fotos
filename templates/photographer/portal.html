@@ -201,11 +201,14 @@
 {% block extra_scripts %}
 <script>
 function uploader(opts) {
+  const MAX_CONCURRENT = 4; // subir de a 4 a la vez: lotes grandes (300+) sin saturar
   return {
     dragOver: false,
     queue: [],
     nextKey: 1,
     _pollTimer: null,
+    _active: 0,
+    _pending: [],
 
     get totalSize() {
       const bytes = this.queue.reduce((sum, item) => sum + item.size, 0);
@@ -242,9 +245,9 @@ function uploader(opts) {
           size: file.size,
           sizeFmt: formatBytes(file.size),
           progress: 0,
-          color: "#FC5200",
-          status: "{% trans 'Subiendo' %}",
-          statusKey: "uploading",
+          color: "#8a8a93",
+          status: "{% trans 'En cola' %}",
+          statusKey: "queued",
           photoId: null,
           thumb: "",
           polls: 0,
@@ -261,11 +264,31 @@ function uploader(opts) {
           item.statusKey = "error";
           return;
         }
-        this.uploadOne(item);
+        this._pending.push(item);
       });
+      this.pump();
+    },
+
+    // Sube de a MAX_CONCURRENT a la vez; el resto espera "En cola". Esto permite
+    // soltar 300+ fotos de una sin disparar 300 requests ni perder ninguna.
+    pump() {
+      while (this._active < MAX_CONCURRENT && this._pending.length > 0) {
+        const item = this._pending.shift();
+        this._active += 1;
+        this.uploadOne(item);
+      }
+    },
+
+    _slotDone() {
+      this._active = Math.max(0, this._active - 1);
+      this.pump();
     },
 
     uploadOne(item) {
+      item.status = "{% trans 'Subiendo' %}";
+      item.statusKey = "uploading";
+      item.color = "#FC5200";
+      item.progress = 0;
       const fd = new FormData();
       fd.append("file", item.file);
       const xhr = new XMLHttpRequest();
@@ -287,25 +310,32 @@ function uploader(opts) {
             /* sin id: queda en "Procesando" sin poder pollear */
           }
           this.startPolling();
-        } else if (xhr.status === 429 && item.retries < 6) {
-          // Rate limit del servidor (lote grande): reintentamos con backoff en
-          // vez de fallar, así no se "pierde" ninguna foto.
+          this._slotDone();
+        } else if (xhr.status === 429 && item.retries < 8) {
+          // Rate limit del server: liberamos el slot y reintentamos con backoff,
+          // así en lotes grandes no se pierde ninguna foto.
           item.retries += 1;
           item.color = "#F59E0B";
           item.status = "{% trans 'Reintentando' %}";
           item.statusKey = "uploading";
           item.progress = 0;
-          setTimeout(() => this.uploadOne(item), 4000 + item.retries * 2000);
+          this._active = Math.max(0, this._active - 1);
+          setTimeout(() => {
+            this._pending.push(item);
+            this.pump();
+          }, 3000 + item.retries * 1500);
         } else {
           item.color = "#EF4444";
           item.status = "{% trans 'Error' %}";
           item.statusKey = "error";
+          this._slotDone();
         }
       };
       xhr.onerror = () => {
         item.color = "#EF4444";
         item.status = "{% trans 'Sin conexión' %}";
         item.statusKey = "error";
+        this._slotDone();
       };
       xhr.send(fd);
     },
