@@ -11,7 +11,7 @@
   <header class="flex items-center justify-between px-6 md:px-14 py-5 border-b border-border">
     <a href="{% url 'core:index' %}">{% include "_partials/wordmark.html" with size="22px" %}</a>
     <div class="hidden md:flex items-center gap-7 text-[13px] text-text-2">
-      <span class="font-mono text-[11px] text-text-3 tracking-[0.08em] border-l border-border pl-6">ES · GT</span>
+      <span class="font-mono text-[11px] text-text-3 tracking-[0.08em] border-l border-border pl-6">EL SALVADOR</span>
     </div>
   </header>
 
@@ -34,24 +34,15 @@
           {% trans "Encontrá" %}<br>{% trans "tus fotos." %}
         </h1>
         <p class="text-text-2 leading-relaxed max-w-md mb-7 text-sm md:text-base">
-          {% trans "Buscá por número de dorsal o por selfie. Descargá en alta resolución, sin costo y sin cuenta." %}
+          {% trans "Elegí tu evento y buscá tus fotos por número de dorsal o por selfie. Gratis, en alta resolución y sin cuenta." %}
         </p>
 
-        {# Buscador: si hay un evento live, busca directo ahí. Sino, lleva a la lista. #}
+        {# La búsqueda por dorsal/selfie vive dentro de cada evento, no en la home. #}
         {% if events %}
-        <form method="get" action="{% url 'events:gallery' slug=events.0.slug %}"
-              class="flex flex-col sm:flex-row gap-3 max-w-xl">
-          <div class="flex-1 flex items-center gap-3 bg-ink-0 border border-border rounded-[10px] px-4 py-3.5">
-            <span class="font-mono font-semibold text-data text-base">#</span>
-            <input name="bib" inputmode="numeric" autocomplete="off"
-                   placeholder="{% trans 'Ingresá tu número de dorsal' %}"
-                   class="bg-transparent border-0 outline-none text-text-1 text-sm md:text-base flex-1 placeholder:text-text-3">
-          </div>
-          <button type="submit" class="rf-cta rf-cta--lg">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-            {% trans "Buscar fotos" %}
-          </button>
-        </form>
+        <a href="#eventos" class="rf-cta rf-cta--lg">
+          {% trans "Ver eventos" %}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </a>
         {% endif %}
       </div>
     </div>
@@ -62,13 +53,13 @@
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
       {% include "_partials/value_prop.html" with title=_("Por dorsal") sub=_("OCR automático") icon="bib" %}
       {% include "_partials/value_prop.html" with title=_("Por selfie") sub=_("Reconocimiento facial") icon="face" %}
-      {% include "_partials/value_prop.html" with title=_("Descarga gratis") sub=_("Sin marca de agua") icon="download" %}
+      {% include "_partials/value_prop.html" with title=_("Descarga gratis") icon="download" %}
       {% include "_partials/value_prop.html" with title=_("Alta resolución") sub=_("Sin recortes") icon="hires" %}
     </div>
   </section>
 
   {# ===== Eventos ===== #}
-  <section class="px-6 md:px-14 pt-12 pb-10">
+  <section id="eventos" class="px-6 md:px-14 pt-12 pb-10 scroll-mt-6">
     <div class="flex justify-between items-baseline mb-4">
       <h2 class="font-display font-bold text-lg md:text-xl">{% trans "Eventos" %}</h2>
       <span class="font-mono text-[11px] text-text-3">{{ events|length }} / 12</span>
@@ -119,12 +110,12 @@
       {% trans "Sin cuentas. Sin costo. Solo tus fotos." %}
     </div>
     <div class="flex flex-wrap gap-4 mt-5 text-[12px] text-text-2">
-      <a href="#" class="hover:text-text-1 transition">{% trans "Privacidad" %}</a>
-      <a href="#" class="hover:text-text-1 transition">{% trans "Términos" %}</a>
-      <a href="#" class="hover:text-text-1 transition">{% trans "Contacto" %}</a>
-      <a href="#" class="hover:text-text-1 transition">{% trans "Borrar mis fotos" %}</a>
+      <a href="{% url 'privacy:policy' %}" class="hover:text-text-1 transition">{% trans "Privacidad" %}</a>
+      <a href="{% url 'core:terminos' %}" class="hover:text-text-1 transition">{% trans "Términos" %}</a>
+      <a href="{% url 'core:contacto' %}" class="hover:text-text-1 transition">{% trans "Contacto" %}</a>
+      <a href="{% url 'privacy:delete_my_data' %}" class="hover:text-text-1 transition">{% trans "Borrar mis fotos" %}</a>
     </div>
-    <div class="font-mono text-[10px] text-text-3 mt-5 tracking-[0.1em]">© 2026 · GUATEMALA</div>
+    <div class="font-mono text-[10px] text-text-3 mt-5 tracking-[0.1em]">© 2026 · EL SALVADOR</div>
   </footer>
 </div>
 {% endblock %}

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-06-05 18:22-0600\n"
+"POT-Creation-Date: 2026-06-05 19:02-0600\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -373,7 +373,7 @@ msgid "Próximo"
 msgstr ""
 
 #: apps/events/models.py:30 templates/public/event_gallery.html:46
-#: templates/public/home.html:89
+#: templates/public/home.html:80
 msgid "En vivo"
 msgstr ""
 
@@ -972,7 +972,7 @@ msgstr ""
 
 #: templates/dashboard/event_detail.html:10
 #: templates/dashboard/event_list.html:3 templates/dashboard/event_list.html:11
-#: templates/dashboard/partials/_sidebar.html:24 templates/public/home.html:73
+#: templates/dashboard/partials/_sidebar.html:24 templates/public/home.html:64
 msgid "Eventos"
 msgstr ""
 
@@ -1808,7 +1808,7 @@ msgid "Preparando..."
 msgstr ""
 
 #: templates/public/contacto.html:4 templates/public/contacto.html:8
-#: templates/public/home.html:124 templates/public/privacy_policy.html:53
+#: templates/public/home.html:115 templates/public/privacy_policy.html:53
 #: templates/public/terminos.html:52
 msgid "Contacto"
 msgstr ""
@@ -1961,12 +1961,12 @@ msgstr ""
 msgid "Buscá tus fotos de %(name)s por dorsal o selfie."
 msgstr ""
 
-#: templates/public/event_gallery.html:65 templates/public/home.html:63
+#: templates/public/event_gallery.html:65 templates/public/home.html:54
 #: templates/public/selfie_search.html:22
 msgid "Por dorsal"
 msgstr ""
 
-#: templates/public/event_gallery.html:68 templates/public/home.html:64
+#: templates/public/event_gallery.html:68 templates/public/home.html:55
 #: templates/public/selfie_search.html:23
 msgid "Por selfie"
 msgstr ""
@@ -1979,7 +1979,7 @@ msgstr ""
 msgid "Ingresá tu número de dorsal (ej: 1042)"
 msgstr ""
 
-#: templates/public/event_gallery.html:79 templates/public/home.html:52
+#: templates/public/event_gallery.html:79
 msgid "Buscar fotos"
 msgstr ""
 
@@ -2076,62 +2076,58 @@ msgid "tus fotos."
 msgstr ""
 
 #: templates/public/home.html:37
-msgid "Buscá por número de dorsal o por selfie. Descargá en alta resolución, sin costo y sin cuenta."
+msgid "Elegí tu evento y buscá tus fotos por número de dorsal o por selfie. Gratis, en alta resolución y sin cuenta."
 msgstr ""
 
-#: templates/public/home.html:47
-msgid "Ingresá tu número de dorsal"
+#: templates/public/home.html:43
+msgid "Ver eventos"
 msgstr ""
 
-#: templates/public/home.html:63
+#: templates/public/home.html:54
 msgid "OCR automático"
 msgstr ""
 
-#: templates/public/home.html:64
+#: templates/public/home.html:55
 msgid "Reconocimiento facial"
 msgstr ""
 
-#: templates/public/home.html:65
+#: templates/public/home.html:56
 msgid "Descarga gratis"
 msgstr ""
 
-#: templates/public/home.html:65
-msgid "Sin marca de agua"
-msgstr ""
-
-#: templates/public/home.html:66
+#: templates/public/home.html:57
 msgid "Alta resolución"
 msgstr ""
 
-#: templates/public/home.html:66
+#: templates/public/home.html:57
 msgid "Sin recortes"
 msgstr ""
 
-#: templates/public/home.html:94
+#: templates/public/home.html:85
 msgid "FOTOS"
 msgstr ""
 
-#: templates/public/home.html:109
+#: templates/public/home.html:100
 msgid "Todavía no hay eventos publicados."
 msgstr ""
 
-#: templates/public/home.html:118
+#: templates/public/home.html:109
 msgid "Plataforma gratuita de fotos de carrera."
 msgstr ""
 
-#: templates/public/home.html:119
+#: templates/public/home.html:110
 msgid "Sin cuentas. Sin costo. Solo tus fotos."
 msgstr ""
 
-#: templates/public/home.html:122 templates/public/privacy_policy.html:4
+#: templates/public/home.html:113 templates/public/privacy_policy.html:4
 msgid "Privacidad"
 msgstr ""
 
-#: templates/public/home.html:123
+#: templates/public/home.html:114
 msgid "Términos"
 msgstr ""
 
-#: templates/public/home.html:125
+#: templates/public/home.html:116
 msgid "Borrar mis fotos"
 msgstr ""
 

@@ -45,10 +45,13 @@ def test_home_hides_unlisted_events(client: Client) -> None:
 
 
 @pytest.mark.django_db
-def test_home_search_bar_present(client: Client) -> None:
+def test_home_has_no_bib_search(client: Client) -> None:
+    """La búsqueda por dorsal vive SOLO en la página de cada evento, no en la home.
+    La home lleva al listado de eventos (CTA 'Ver eventos')."""
     EventFactory(status=EventStatus.LIVE, visibility=EventVisibility.PUBLIC)
     response = client.get(reverse("core:index"))
-    assert b'name="bib"' in response.content
+    assert b'name="bib"' not in response.content
+    assert b"Ver eventos" in response.content
 
 
 @pytest.mark.django_db
