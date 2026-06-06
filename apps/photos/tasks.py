@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from celery import shared_task
+from django.conf import settings
 from django.db import transaction
 
 from apps.photos.imaging import (
@@ -112,9 +113,12 @@ def process_photo(self, photo_id: int) -> dict[str, str | int]:
         ]
     )
 
-    # OCR y reconocimiento facial como tasks separadas — independientes.
+    # OCR siempre. Reconocimiento facial SOLO si está habilitado: en prod
+    # (FACE_PROCESSING_ENABLED=False) el worker no carga InsightFace, así el
+    # procesamiento queda liviano (preview/thumbnail + OCR). Ver config/settings.
     run_ocr_on_photo.delay(photo.id)
-    run_face_recognition_on_photo.delay(photo.id)
+    if settings.FACE_PROCESSING_ENABLED:
+        run_face_recognition_on_photo.delay(photo.id)
 
     return {
         "photo_id": photo.id,

@@ -141,16 +141,9 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1:${PORT}/healthz/lite || exit 1
 
-# Default command: web. Worker y beat overridean en railway.toml / compose.
-#  --timeout 120: la 1ª búsqueda por selfie carga buffalo_l en memoria (~5-10s).
-#                 El default de 30s mataría el worker → 502. 120s da margen.
-#  --workers 1 --threads 4: la inferencia facial corre EN el proceso web (síncrona
-#                 por privacidad) y el modelo pesa >700 MB en RAM. El dyno está
-#                 capado a 1 GB, así que mantenemos UNA sola copia del modelo
-#                 (1 worker) compartida por los threads (onnxruntime es
-#                 thread-safe y libera el GIL → 4 requests concurrentes con 1 sola
-#                 copia). Subir workers requiere subir la RAM del servicio.
-# Bootstrap del superadmin: crea el usuario desde DJANGO_SUPERUSER_* si no existe
-# (idempotente — si ya existe o faltan las vars, falla silencioso con `|| true`,
-# nunca rompe el deploy). Una vez creado, no cambia la pass de un user existente.
-CMD ["sh", "-c", "python manage.py migrate --noinput && (python manage.py createsuperuser --noinput || true) && gunicorn config.wsgi:application --bind 0.0.0.0:${PORT} --workers 1 --threads 4 --timeout 120 --access-logfile -"]
+# Un solo entrypoint para los 3 roles (web / worker / beat). El rol se elige con
+# la env var PROCESS_TYPE (default: web). Toda la lógica (migraciones, bootstrap
+# del superadmin, flags de gunicorn/celery y su porqué) vive en
+# scripts/entrypoint.sh, así los 3 servicios de Railway comparten ESTA misma
+# imagen sin tener que setear un start-command por servicio en el dashboard.
+CMD ["sh", "/app/scripts/entrypoint.sh"]

@@ -77,6 +77,14 @@ SITE_DOMAIN = env("SITE_DOMAIN")
 # Búsqueda por selfie / borrado por selfie (Fase 4). Ver nota en env() arriba.
 FACE_SEARCH_ENABLED = env("FACE_SEARCH_ENABLED")
 
+# Procesamiento facial en el UPLOAD (extracción de embeddings + blur de menores
+# en el worker de Celery). Por defecto SIGUE a FACE_SEARCH_ENABLED: si la
+# búsqueda por selfie está apagada (prod), el worker tampoco corre el modelo
+# facial — así no carga InsightFace (~1 GB en RAM) y el procesamiento queda
+# liviano y barato (solo preview/thumbnail + OCR de dorsal). Se puede setear
+# aparte si algún día se quiere extraer embeddings sin exponer la búsqueda.
+FACE_PROCESSING_ENABLED = env.bool("FACE_PROCESSING_ENABLED", default=FACE_SEARCH_ENABLED)
+
 # ----------------------------------------------------------------------------
 # Apps
 # ----------------------------------------------------------------------------
