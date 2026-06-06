@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-06-05 16:19-0600\n"
+"POT-Creation-Date: 2026-06-05 18:11-0600\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -952,7 +952,6 @@ msgid "Últimos 30 días"
 msgstr "Últimos 30 días"
 
 #: templates/dashboard/audit_log.html:33
-#| msgid "Buscar acción…"
 msgid "Buscar acción"
 msgstr "Buscar acción"
 
@@ -1181,8 +1180,10 @@ msgid "Iniciar sesión"
 msgstr "Iniciar sesión"
 
 #: templates/dashboard/login.html:16
-msgid "Panel de administración de RunFoto."
-msgstr "Panel de administración de RunFoto."
+#, python-format
+#| msgid "Panel de administración de RunFoto."
+msgid "Panel de administración de %(site_name)s."
+msgstr "Panel de administración de %(site_name)s."
 
 #: templates/dashboard/login.html:35
 msgid "Contraseña"
@@ -1233,7 +1234,6 @@ msgid "Ninguno detectado."
 msgstr "Ninguno detectado."
 
 #: templates/dashboard/partials/bibs_section.html:23
-#| msgid "Tu número de dorsal"
 msgid "Número de dorsal a agregar"
 msgstr "Número de dorsal a agregar"
 
@@ -1678,7 +1678,7 @@ msgstr ""
 "Tuvimos un problema de nuestro lado. Ya nos enteramos y lo estamos "
 "arreglando. Probá de nuevo en un rato."
 
-#: templates/errors/_base.html:24 templates/public/face_unavailable.html:16
+#: templates/errors/_base.html:30 templates/public/face_unavailable.html:16
 #: templates/public/face_unavailable.html:25
 #: templates/public/privacy_delete_pending.html:19
 #: templates/public/rate_limited.html:18
@@ -1766,7 +1766,6 @@ msgid "Sin conexión"
 msgstr "Sin conexión"
 
 #: templates/public/_download_sheet.html:8
-#| msgid "fotos seleccionadas"
 msgid "Descargar fotos seleccionadas"
 msgstr "Descargar fotos seleccionadas"
 
@@ -2074,7 +2073,6 @@ msgid "Por selfie"
 msgstr "Por selfie"
 
 #: templates/public/event_gallery.html:75
-#| msgid "Tu número de dorsal"
 msgid "Número de dorsal"
 msgstr "Número de dorsal"
 

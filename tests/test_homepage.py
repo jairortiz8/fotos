@@ -22,10 +22,11 @@ def test_homepage_contains_site_name(client: Client, site_name: str) -> None:
 
 @pytest.mark.django_db
 def test_homepage_renders_wordmark(client: Client) -> None:
-    """El partial `_partials/wordmark.html` agrega la clase del cuadradito."""
+    """El partial `_partials/wordmark.html` agrega el símbolo visor + el nombre."""
     response = client.get(reverse("core:index"))
     assert b"rf-wordmark" in response.content
-    assert b"rf-wordmark__dot" in response.content
+    assert b"rf-wordmark__mark" in response.content  # el símbolo visor (SVG)
+    assert b"rf-wordmark__name" in response.content  # el nombre del site
 
 
 @pytest.mark.django_db

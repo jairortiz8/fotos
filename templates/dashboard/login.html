@@ -13,7 +13,7 @@
 
     <div class="rf-card p-7">
       <h1 class="font-display font-bold text-xl mb-1">{% trans "Iniciar sesión" %}</h1>
-      <p class="text-text-3 text-[13px] mb-6">{% trans "Panel de administración de RunFoto." %}</p>
+      <p class="text-text-3 text-[13px] mb-6">{% blocktrans %}Panel de administración de {{ site_name }}.{% endblocktrans %}</p>
 
       {% if rate_limit_error %}
         <div class="rf-pill rf-pill--red !text-xs mb-4 w-full justify-center">{{ rate_limit_error }}</div>

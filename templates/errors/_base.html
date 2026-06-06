@@ -2,20 +2,26 @@
 {% comment %}
 Base self-contained para páginas de error. NO extiende base.html ni usa context
 processors ({{ site_name }} etc.) — así el 500 renderiza aunque el contexto falle.
-El wordmark va hardcodeado a "RunFoto".
+El wordmark va hardcodeado a "find your foto" (no hay context processors acá).
 {% endcomment %}
 <html lang="es">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0a0a0b">
-  <title>{% block title %}RunFoto{% endblock %}</title>
+  <title>{% block title %}find your foto{% endblock %}</title>
   <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
 </head>
 <body class="min-h-screen bg-ink-0 text-text-1 font-body antialiased grid place-items-center px-6 py-12">
   <div class="max-w-md w-full text-center">
     <div class="mb-6 flex justify-center">
-      <span class="rf-wordmark" style="font-size:30px"><span>RunFoto</span><span class="rf-wordmark__dot" aria-hidden="true"></span></span>
+      <span class="rf-wordmark" style="--wm-size:26px" role="img" aria-label="find your foto">
+        <svg class="rf-wordmark__mark" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+          <path d="M7 17V7h10 M31 7h10v10 M41 31v10h-10 M17 41H7v-10" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="17" y="17" width="14" height="14" rx="2.5" fill="#FC5200"/>
+        </svg>
+        <span class="rf-wordmark__text" aria-hidden="true"><span class="rf-wordmark__pre">find your</span> <span class="rf-wordmark__name">foto</span></span>
+      </span>
     </div>
     <div class="rf-num text-5xl text-text-3 mb-3">{% block code %}{% endblock %}</div>
     <h1 class="font-display font-bold text-2xl mb-3">{% block heading %}{% endblock %}</h1>

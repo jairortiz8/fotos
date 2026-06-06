@@ -1,7 +1,12 @@
-{% comment %}Wordmark: nombre del site + cuadradito naranja después de la última "o".
-Replica reference/runfoto-design/shared.jsx · `Wordmark`.{% endcomment %}
+{% comment %}Wordmark "find your foto": símbolo visor (esquinas de enfoque de cámara
++ cuadrado naranja = la firma de la marca) + el nombre del site en dos tonos.
+El nombre sale de site_name (no se hardcodea); el naranja vive en el símbolo.{% endcomment %}
 {% load i18n %}
-<span class="rf-wordmark" style="font-size: {{ size|default:'22px' }};" aria-label="{{ site_name }}">
-  <span>{{ site_name }}</span>
-  <span class="rf-wordmark__dot" aria-hidden="true"></span>
+<span class="rf-wordmark" style="--wm-size: {{ size|default:'22px' }};" role="img" aria-label="{{ site_name }}">
+  <svg class="rf-wordmark__mark" viewBox="0 0 48 48" fill="none" aria-hidden="true" focusable="false">
+    <path d="M7 17V7h10 M31 7h10v10 M41 31v10h-10 M17 41H7v-10"
+          stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="17" y="17" width="14" height="14" rx="2.5" fill="#FC5200"/>
+  </svg>
+  <span class="rf-wordmark__text" aria-hidden="true">{% if site_name_prefix %}<span class="rf-wordmark__pre">{{ site_name_prefix }}</span> {% endif %}<span class="rf-wordmark__name">{{ site_name_last }}</span></span>
 </span>

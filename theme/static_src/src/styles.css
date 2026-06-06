@@ -171,16 +171,40 @@
     transform: translateY(0);
   }
 
+  /* Wordmark "find your foto": símbolo visor + texto en dos tonos.
+     Tamaño controlado por --wm-size (lo pasa el include). */
   .rf-wordmark {
     display: inline-flex;
-    align-items: baseline;
-    gap: 0;
+    align-items: center;
+    gap: 0.42em;
+    font-size: var(--wm-size, 22px);
     font-family: var(--font-display);
-    font-weight: 800;
-    letter-spacing: -0.02em;
     color: var(--color-text-1);
     line-height: 1;
   }
+  .rf-wordmark__mark {
+    width: 1.16em;
+    height: 1.16em;
+    flex: none;
+    color: var(--color-text-1); /* las esquinas de enfoque usan currentColor */
+  }
+  .rf-wordmark__text {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.24em;
+    letter-spacing: -0.02em;
+  }
+  .rf-wordmark__pre {
+    font-family: var(--font-body);
+    font-weight: 500;
+    color: var(--color-text-2);
+    font-size: 0.9em;
+  }
+  .rf-wordmark__name {
+    font-weight: 800;
+    color: var(--color-text-1);
+  }
+  /* Compat: el puntito viejo (lo usan las páginas de error self-contained). */
   .rf-wordmark__dot {
     display: inline-block;
     width: 0.18em;

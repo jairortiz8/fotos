@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-06-05 16:19-0600\n"
+"POT-Creation-Date: 2026-06-05 18:11-0600\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1152,7 +1152,8 @@ msgid "Iniciar sesión"
 msgstr ""
 
 #: templates/dashboard/login.html:16
-msgid "Panel de administración de RunFoto."
+#, python-format
+msgid "Panel de administración de %(site_name)s."
 msgstr ""
 
 #: templates/dashboard/login.html:35
@@ -1618,7 +1619,7 @@ msgstr ""
 msgid "Tuvimos un problema de nuestro lado. Ya nos enteramos y lo estamos arreglando. Probá de nuevo en un rato."
 msgstr ""
 
-#: templates/errors/_base.html:24 templates/public/face_unavailable.html:16
+#: templates/errors/_base.html:30 templates/public/face_unavailable.html:16
 #: templates/public/face_unavailable.html:25
 #: templates/public/privacy_delete_pending.html:19
 #: templates/public/rate_limited.html:18
