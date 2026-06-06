@@ -31,7 +31,7 @@
       <div class="relative max-w-3xl">
         {% if live_count %}
         <span class="rf-pill rf-pill--cyan"><span class="rf-pill__dot rf-pulse"></span>
-          {% blocktrans count n=live_count %}{{ n }} evento en vivo{% plural %}{{ n }} eventos en vivo{% endblocktrans %}
+          {% blocktrans count n=live_count %}{{ n }} galería abierta{% plural %}{{ n }} galerías abiertas{% endblocktrans %}
         </span>
         {% endif %}
 
@@ -83,7 +83,7 @@
           {% endif %}
           {% if event.status == 'live' %}
           <div class="absolute top-2.5 left-2.5">
-            <span class="rf-pill rf-pill--cyan"><span class="rf-pill__dot rf-pulse"></span>{% trans "En vivo" %}</span>
+            <span class="rf-pill rf-pill--cyan"><span class="rf-pill__dot rf-pulse"></span>{% trans "Galería abierta" %}</span>
           </div>
           {% endif %}
           <div class="absolute bottom-2.5 right-2.5">

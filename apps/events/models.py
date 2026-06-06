@@ -27,7 +27,7 @@ class EventStatus(models.TextChoices):
 
     DRAFT = "draft", _("Borrador")
     UPCOMING = "upcoming", _("Próximo")
-    LIVE = "live", _("En vivo")
+    LIVE = "live", _("Galería abierta")
     PUBLIC_CLOSED = "public_closed", _("Galería cerrada")
     SEARCHABLE_ONLY = "searchable_only", _("Sólo búsqueda")
     ARCHIVED = "archived", _("Archivado")

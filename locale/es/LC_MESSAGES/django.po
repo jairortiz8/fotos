@@ -379,11 +379,6 @@ msgstr "Borrador"
 msgid "Próximo"
 msgstr "Próximo"
 
-#: apps/events/models.py:30 templates/public/event_gallery.html:46
-#: templates/public/home.html:80
-msgid "En vivo"
-msgstr "En vivo"
-
 #: apps/events/models.py:31 templates/public/event_closed.html:4
 msgid "Galería cerrada"
 msgstr "Galería cerrada"
@@ -2188,13 +2183,6 @@ msgstr "Fotos de carrera"
 msgid "Encontrá tus fotos de carrera"
 msgstr "Encontrá tus fotos de carrera"
 
-#: templates/public/home.html:28
-#, python-format
-msgid "%(n)s evento en vivo"
-msgid_plural "%(n)s eventos en vivo"
-msgstr[0] "%(n)s evento en vivo"
-msgstr[1] "%(n)s eventos en vivo"
-
 #: templates/public/home.html:34
 msgid "Encontrá"
 msgstr "Encontrá"
@@ -2748,6 +2736,14 @@ msgid ""
 msgstr ""
 "Si tenés alguna consulta sobre estos términos, escribinos. Encontrás cómo "
 "contactarnos en la página de contacto."
+
+msgid "Galería abierta"
+msgstr "Galería abierta"
+
+msgid "%(n)s galería abierta"
+msgid_plural "%(n)s galerías abiertas"
+msgstr[0] "%(n)s galería abierta"
+msgstr[1] "%(n)s galerías abiertas"
 
 #~ msgid "Ingresá tu número de dorsal"
 #~ msgstr "Ingresá tu número de dorsal"
