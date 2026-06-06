@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-06-05 18:11-0600\n"
+"POT-Creation-Date: 2026-06-05 18:22-0600\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1382,8 +1382,16 @@ msgstr ""
 msgid "Atajos"
 msgstr ""
 
+#: templates/dashboard/pending_photos.html:25
+msgid "Filtrar por evento"
+msgstr ""
+
 #: templates/dashboard/pending_photos.html:26
 msgid "Todos los eventos"
+msgstr ""
+
+#: templates/dashboard/pending_photos.html:31
+msgid "Filtrar por rango de fechas"
 msgstr ""
 
 #: templates/dashboard/pending_photos.html:34
@@ -1398,11 +1406,16 @@ msgstr ""
 msgid "seleccionadas"
 msgstr ""
 
-#: templates/dashboard/pending_photos.html:75
+#: templates/dashboard/pending_photos.html:64
+#: templates/public/_photo_card.html:35
+msgid "Seleccionar foto"
+msgstr ""
+
+#: templates/dashboard/pending_photos.html:76
 msgid "Sin detectar"
 msgstr ""
 
-#: templates/dashboard/pending_photos.html:90
+#: templates/dashboard/pending_photos.html:91
 msgid "No hay fotos pendientes. ✨"
 msgstr ""
 
@@ -1780,10 +1793,6 @@ msgstr ""
 #: templates/public/_lightbox_content.html:62
 #: templates/public/event_gallery.html:118
 msgid "Descargar"
-msgstr ""
-
-#: templates/public/_photo_card.html:35
-msgid "Seleccionar foto"
 msgstr ""
 
 #: templates/public/_zip_status.html:5

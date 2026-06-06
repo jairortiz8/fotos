@@ -22,13 +22,13 @@
 
   {# Filtros #}
   <form method="get" class="flex flex-wrap gap-2.5 items-center mb-4">
-    <select name="event" onchange="this.form.submit()" class="rf-input !w-auto !py-2 text-xs">
+    <select name="event" aria-label="{% trans 'Filtrar por evento' %}" onchange="this.form.submit()" class="rf-input !w-auto !py-2 text-xs">
       <option value="">{% trans "Todos los eventos" %}</option>
       {% for event in events %}
         <option value="{{ event.slug }}" {% if filter_event == event.slug %}selected{% endif %}>{{ event.name }}</option>
       {% endfor %}
     </select>
-    <select name="range" onchange="this.form.submit()" class="rf-input !w-auto !py-2 text-xs">
+    <select name="range" aria-label="{% trans 'Filtrar por rango de fechas' %}" onchange="this.form.submit()" class="rf-input !w-auto !py-2 text-xs">
       <option value="7d" {% if filter_range == "7d" %}selected{% endif %}>{% trans "Últimos 7 días" %}</option>
       <option value="30d" {% if filter_range == "30d" %}selected{% endif %}>{% trans "Últimos 30 días" %}</option>
       <option value="all" {% if filter_range == "all" %}selected{% endif %}>{% trans "Todo" %}</option>
@@ -61,6 +61,7 @@
         {% endif %}
         {# Checkbox #}
         <button type="button" @click.stop="toggle({{ photo.id }})"
+                aria-label="{% trans 'Seleccionar foto' %}"
                 class="absolute top-2 left-2 w-5 h-5 rounded grid place-items-center backdrop-blur"
                 :class="isSel({{ photo.id }}) ? 'bg-brand text-white' : 'bg-black/40 border border-white/50 text-transparent'">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>

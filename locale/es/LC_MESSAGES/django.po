@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-06-05 18:11-0600\n"
+"POT-Creation-Date: 2026-06-05 18:22-0600\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1181,7 +1181,6 @@ msgstr "Iniciar sesión"
 
 #: templates/dashboard/login.html:16
 #, python-format
-#| msgid "Panel de administración de RunFoto."
 msgid "Panel de administración de %(site_name)s."
 msgstr "Panel de administración de %(site_name)s."
 
@@ -1415,9 +1414,18 @@ msgstr "Aprobación pendiente"
 msgid "Atajos"
 msgstr "Atajos"
 
+#: templates/dashboard/pending_photos.html:25
+#| msgid "Editar evento"
+msgid "Filtrar por evento"
+msgstr "Filtrar por evento"
+
 #: templates/dashboard/pending_photos.html:26
 msgid "Todos los eventos"
 msgstr "Todos los eventos"
+
+#: templates/dashboard/pending_photos.html:31
+msgid "Filtrar por rango de fechas"
+msgstr "Filtrar por rango de fechas"
 
 #: templates/dashboard/pending_photos.html:34
 msgid "Todo"
@@ -1431,11 +1439,16 @@ msgstr "de"
 msgid "seleccionadas"
 msgstr "seleccionadas"
 
-#: templates/dashboard/pending_photos.html:75
+#: templates/dashboard/pending_photos.html:64
+#: templates/public/_photo_card.html:35
+msgid "Seleccionar foto"
+msgstr "Seleccionar foto"
+
+#: templates/dashboard/pending_photos.html:76
 msgid "Sin detectar"
 msgstr "Sin detectar"
 
-#: templates/dashboard/pending_photos.html:90
+#: templates/dashboard/pending_photos.html:91
 msgid "No hay fotos pendientes. ✨"
 msgstr "No hay fotos pendientes. ✨"
 
@@ -1844,10 +1857,6 @@ msgstr "Siguiente"
 #: templates/public/event_gallery.html:118
 msgid "Descargar"
 msgstr "Descargar"
-
-#: templates/public/_photo_card.html:35
-msgid "Seleccionar foto"
-msgstr "Seleccionar foto"
 
 #: templates/public/_zip_status.html:5
 msgid "Guardar ZIP"
