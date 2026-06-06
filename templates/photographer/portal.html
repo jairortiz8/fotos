@@ -59,11 +59,12 @@
   </section>
 
   {# ============================================================== #}
-  {# Dropzone (Alpine + HTMX por archivo)                            #}
+  {# Dropzone (Alpine + XHR por archivo, con barra de progreso)      #}
   {# ============================================================== #}
   <section class="px-6 md:px-14 pt-8"
            x-data="uploader({
               uploadUrl: '{% url 'photographer:upload' token=token %}',
+              statusUrl: '{% url 'photographer:upload_status' token=token %}',
               csrfToken: '{{ csrf_token }}',
               maxMb: {{ max_upload_mb }},
            })">
@@ -115,7 +116,11 @@
         <template x-for="(item, index) in queue" :key="item.key">
           <div class="grid grid-cols-[52px_1fr_auto] md:grid-cols-[52px_1fr_200px_140px] items-center gap-3 md:gap-4 p-3.5 md:p-4 border-b border-border last:border-b-0">
             <div class="w-[52px] h-[52px] rounded-md overflow-hidden bg-ink-2"
-                 :style="`background: linear-gradient(135deg, hsl(${(item.key * 37) % 360} 30% 18%), hsl(${(item.key * 53) % 360} 25% 10%))`"></div>
+                 :style="!item.thumb ? `background: linear-gradient(135deg, hsl(${(item.key * 37) % 360} 30% 18%), hsl(${(item.key * 53) % 360} 25% 10%))` : ''">
+              <template x-if="item.thumb">
+                <img :src="item.thumb" alt="" class="w-full h-full object-cover">
+              </template>
+            </div>
             <div class="min-w-0">
               <div class="font-mono text-[13px] font-medium truncate" x-text="item.name"></div>
               <div class="font-mono text-[11px] text-text-3 mt-0.5" x-text="item.sizeFmt"></div>
@@ -128,7 +133,7 @@
                   :style="`background: ${item.color}1A; color: ${item.color}; border-color: ${item.color}40;`">
               <span class="w-1.5 h-1.5 rounded-full"
                     :style="`background: ${item.color};`"
-                    :class="item.statusKey === 'uploading' ? 'animate-pulse' : ''"></span>
+                    :class="(item.statusKey === 'uploading' || item.statusKey === 'processing') ? 'animate-pulse' : ''"></span>
               <span x-text="item.status"></span>
             </span>
           </div>
@@ -138,7 +143,7 @@
   </section>
 
   {# ============================================================== #}
-  {# Subidas recientes (server-rendered)                              #}
+  {# Subidas recientes (server-rendered, con thumbnail real)         #}
   {# ============================================================== #}
   {% if recent_uploads %}
   <section class="px-6 md:px-14 pt-8 pb-14">
@@ -152,6 +157,19 @@
       {% for photo in recent_uploads %}
         <div class="relative aspect-[4/5] bg-ink-1 rounded-sm overflow-hidden"
              style="background: linear-gradient(135deg, #1f1f23, #0e0e10);">
+          {% if photo.thumbnail_key %}
+            <img src="{{ photo.get_thumbnail_url }}" alt="{{ photo.original_filename }}"
+                 loading="lazy" decoding="async"
+                 class="absolute inset-0 w-full h-full object-cover">
+          {% else %}
+            {# Sin thumbnail todavía: el worker aún la está procesando. #}
+            <div class="absolute inset-0 grid place-items-center px-1">
+              <span class="font-mono text-[8px] uppercase tracking-[0.1em] text-text-3 inline-flex items-center gap-1 text-center">
+                <span class="w-1.5 h-1.5 rounded-full bg-data animate-pulse shrink-0"></span>
+                {% trans "Procesando" %}
+              </span>
+            </div>
+          {% endif %}
           {% with bibs=photo.bibs.all|slice:":1" %}
             {% for bib in bibs %}
               <div class="absolute bottom-1.5 left-1.5">
@@ -177,6 +195,7 @@ function uploader(opts) {
     dragOver: false,
     queue: [],
     nextKey: 1,
+    _pollTimer: null,
 
     get totalSize() {
       const bytes = this.queue.reduce((sum, item) => sum + item.size, 0);
@@ -206,6 +225,9 @@ function uploader(opts) {
           color: "#FC5200",
           status: "{% trans 'Subiendo' %}",
           statusKey: "uploading",
+          photoId: null,
+          thumb: "",
+          polls: 0,
         };
         this.queue.unshift(item);
         this.uploadOne(item);
@@ -227,12 +249,13 @@ function uploader(opts) {
           item.color = "#00D4FF";
           item.status = "{% trans 'Procesando' %}";
           item.statusKey = "processing";
-          // Después de 4s asumimos que el server terminó (Celery no tarda más para Fase 2)
-          setTimeout(() => {
-            item.color = "#10B981";
-            item.status = "{% trans 'Lista' %}";
-            item.statusKey = "ready";
-          }, 4000);
+          item.polls = 0;
+          try {
+            item.photoId = JSON.parse(xhr.responseText).id;
+          } catch (e) {
+            /* sin id: queda en "Procesando" sin poder pollear */
+          }
+          this.startPolling();
         } else {
           item.color = "#EF4444";
           item.status = "{% trans 'Error' %}";
@@ -245,6 +268,52 @@ function uploader(opts) {
         item.statusKey = "error";
       };
       xhr.send(fd);
+    },
+
+    // Poll del estado REAL de procesamiento (en vez de adivinar con un timeout).
+    // Una sola request por ciclo para todas las fotos que siguen procesándose.
+    startPolling() {
+      if (this._pollTimer) return;
+      this._pollTimer = setInterval(() => this.pollPending(), 3000);
+    },
+
+    pollPending() {
+      const pending = this.queue.filter(
+        (i) => i.statusKey === "processing" && i.photoId && i.polls < 20
+      );
+      if (pending.length === 0) {
+        clearInterval(this._pollTimer);
+        this._pollTimer = null;
+        return;
+      }
+      pending.forEach((i) => (i.polls += 1));
+      const ids = pending.map((i) => i.photoId).join(",");
+      fetch(opts.statusUrl + "?ids=" + encodeURIComponent(ids), {
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          (data.photos || []).forEach((p) => {
+            const item = this.queue.find((i) => i.photoId === p.id);
+            if (!item) return;
+            if (p.status === "pending_review" || p.status === "approved") {
+              item.color = "#10B981";
+              item.status = "{% trans 'Lista' %}";
+              item.statusKey = "ready";
+              if (p.thumb_url) item.thumb = p.thumb_url;
+            } else if (p.status === "processing_failed") {
+              item.color = "#EF4444";
+              item.status = "{% trans 'Falló' %}";
+              item.statusKey = "error";
+            } else if (p.status === "rejected") {
+              item.color = "#EF4444";
+              item.status = "{% trans 'Rechazada' %}";
+              item.statusKey = "error";
+            }
+            // processing/uploading → sigue en "Procesando", se vuelve a pollear
+          });
+        })
+        .catch(() => {});
     },
   };
 }

@@ -135,9 +135,9 @@ class PhotographerPortalView(View):
             "photos_uploaded": link.photos_uploaded,
             "photo_limit": link.photo_limit,
             "max_upload_mb": settings.PHOTO_UPLOAD_MAX_BYTES // (1024 * 1024),
-            "recent_uploads": link.photos.exclude(status=PhotoStatus.DELETED).order_by(
-                "-created_at"
-            )[:8],
+            "recent_uploads": link.photos.exclude(status=PhotoStatus.DELETED)
+            .prefetch_related("bibs")
+            .order_by("-created_at")[:8],
         }
         return render(request, "photographer/portal.html", ctx)
 
@@ -267,3 +267,46 @@ class PhotographerUploadView(View):
                 "key": photo.original_key,
             }
         )
+
+
+# ---------------------------------------------------------------------------
+# UploadStatusView (GET) — estado de procesamiento de las subidas
+#
+# El portal hace polling acá para saber cuándo el worker terminó el preview/
+# thumbnail (en vez de adivinar con un timeout falso). Filtra por el link del
+# token, así un fotógrafo sólo ve el estado de SUS propias fotos.
+# ---------------------------------------------------------------------------
+@method_decorator(
+    ratelimit(key="ip", rate="240/m", method="GET", block=True),
+    name="dispatch",
+)
+class PhotographerUploadStatusView(View):
+    """Devuelve `{photos: [{id, status, thumb_url}]}` para los IDs pedidos."""
+
+    http_method_names = ["get"]
+
+    def get(self, request: HttpRequest, token: str) -> HttpResponse:
+        link = lookup_link(token)
+        if link is None or not is_link_authenticatable(link):
+            return JsonResponse({"error": "invalid_link"}, status=410)
+
+        ids: list[int] = []
+        for chunk in request.GET.get("ids", "").split(","):
+            chunk = chunk.strip()
+            if chunk.isdigit():
+                ids.append(int(chunk))
+            if len(ids) >= 50:
+                break
+        if not ids:
+            return JsonResponse({"photos": []})
+
+        photos = Photo.objects.filter(id__in=ids, photographer_link=link)
+        data = [
+            {
+                "id": photo.id,
+                "status": photo.status,
+                "thumb_url": photo.get_thumbnail_url() if photo.thumbnail_key else "",
+            }
+            for photo in photos
+        ]
+        return JsonResponse({"photos": data})
