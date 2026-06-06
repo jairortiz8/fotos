@@ -40,6 +40,15 @@ todavía está en `0.0.1` y lo sube Jair cuando corresponda.
   de evento, sobre el `sitemap.xml` / `robots.txt` / OG ya existentes.
 - **Documentación final**: este `CHANGELOG.md`, `docs/deployment.md`,
   `docs/troubleshooting.md`, `docs/api.md`, y README finalizado.
+- **Rebrand a "find your foto" + logo nuevo**: wordmark = símbolo *visor*
+  (esquinas de enfoque + cuadrado naranja) + nombre en dos tonos derivado de
+  `site_name`; iconos PWA/favicon regenerados desde el visor. Pendiente: subir
+  la env var `SITE_NAME` en Railway (hoy prod muestra el logo nuevo con el texto
+  viejo "RunFoto").
+- **Auditoría a11y con axe-core** (navegador real): páginas públicas con **0
+  violaciones**; cola de aprobación corregida (nombres accesibles). Único flag
+  abierto: contraste del botón CTA (blanco sobre naranja de marca), decisión de
+  diseño pendiente.
 
 ### Decisiones fuera del plan (Fase 7)
 - **Sin `hx-boost`**: el prompt lo sugería, pero reemplaza el `<body>` en cada
