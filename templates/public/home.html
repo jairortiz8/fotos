@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load i18n %}
+{% load i18n static %}
 
 {% block title %}{{ site_name }} · {% trans "Fotos de carrera" %}{% endblock %}
 {% block og_title %}{{ site_name }} — {% trans "Encontrá tus fotos de carrera" %}{% endblock %}
@@ -17,8 +17,13 @@
 
   {# ===== Hero ===== #}
   <section class="px-4 md:px-14 pt-4 md:pt-14">
-    <div class="relative overflow-hidden rounded-3xl border border-border md:border-0 md:rounded-none px-6 md:px-0 py-10 md:py-0"
+    <div class="relative overflow-hidden rounded-3xl border border-border md:border-0 md:rounded-none px-6 md:px-0 py-12 md:py-20"
          style="background: linear-gradient(180deg, #131316 0%, #0a0a0b 100%);">
+      {# Fondo: textura de carrera difuminada + oscurecida (decorativa). #}
+      <img src="{% static 'img/hero-bg.webp' %}" alt="" aria-hidden="true" decoding="async"
+           class="absolute inset-0 w-full h-full object-cover pointer-events-none" style="opacity:.55;">
+      <div class="absolute inset-0 pointer-events-none"
+           style="background: linear-gradient(180deg, rgba(10,10,11,0.45) 0%, rgba(10,10,11,0.84) 100%);"></div>
       <div class="absolute inset-0 opacity-50 pointer-events-none"
            style="background: radial-gradient(60% 40% at 20% 0%, rgba(252,82,0,0.10), transparent 60%);"></div>
 
