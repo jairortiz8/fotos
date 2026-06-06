@@ -2766,6 +2766,22 @@ msgstr "En cola"
 msgid "Solo JPG"
 msgstr "Solo JPG"
 
+msgid "Filtrar por fotógrafo"
+msgstr "Filtrar por fotógrafo"
+
+msgid "Todos los fotógrafos"
+msgstr "Todos los fotógrafos"
+
+msgid "¿Aprobar la %(n)s foto pendiente del filtro actual?"
+msgid_plural "¿Aprobar las %(n)s fotos pendientes del filtro actual?"
+msgstr[0] "¿Aprobar la %(n)s foto pendiente del filtro actual?"
+msgstr[1] "¿Aprobar las %(n)s fotos pendientes del filtro actual?"
+
+msgid "Aprobar la %(n)s"
+msgid_plural "Aprobar las %(n)s"
+msgstr[0] "Aprobar la %(n)s"
+msgstr[1] "Aprobar las %(n)s"
+
 #~ msgid "Ingresá tu número de dorsal"
 #~ msgstr "Ingresá tu número de dorsal"
 

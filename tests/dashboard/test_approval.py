@@ -100,6 +100,31 @@ def test_bulk_reject(admin_client: Client) -> None:
 
 
 @pytest.mark.django_db
+def test_approve_all_pending_by_photographer(admin_client: Client) -> None:
+    """Aprueba TODAS las pendientes de un fotógrafo, sin tocar las de otro."""
+    from apps.photographers.models import PhotographerLink
+
+    event = EventFactory()
+    link1, _t1 = PhotographerLink.generate_token_and_create(event, name="Foto 1")
+    link2, _t2 = PhotographerLink.generate_token_and_create(event, name="Foto 2")
+    mine = [PendingPhotoFactory(event=event, photographer_link=link1) for _ in range(3)]
+    other = PendingPhotoFactory(event=event, photographer_link=link2)
+
+    resp = admin_client.post(
+        reverse("dashboard:approve_all_pending"),
+        {"photographer": str(link1.id), "range": "all"},
+    )
+    assert resp.status_code == 302  # redirige de vuelta a la cola con el filtro
+
+    for p in mine:
+        p.refresh_from_db()
+        assert p.status == PhotoStatus.APPROVED
+    other.refresh_from_db()
+    assert other.status == PhotoStatus.PENDING_REVIEW  # de otro fotógrafo: intacta
+    assert AuditLog.objects.filter(action="photo.bulk_approved").exists()
+
+
+@pytest.mark.django_db
 def test_add_manual_bib(admin_client: Client) -> None:
     photo = PendingPhotoFactory()
     resp = admin_client.post(

@@ -28,6 +28,12 @@
         <option value="{{ event.slug }}" {% if filter_event == event.slug %}selected{% endif %}>{{ event.name }}</option>
       {% endfor %}
     </select>
+    <select name="photographer" aria-label="{% trans 'Filtrar por fotógrafo' %}" onchange="this.form.submit()" class="rf-input !w-auto !py-2 text-xs">
+      <option value="">{% trans "Todos los fotógrafos" %}</option>
+      {% for p in photographers %}
+        <option value="{{ p.id }}" {% if filter_photographer == p.id|stringformat:'s' %}selected{% endif %}>{{ p.photographer_name }}</option>
+      {% endfor %}
+    </select>
     <select name="range" aria-label="{% trans 'Filtrar por rango de fechas' %}" onchange="this.form.submit()" class="rf-input !w-auto !py-2 text-xs">
       <option value="7d" {% if filter_range == "7d" %}selected{% endif %}>{% trans "Últimos 7 días" %}</option>
       <option value="30d" {% if filter_range == "30d" %}selected{% endif %}>{% trans "Últimos 30 días" %}</option>
@@ -35,6 +41,21 @@
     </select>
     <span class="rf-num text-[11px] text-text-3 ml-auto">{{ page_obj.start_index }}–{{ page_obj.end_index }} {% trans "de" %} {{ paginator.count }}</span>
   </form>
+
+  {# Aprobar TODAS las pendientes del filtro actual (p. ej. todas las de un fotógrafo) #}
+  {% if paginator.count %}
+  <form method="post" action="{% url 'dashboard:approve_all_pending' %}" class="mb-4"
+        onsubmit="return confirm('{% blocktrans count n=paginator.count %}¿Aprobar la {{ n }} foto pendiente del filtro actual?{% plural %}¿Aprobar las {{ n }} fotos pendientes del filtro actual?{% endblocktrans %}')">
+    {% csrf_token %}
+    <input type="hidden" name="event" value="{{ filter_event }}">
+    <input type="hidden" name="photographer" value="{{ filter_photographer }}">
+    <input type="hidden" name="range" value="{{ filter_range }}">
+    <button type="submit" class="rf-cta inline-flex items-center gap-1.5" style="padding:.55rem 1rem">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+      {% blocktrans count n=paginator.count %}Aprobar la {{ n }}{% plural %}Aprobar las {{ n }}{% endblocktrans %}
+    </button>
+  </form>
+  {% endif %}
 
   {# Bulk bar #}
   <div x-show="selected.length" x-cloak class="flex items-center justify-between gap-3 mb-4 px-4 py-3 rounded-lg"

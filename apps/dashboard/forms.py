@@ -67,11 +67,12 @@ class EventForm(_DashMixin, forms.ModelForm):
         self.fields["description"].required = False
         self.fields["cover_image"].required = False
         # Los inputs HTML5 envían SIEMPRE en ISO; aceptamos ISO sin importar el locale.
-        self.fields["date"].input_formats = ["%Y-%m-%d"]
+        # (mypy no estrecha el tipo a DateField/DateTimeField → ignoramos attr-defined.)
+        self.fields["date"].input_formats = ["%Y-%m-%d"]  # type: ignore[attr-defined]
         for f in ("public_until", "searchable_until", "archive_until"):
             self.fields[f].required = False
             self.fields[f].help_text = _("Opcional. Si lo dejás vacío usamos la política estándar.")
-            self.fields[f].input_formats = ["%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"]
+            self.fields[f].input_formats = ["%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"]  # type: ignore[attr-defined]
         self._style_widgets()
 
 

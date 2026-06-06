@@ -19,6 +19,7 @@ from apps.dashboard.views.photographers import (
 )
 from apps.dashboard.views.photos import (
     AddBibView,
+    ApproveAllPendingView,
     ApprovePhotoView,
     BulkApproveView,
     BulkRejectView,
@@ -30,6 +31,7 @@ from apps.dashboard.views.photos import (
 
 __all__ = [
     "AddBibView",
+    "ApproveAllPendingView",
     "ApprovePhotoView",
     "AuditLogView",
     "BulkApproveView",

@@ -5,11 +5,14 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
+from django.contrib import messages
 from django.db import transaction
 from django.http import HttpRequest, HttpResponse, JsonResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.http import urlencode
+from django.utils.translation import gettext as _
 from django.views import View
 from django.views.generic import ListView
 
@@ -130,7 +133,13 @@ class PendingPhotosView(DashboardContextMixin, ListView):
             .distinct()
             .order_by("name")
         )
+        ctx["photographers"] = list(
+            PhotographerLink.objects.filter(photos__status=PhotoStatus.PENDING_REVIEW)
+            .distinct()
+            .order_by("photographer_name")
+        )
         ctx["filter_event"] = self.request.GET.get("event", "")
+        ctx["filter_photographer"] = self.request.GET.get("photographer", "")
         ctx["filter_range"] = self.request.GET.get("range", "7d")
         return ctx
 
@@ -235,6 +244,61 @@ class BulkApproveView(_BulkBase):
 class BulkRejectView(_BulkBase):
     target_status = PhotoStatus.REJECTED
     action_name = "photo.bulk_rejected"
+
+
+# ---------------------------------------------------------------------------
+# Aprobar TODAS las del filtro actual (p. ej. todas las de un fotógrafo)
+# ---------------------------------------------------------------------------
+class ApproveAllPendingView(StaffRequiredMixin, View):
+    """Aprueba TODAS las pendientes que matchean el filtro (fotógrafo / evento /
+    rango), sin tener que seleccionarlas de a una. Una sola UPDATE."""
+
+    def post(self, request: HttpRequest) -> HttpResponse:
+        qs = Photo.objects.filter(status=PhotoStatus.PENDING_REVIEW)
+        event = request.POST.get("event", "")
+        photographer = request.POST.get("photographer", "")
+        rng = request.POST.get("range", "7d")
+        if event:
+            qs = qs.filter(event__slug=event)
+        if photographer.isdigit():
+            qs = qs.filter(photographer_link_id=int(photographer))
+        if rng in ("7d", "30d"):
+            days = 7 if rng == "7d" else 30
+            qs = qs.filter(created_at__gte=timezone.now() - timedelta(days=days))
+
+        with transaction.atomic():
+            ids = list(qs.select_for_update().values_list("id", flat=True))
+            target = Photo.objects.filter(id__in=ids)
+            event_ids = list(target.values_list("event_id", flat=True).distinct())
+            count = target.update(
+                status=PhotoStatus.APPROVED,
+                approved_at=timezone.now(),
+                approved_by_admin=True,
+            )
+
+        if count:
+            AuditLog.log(
+                "photo.bulk_approved",
+                user=self.staff_user,
+                metadata={
+                    "count": count,
+                    "scope": "approve_all",
+                    "photographer": photographer,
+                    "event": event,
+                },
+            )
+            for ev in Event.objects.filter(id__in=event_ids):
+                services.recalculate_event_counters(ev)
+
+        messages.success(request, _("%(n)s fotos aprobadas.") % {"n": count})
+
+        kept = {
+            k: v for k, v in (("event", event), ("photographer", photographer), ("range", rng)) if v
+        }
+        url = reverse("dashboard:pending_photos")
+        if kept:
+            url = f"{url}?{urlencode(kept)}"
+        return redirect(url)
 
 
 # ---------------------------------------------------------------------------

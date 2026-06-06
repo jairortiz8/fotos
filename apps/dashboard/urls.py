@@ -31,6 +31,11 @@ urlpatterns = [
     path("dorsales/<int:pk>/quitar/", views.RemoveBibView.as_view(), name="remove_bib"),
     path("fotos/bulk/aprobar/", views.BulkApproveView.as_view(), name="bulk_approve"),
     path("fotos/bulk/rechazar/", views.BulkRejectView.as_view(), name="bulk_reject"),
+    path(
+        "fotos/bulk/aprobar-todas/",
+        views.ApproveAllPendingView.as_view(),
+        name="approve_all_pending",
+    ),
     # --- Fotógrafos ---
     path("fotografos/", views.PhotographerLinkListView.as_view(), name="photographer_list"),
     path("fotografos/<int:pk>/revocar/", views.RevokeLinkView.as_view(), name="revoke_link"),
