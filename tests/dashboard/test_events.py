@@ -153,3 +153,20 @@ def test_event_form_renders_date_iso_for_html5_input() -> None:
 
     event = EventFactory(date=datetime.date(2026, 7, 19))
     assert 'value="2026-07-19"' in str(EventForm(instance=event)["date"])
+
+
+@pytest.mark.django_db
+def test_event_update_can_change_status_draft_to_live(admin_client: Client) -> None:
+    """El form de evento ahora permite cambiar el estado (borrador → galería abierta)."""
+    event = EventFactory(status=EventStatus.DRAFT)
+    admin_client.post(
+        reverse("dashboard:event_update", kwargs={"slug": event.slug}),
+        {
+            "name": event.name,
+            "status": EventStatus.LIVE,
+            "date": "2026-06-06",
+            "visibility": EventVisibility.PUBLIC,
+        },
+    )
+    event.refresh_from_db()
+    assert event.status == EventStatus.LIVE

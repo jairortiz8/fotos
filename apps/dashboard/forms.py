@@ -5,7 +5,7 @@ from __future__ import annotations
 from django import forms
 from django.utils.translation import gettext_lazy as _
 
-from apps.events.models import Event, EventVisibility
+from apps.events.models import Event, EventStatus, EventVisibility
 
 
 class _DashMixin:
@@ -30,6 +30,7 @@ class EventForm(_DashMixin, forms.ModelForm):
         model = Event
         fields = [
             "name",
+            "status",
             "date",
             "location",
             "description",
@@ -49,6 +50,7 @@ class EventForm(_DashMixin, forms.ModelForm):
         widgets = {
             "date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
             "description": forms.Textarea(attrs={"rows": 3}),
+            "status": forms.Select(),
             "visibility": forms.Select(),
             "public_until": forms.DateTimeInput(
                 attrs={"type": "datetime-local"}, format="%Y-%m-%dT%H:%M"
@@ -66,6 +68,26 @@ class EventForm(_DashMixin, forms.ModelForm):
         self.fields["location"].required = False
         self.fields["description"].required = False
         self.fields["cover_image"].required = False
+        # Estado del evento: exponemos sólo los que el admin setea a mano. "Galería
+        # abierta" = público + buscable. Los automáticos (sólo búsqueda, archivado,
+        # borrado) los maneja el cron de retención; si el evento YA está en uno, lo
+        # incluimos para que se muestre y no se pierda al guardar.
+        main = {
+            EventStatus.DRAFT,
+            EventStatus.UPCOMING,
+            EventStatus.LIVE,
+            EventStatus.PUBLIC_CLOSED,
+        }
+        current = self.instance.status if self.instance and self.instance.pk else None
+        self.fields["status"].choices = [  # type: ignore[attr-defined]
+            (s.value, s.label) for s in EventStatus if s in main or s.value == current
+        ]
+        self.fields["status"].help_text = _(
+            "Borrador = oculto. Galería abierta = visible y buscable. Galería cerrada = solo búsqueda."
+        )
+        # No requerido: si no viene en el POST, clean_status usa el actual (edición)
+        # o Borrador (creación). Así un form sin estado no se rompe.
+        self.fields["status"].required = False
         # Los inputs HTML5 envían SIEMPRE en ISO; aceptamos ISO sin importar el locale.
         # (mypy no estrecha el tipo a DateField/DateTimeField → ignoramos attr-defined.)
         self.fields["date"].input_formats = ["%Y-%m-%d"]  # type: ignore[attr-defined]
@@ -74,6 +96,14 @@ class EventForm(_DashMixin, forms.ModelForm):
             self.fields[f].help_text = _("Opcional. Si lo dejás vacío usamos la política estándar.")
             self.fields[f].input_formats = ["%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"]  # type: ignore[attr-defined]
         self._style_widgets()
+
+    def clean_status(self) -> str:
+        status = self.cleaned_data.get("status")
+        if status:
+            return str(status)
+        if self.instance and self.instance.pk:
+            return str(self.instance.status)
+        return str(EventStatus.DRAFT)
 
 
 EXPIRY_CHOICES = [

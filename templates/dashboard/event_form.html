@@ -37,6 +37,14 @@
           {% if form.name.errors %}<p class="text-danger text-[11px] mt-1">{{ form.name.errors.0 }}</p>{% endif %}
         </div>
 
+        {# status (controla si el evento es visible: Borrador → Galería abierta) #}
+        <div class="sm:col-span-2">
+          <label class="rf-label" for="{{ form.status.id_for_label }}">{{ form.status.label }}</label>
+          {{ form.status }}
+          {% if form.status.help_text %}<p class="text-[11px] text-text-3 mt-1">{{ form.status.help_text }}</p>{% endif %}
+          {% if form.status.errors %}<p class="text-danger text-[11px] mt-1">{{ form.status.errors.0 }}</p>{% endif %}
+        </div>
+
         {# date #}
         <div>
           <label class="rf-label" for="{{ form.date.id_for_label }}">{{ form.date.label }}</label>

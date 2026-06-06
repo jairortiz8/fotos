@@ -2782,6 +2782,13 @@ msgid_plural "Aprobar las %(n)s"
 msgstr[0] "Aprobar la %(n)s"
 msgstr[1] "Aprobar las %(n)s"
 
+msgid ""
+"Borrador = oculto. Galería abierta = visible y buscable. Galería cerrada = "
+"solo búsqueda."
+msgstr ""
+"Borrador = oculto. Galería abierta = visible y buscable. Galería cerrada = "
+"solo búsqueda."
+
 #~ msgid "Ingresá tu número de dorsal"
 #~ msgstr "Ingresá tu número de dorsal"
 
