@@ -24,6 +24,7 @@ from django.shortcuts import render
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views import View
+from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 from django_ratelimit.decorators import ratelimit
 
@@ -114,6 +115,7 @@ def upload_ratelimit_key(group: str, request: HttpRequest) -> str:
 # ---------------------------------------------------------------------------
 # PortalView (GET)
 # ---------------------------------------------------------------------------
+@method_decorator(never_cache, name="dispatch")  # el navegador siempre trae el portal fresco
 @method_decorator(
     ratelimit(key="ip", rate="60/m", method="GET", block=True),
     name="dispatch",
