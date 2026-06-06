@@ -167,10 +167,20 @@ def run_easy_ocr(image_path: Path) -> list[BibDetection]:
 
 
 def detect_bibs(image_path: Path) -> list[BibDetection]:
-    """Orquesta Paddle → EasyOCR (fallback) y devuelve candidatos únicos."""
-    detections = run_paddle_ocr(image_path)
-    if not detections:
-        detections = run_easy_ocr(image_path)
+    """Orquesta Paddle + EasyOCR y devuelve candidatos únicos.
+
+    Antes EasyOCR sólo corría si Paddle devolvía CERO. Problema real (visto en
+    prod): en fotos con varios corredores, Paddle suele leer 1 número — a veces
+    de un cartel o el fondo, no un dorsal — y ese único resultado "se tragaba" el
+    fallback, perdiendo los dorsales reales. Ahora también corremos EasyOCR
+    cuando Paddle encuentra POCOS (<2) candidatos, para mejorar el recall.
+    OCR sigue siendo best-effort: el admin corrige/agrega dorsales en el
+    dashboard (tab "Dorsales" / detalle de foto).
+    """
+    paddle = run_paddle_ocr(image_path)
+    detections = list(paddle)
+    if len(paddle) < 2:
+        detections += run_easy_ocr(image_path)
 
     # Dedup conservando la mayor confidence por número (independiente del engine).
     best_by_number: dict[str, BibDetection] = {}

@@ -40,13 +40,25 @@ class EventForm(_DashMixin, forms.ModelForm):
             "archive_until",
             "permanent_archive",
         ]
+        # IMPORTANTE: los inputs HTML5 `type=date` / `type=datetime-local` SOLO
+        # entienden el valor en formato ISO (`YYYY-MM-DD` / `YYYY-MM-DDTHH:MM`).
+        # Sin un `format` explícito, Django los renderiza con el formato del locale
+        # `es` (`d/m/Y`) y el navegador, al no poder parsearlo, deja el campo
+        # VACÍO al editar — daba la sensación de que había que re-poner la fecha
+        # cada vez. Forzamos el formato ISO en el render.
         widgets = {
-            "date": forms.DateInput(attrs={"type": "date"}),
+            "date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
             "description": forms.Textarea(attrs={"rows": 3}),
             "visibility": forms.Select(),
-            "public_until": forms.DateTimeInput(attrs={"type": "datetime-local"}),
-            "searchable_until": forms.DateTimeInput(attrs={"type": "datetime-local"}),
-            "archive_until": forms.DateTimeInput(attrs={"type": "datetime-local"}),
+            "public_until": forms.DateTimeInput(
+                attrs={"type": "datetime-local"}, format="%Y-%m-%dT%H:%M"
+            ),
+            "searchable_until": forms.DateTimeInput(
+                attrs={"type": "datetime-local"}, format="%Y-%m-%dT%H:%M"
+            ),
+            "archive_until": forms.DateTimeInput(
+                attrs={"type": "datetime-local"}, format="%Y-%m-%dT%H:%M"
+            ),
         }
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -54,9 +66,12 @@ class EventForm(_DashMixin, forms.ModelForm):
         self.fields["location"].required = False
         self.fields["description"].required = False
         self.fields["cover_image"].required = False
+        # Los inputs HTML5 envían SIEMPRE en ISO; aceptamos ISO sin importar el locale.
+        self.fields["date"].input_formats = ["%Y-%m-%d"]
         for f in ("public_until", "searchable_until", "archive_until"):
             self.fields[f].required = False
             self.fields[f].help_text = _("Opcional. Si lo dejás vacío usamos la política estándar.")
+            self.fields[f].input_formats = ["%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"]
         self._style_widgets()
 
 

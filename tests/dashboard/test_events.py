@@ -139,3 +139,17 @@ def test_create_event_date_in_july(admin_client: Client) -> None:
         {"name": "Julio 5K", "date": "2026-07-15", "visibility": EventVisibility.PUBLIC},
     )
     assert Event.objects.get(name="Julio 5K").date == datetime.date(2026, 7, 15)
+
+
+@pytest.mark.django_db
+def test_event_form_renders_date_iso_for_html5_input() -> None:
+    """Regresión: el input type=date debe traer el valor en YYYY-MM-DD.
+
+    Con LANGUAGE_CODE=es Django lo renderizaba como d/m/Y y el `<input type=date>`,
+    al no poder parsearlo, dejaba el campo VACÍO al editar — daba la sensación de
+    tener que re-poner la fecha cada vez.
+    """
+    from apps.dashboard.forms import EventForm
+
+    event = EventFactory(date=datetime.date(2026, 7, 19))
+    assert 'value="2026-07-19"' in str(EventForm(instance=event)["date"])

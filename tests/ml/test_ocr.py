@@ -158,6 +158,30 @@ def test_detect_bibs_falls_back_to_easy(tmp_path, monkeypatch):  # type: ignore[
     assert detections[0].number == "77"
 
 
+def test_detect_bibs_runs_easy_when_paddle_finds_few(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
+    """Paddle con <2 candidatos: EasyOCR se corre igual y se suman (mejor recall)."""
+    from apps.ml import ocr
+
+    img_path = write_synthetic_jpeg("100", target=tmp_path / "few.jpg")
+    # Paddle encuentra 1 (típico falso positivo de un cartel en foto real).
+    monkeypatch.setattr(
+        ocr,
+        "run_paddle_ocr",
+        lambda _p: [ocr.BibDetection(number="118", confidence=1.0, bbox={}, engine="paddle")],
+    )
+    easy_calls = {"n": 0}
+
+    def fake_easy(_p):
+        easy_calls["n"] += 1
+        return [ocr.BibDetection(number="500", confidence=0.8, bbox={}, engine="easy")]
+
+    monkeypatch.setattr(ocr, "run_easy_ocr", fake_easy)
+    detections = ocr.detect_bibs(img_path)
+
+    assert easy_calls["n"] == 1  # Easy corrió aunque Paddle encontró 1
+    assert {d.number for d in detections} == {"118", "500"}  # se suman ambos engines
+
+
 def test_detect_bibs_deduplicates_by_number(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
     """Si paddle devuelve el mismo número 2 veces, queda solo el de mayor confidence."""
     from apps.ml import ocr
