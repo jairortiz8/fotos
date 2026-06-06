@@ -150,4 +150,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 #                 (1 worker) compartida por los threads (onnxruntime es
 #                 thread-safe y libera el GIL → 4 requests concurrentes con 1 sola
 #                 copia). Subir workers requiere subir la RAM del servicio.
-CMD ["sh", "-c", "python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:${PORT} --workers 1 --threads 4 --timeout 120 --access-logfile -"]
+# Bootstrap del superadmin: crea el usuario desde DJANGO_SUPERUSER_* si no existe
+# (idempotente — si ya existe o faltan las vars, falla silencioso con `|| true`,
+# nunca rompe el deploy). Una vez creado, no cambia la pass de un user existente.
+CMD ["sh", "-c", "python manage.py migrate --noinput && (python manage.py createsuperuser --noinput || true) && gunicorn config.wsgi:application --bind 0.0.0.0:${PORT} --workers 1 --threads 4 --timeout 120 --access-logfile -"]
