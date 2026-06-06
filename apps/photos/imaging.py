@@ -5,7 +5,6 @@ Todo en memoria → R2 directo. Nunca persistimos en filesystem del worker.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 from io import BytesIO
 from pathlib import Path
@@ -26,16 +25,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# HEIC/HEIF: las fotos de iPhone/Mac suelen venir en HEIC. Registramos el opener
-# de pillow-heif para que Pillow las abra (las convertimos a JPEG en el upload).
-# Best-effort: si pillow-heif no está, el resto sigue andando con JPEG.
-try:
-    from pillow_heif import register_heif_opener
-
-    register_heif_opener()
-except Exception:  # pragma: no cover
-    logger.warning("pillow-heif no disponible; HEIC no soportado")
-
 # ---------------------------------------------------------------------------
 # Constantes
 # ---------------------------------------------------------------------------
@@ -46,38 +35,6 @@ THUMB_QUALITY = 75
 
 WATERMARK_OPACITY = 38  # 0-255 (~15%)
 WATERMARK_ANGLE = -30
-
-
-# ---------------------------------------------------------------------------
-# Normalización a JPEG (acepta HEIC/PNG/WEBP del fotógrafo)
-# ---------------------------------------------------------------------------
-def ensure_jpeg(upload: Any) -> tuple[Any, int] | None:
-    """Devuelve `(file_like_jpeg, size_bytes)` listo para subir, o `None` si el
-    archivo no es una imagen válida.
-
-    - Si ya es JPEG: lo pasa tal cual (sin re-encodear).
-    - Si es HEIC/PNG/WEBP/etc.: lo convierte a JPEG. Así el original guardado en
-      R2 es SIEMPRE JPEG (descarga universal + el resto del pipeline lo asume).
-    """
-    head = upload.read(12)
-    upload.seek(0)
-    if head[:3] == b"\xff\xd8\xff":  # ya es JPEG → passthrough
-        return upload, int(getattr(upload, "size", 0) or 0)
-    try:
-        with Image.open(upload) as img:
-            img.load()
-            rgb = img.convert("RGB")
-            buf = BytesIO()
-            rgb.save(buf, format="JPEG", quality=90, optimize=True)
-        size = buf.tell()
-        buf.seek(0)
-        return buf, size
-    except Exception:
-        logger.info("ensure_jpeg: el archivo no es una imagen válida")
-        return None
-    finally:
-        with contextlib.suppress(Exception):
-            upload.seek(0)
 
 
 # ---------------------------------------------------------------------------

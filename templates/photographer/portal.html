@@ -87,13 +87,13 @@
         {% trans "Arrastrá tus fotos acá" %}
       </h2>
       <div class="font-mono text-xs text-text-3 tracking-[0.06em]">
-        {% blocktrans with mb=max_upload_mb %}JPG o HEIC · Máximo {{ mb }} MB por foto · Sin límite de cantidad{% endblocktrans %}
+        {% blocktrans with mb=max_upload_mb %}Solo JPG · Máximo {{ mb }} MB por foto · Sin límite de cantidad{% endblocktrans %}
       </div>
 
       <div class="mt-6">
         <label class="inline-flex items-center justify-center gap-2 px-5 py-3 bg-brand text-white font-display font-bold text-xs uppercase tracking-[0.04em] rounded-lg cursor-pointer hover:opacity-90 transition">
           {% trans "Seleccionar archivos" %}
-          <input type="file" accept="image/*,.heic,.heif" multiple class="hidden" @change="onPick($event)">
+          <input type="file" accept="image/jpeg,.jpg,.jpeg" multiple class="hidden" @change="onPick($event)">
         </label>
       </div>
     </div>
@@ -254,13 +254,11 @@ function uploader(opts) {
           retries: 0,
         };
         this.queue.unshift(item);
-        // Toda imagen entra (JPG directo; HEIC/PNG/etc. se convierten en el
-        // server). Lo que NO es imagen se marca con error VISIBLE, nunca en silencio.
-        const looksImage =
-          /^image\//.test(file.type) || /\.(jpe?g|heic|heif|png|webp)$/i.test(file.name);
-        if (!looksImage) {
+        // Solo JPG. Lo que no sea JPG se marca con error VISIBLE, nunca en silencio.
+        const isJpeg = file.type === "image/jpeg" || /\.(jpe?g)$/i.test(file.name);
+        if (!isJpeg) {
           item.color = "#EF4444";
-          item.status = "{% trans 'Solo imágenes' %}";
+          item.status = "{% trans 'Solo JPG' %}";
           item.statusKey = "error";
           return;
         }

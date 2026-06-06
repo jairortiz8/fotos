@@ -197,18 +197,11 @@ class PhotographerUploadView(View):
                 status=400,
             )
 
-        # Aceptamos JPEG directo y convertimos HEIC/PNG/etc. a JPEG (el original
-        # guardado es SIEMPRE JPEG → descarga universal). NUNCA se descarta en
-        # silencio: si no es imagen, devolvemos error y el portal lo muestra.
-        from apps.photos.imaging import ensure_jpeg
-
-        normalized = ensure_jpeg(upload)
-        if normalized is None:
+        if not is_valid_jpeg(upload):
             return JsonResponse(
-                {"error": "invalid_format", "allowed": ["jpg", "jpeg", "heic", "png", "webp"]},
+                {"error": "invalid_format", "allowed": ["jpg", "jpeg"]},
                 status=400,
             )
-        jpeg_file, _jpeg_size = normalized
 
         photo = Photo.objects.create(
             event=link.event,
@@ -225,7 +218,7 @@ class PhotographerUploadView(View):
         photo_uid = uuid.uuid4().hex
         key = key_for_original(link.event.slug, photo_uuid=photo_uid)
         try:
-            default_storage().upload(jpeg_file, key, content_type="image/jpeg")
+            default_storage().upload(upload, key, content_type="image/jpeg")
         except R2NotConfiguredError:
             photo.delete()
             return JsonResponse(

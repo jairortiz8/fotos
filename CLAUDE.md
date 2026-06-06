@@ -655,3 +655,13 @@ Jair pasó a Hobby y decidió bancar el costo para tener búsqueda por selfie (s
 - **Rate limit del upload: 100/m → 600/m** (`UploadView`). La cola de 4 del cliente es el freno real (~2-4/s); el 600/m sólo evita 429 en ráfagas. El 429 igual libera el slot + reintenta con backoff (red de seguridad).
 - **`never_cache` en `PhotographerPortalView`**: el navegador siempre trae el portal fresco (antes servía una copia vieja donde no se veía el estado). Jair tuvo que hacer un hard-refresh una vez para tomar la versión nueva; de ahí en más, siempre fresco.
 - **Estado por foto, siempre visible** (ya venía de los fixes anteriores): En cola → Subiendo → Procesando → ✓ Lista / ✗ Error, con resumen "X listas · Y en curso · Z con error".
+
+## HEIC REVERTIDO — vuelta a JPG-only (2026-06-06)
+
+Jair pidió quitar el soporte HEIC ("no es necesario"; le pareció que convertía sus fotos — en realidad convertía **desde** HEIC **hacia** JPG, y las JPG nunca se tocaban, pasaban tal cual). Se revirtió **todo** lo de HEIC:
+
+- Quitado `pillow-heif` (dep + override de mypy), `ensure_jpeg` y el `register_heif_opener` de `imaging.py`.
+- `UploadView` vuelve a JPEG-only (`is_valid_jpeg`). No-JPG → `400 invalid_format`. **No hay conversión de ningún tipo** ahora.
+- Portal: `accept="image/jpeg"`, dropzone "Solo JPG". **Se mantiene el "sin descartes en silencio"**: lo que no es JPG aparece en la cola con error visible "Solo JPG" (no desaparece).
+- Catálogo: -`Solo imágenes`/`JPG o HEIC…`, +`Solo JPG`.
+- **Lo demás de la subida queda**: cola de 4 concurrentes (lotes 300+), estado siempre visible, rate limit 600/m, 429-retry. Sólo se sacó la conversión HEIC.
