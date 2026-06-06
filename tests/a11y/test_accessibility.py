@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from django.conf import settings as dj_settings
@@ -80,9 +81,13 @@ def test_single_h1_on_key_pages(client: Client) -> None:
 @pytest.mark.django_db
 def test_all_images_have_alt_in_search_results(client: Client) -> None:
     event, _ = _live_event_with_photo("1042")
-    html = client.get(
-        reverse("events:gallery", args=[event.slug]), {"bib": "1042"}
-    ).content.decode()
+    # En CI no hay R2 configurado → _presign devuelve "" y la galería muestra el
+    # placeholder (sin <img>). Forzamos una URL para que el <img> se renderice y
+    # así verificar de verdad que lleva alt (independiente de la config de R2).
+    with patch("apps.photos.models.Photo._presign", return_value="https://x.test/t.webp"):
+        html = client.get(
+            reverse("events:gallery", args=[event.slug]), {"bib": "1042"}
+        ).content.decode()
     imgs = IMG_RE.findall(html)
     assert imgs, "se esperaban imágenes en los resultados de búsqueda"
     missing = [t for t in imgs if "alt=" not in t]

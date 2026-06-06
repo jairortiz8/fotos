@@ -31,10 +31,11 @@ def test_runner_searches_by_bib_and_sees_results(live_server, page: Page) -> Non
     expect(page.get_by_role("heading", name="Maratón E2E 2026")).to_be_visible()
     page.fill('input[name="bib"]', "1042")
     page.press('input[name="bib"]', "Enter")
-    # Cada resultado enlaza al lightbox /foto/<id>/
-    links = page.locator('a[href*="/foto/"]')
-    expect(links.first).to_be_visible()
-    assert links.count() >= 1
+    # Cada resultado enlaza al lightbox /foto/<id>/. Chequeamos que EXISTAN
+    # (count), no su visibilidad pixel-perfect: el job de E2E no compila el CSS
+    # de Tailwind, así que las cards (que toman alto del aspect-ratio) colapsan.
+    page.wait_for_selector('a[href*="/foto/"]', state="attached", timeout=10000)
+    assert page.locator('a[href*="/foto/"]').count() >= 1
 
 
 def test_runner_unknown_bib_shows_empty_state(live_server, page: Page) -> None:  # type: ignore[no-untyped-def]
