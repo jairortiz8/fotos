@@ -59,7 +59,7 @@ class EventFactory(factory.django.DjangoModelFactory):
     name = factory.Sequence(lambda n: f"Carrera de prueba {n}")
     slug = factory.Sequence(lambda n: f"carrera-prueba-{n}")
     date = factory.LazyFunction(lambda: timezone.now().date())
-    location = "Guatemala City, GT"
+    location = "San Salvador, SV"
     description = "Evento de prueba"
     status = EventStatus.LIVE
     visibility = EventVisibility.PUBLIC

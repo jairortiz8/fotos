@@ -54,7 +54,7 @@ jobs:
       SITE_DOMAIN: localhost:8000
       NOTIFIER_BACKEND: whatsapp_manual
       LANGUAGE_CODE: es
-      TIME_ZONE: America/Guatemala
+      TIME_ZONE: America/El_Salvador
 
     steps:
       - uses: actions/checkout@v4
@@ -166,7 +166,7 @@ jobs:
       SITE_DOMAIN: localhost:8000
       NOTIFIER_BACKEND: whatsapp_manual
       LANGUAGE_CODE: es
-      TIME_ZONE: America/Guatemala
+      TIME_ZONE: America/El_Salvador
       DJANGO_ALLOW_ASYNC_UNSAFE: "1"
 
     steps:

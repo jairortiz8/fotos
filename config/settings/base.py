@@ -37,7 +37,7 @@ env = environ.Env(
     GIT_SHA=(str, "unknown"),
     NOTIFIER_BACKEND=(str, "whatsapp_manual"),
     LANGUAGE_CODE=(str, "es"),
-    TIME_ZONE=(str, "America/Guatemala"),
+    TIME_ZONE=(str, "America/El_Salvador"),
     EMAIL_BACKEND=(str, "django.core.mail.backends.console.EmailBackend"),
     DEFAULT_FROM_EMAIL=(str, "noreply@runfoto.local"),
     # R2 (Fase 2+)

@@ -39,10 +39,10 @@ def test_explicit_retention_dates_are_respected() -> None:
 @pytest.mark.django_db
 def test_slug_auto_generated_from_name() -> None:
     event = Event.objects.create(
-        name="Maratón Guatemala 2026",
+        name="Maratón San Salvador 2026",
         date=timezone.now().date(),
     )
-    assert event.slug == "maraton-guatemala-2026"
+    assert event.slug == "maraton-san-salvador-2026"
 
 
 @pytest.mark.django_db

@@ -31,27 +31,27 @@ from apps.photos.models import Bib, BibSource, Photo, PhotoStatus
 # Nombres y datos plausibles para que el admin no parezca generado por Faker.
 EVENTS_SEED = [
     {
-        "name": "Maratón Antigua Guatemala 2026",
-        "slug": "maraton-antigua-2026",
+        "name": "Maratón de San Salvador 2026",
+        "slug": "maraton-san-salvador-2026",
         "date_delta_days": -7,
         "status": EventStatus.LIVE,
-        "location": "Antigua Guatemala, GT",
-        "description": "21K y 42K por el casco histórico.",
+        "location": "San Salvador, SV",
+        "description": "21K y 42K por el centro histórico.",
     },
     {
-        "name": "Trail Ipala 2026",
-        "slug": "trail-ipala-2026",
+        "name": "Trail El Boquerón 2026",
+        "slug": "trail-boqueron-2026",
         "date_delta_days": +45,
         "status": EventStatus.UPCOMING,
-        "location": "Chiquimula, GT",
-        "description": "Ultra de montaña al volcán Ipala.",
+        "location": "Santa Tecla, SV",
+        "description": "Ultra de montaña al volcán de San Salvador.",
     },
     {
-        "name": "10K San Salvador 2025",
-        "slug": "10k-san-salvador-2025",
+        "name": "Nocturna Santa Ana 2025",
+        "slug": "nocturna-santa-ana-2025",
         "date_delta_days": -400,
         "status": EventStatus.ARCHIVED,
-        "location": "San Salvador, SV",
+        "location": "Santa Ana, SV",
         "description": "Carrera urbana nocturna por el centro.",
     },
 ]

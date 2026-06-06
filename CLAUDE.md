@@ -7,7 +7,7 @@
 
 ## 1. Qué es RunFoto
 
-Plataforma web **gratuita** de fotos de carreras deportivas para el mercado centroamericano (Guatemala/El Salvador inicial). Permite a corredores buscar y descargar fotos suyas de eventos de running, trail, ultra, ciclismo y similares — usando **dos métodos de búsqueda**:
+Plataforma web **gratuita** de fotos de carreras deportivas para el mercado centroamericano (**El Salvador** inicial, con Guatemala y la región como expansión). Permite a corredores buscar y descargar fotos suyas de eventos de running, trail, ultra, ciclismo y similares — usando **dos métodos de búsqueda**:
 
 1. **Por número de dorsal** (OCR automático en upload + corrección manual del admin)
 2. **Por selfie** (reconocimiento facial con embeddings y similitud vectorial)
@@ -490,7 +490,7 @@ En la carpeta `reference/runfoto-design/` está el zip de Claude Design extraíd
 ## 9. Glosario rápido
 
 - **Dorsal**: número que el corredor lleva en la camiseta (en inglés "bib"). Lo detectamos con OCR.
-- **Evento**: una carrera específica (ej. "Maratón Guatemala 2026").
+- **Evento**: una carrera específica (ej. "Maratón de San Salvador 2026").
 - **Fotógrafo**: persona que toma fotos del evento. NO tiene cuenta, accede por token.
 - **Link de upload**: URL única tipo `/u/abc123x` que se genera por fotógrafo+evento.
 - **Preview**: versión reducida con marca de agua que se muestra públicamente.
