@@ -36,6 +36,7 @@ dependencies = [
     "boto3>=1.34",
     # --- Imágenes ---
     "pillow>=10.4",
+    "pillow-heif>=0.18",  # abrir/convertir HEIC (fotos de iPhone/Mac) a JPEG
     # --- QR codes para links de fotógrafo (Fase 5, dashboard) ---
     "qrcode>=7.4",
     # --- Crypto (EncryptedCharField via Fernet) ---
@@ -204,6 +205,7 @@ module = [
     "cryptography.*",
     "paddleocr.*",
     "easyocr.*",
+    "pillow_heif.*",
     "moto.*",
     "django_ratelimit.*",
     "insightface.*",

@@ -2760,6 +2760,12 @@ msgstr "con error"
 msgid "Reintentando"
 msgstr "Reintentando"
 
+msgid "Solo imágenes"
+msgstr "Solo imágenes"
+
+msgid "JPG o HEIC · Máximo %(mb)s MB por foto · Sin límite de cantidad"
+msgstr "JPG o HEIC · Máximo %(mb)s MB por foto · Sin límite de cantidad"
+
 #~ msgid "Ingresá tu número de dorsal"
 #~ msgstr "Ingresá tu número de dorsal"
 

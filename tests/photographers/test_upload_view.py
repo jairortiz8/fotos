@@ -128,6 +128,28 @@ def test_upload_rejects_non_jpeg(client: Client, link_token, r2_bucket) -> None:
 
 
 @pytest.mark.django_db
+def test_upload_converts_heic_to_jpeg(
+    client: Client, link_token, r2_bucket, no_celery_dispatch
+) -> None:
+    """Una HEIC real (iPhone/Mac) se acepta y se convierte a JPEG (no se descarta)."""
+    import io
+
+    from PIL import Image
+
+    import apps.photos.imaging  # noqa: F401  (registra el opener HEIF al importar)
+
+    buf = io.BytesIO()
+    Image.new("RGB", (640, 480), (100, 50, 25)).save(buf, format="HEIF")
+    heic = SimpleUploadedFile("iphone.heic", content=buf.getvalue(), content_type="image/heic")
+
+    _link, raw_token = link_token
+    response = client.post(reverse("photographer:upload", args=[raw_token]), {"file": heic})
+    assert response.status_code == 200
+    photo = Photo.objects.get(id=response.json()["id"])
+    assert photo.original_key.endswith(".jpg")
+
+
+@pytest.mark.django_db
 def test_upload_rejects_oversize_file(client: Client, link_token, r2_bucket, settings) -> None:
     settings.PHOTO_UPLOAD_MAX_BYTES = 1024  # 1 KB para forzar el rechazo
     _link, raw_token = link_token
