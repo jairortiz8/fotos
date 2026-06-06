@@ -2745,6 +2745,21 @@ msgid_plural "%(n)s galerías abiertas"
 msgstr[0] "%(n)s galería abierta"
 msgstr[1] "%(n)s galerías abiertas"
 
+msgid "Tus subidas"
+msgstr "Tus subidas"
+
+msgid "listas"
+msgstr "listas"
+
+msgid "en curso"
+msgstr "en curso"
+
+msgid "con error"
+msgstr "con error"
+
+msgid "Reintentando"
+msgstr "Reintentando"
+
 #~ msgid "Ingresá tu número de dorsal"
 #~ msgstr "Ingresá tu número de dorsal"
 

@@ -85,6 +85,13 @@ FACE_SEARCH_ENABLED = env("FACE_SEARCH_ENABLED")
 # aparte si algún día se quiere extraer embeddings sin exponer la búsqueda.
 FACE_PROCESSING_ENABLED = env.bool("FACE_PROCESSING_ENABLED", default=FACE_SEARCH_ENABLED)
 
+# Blur automático de caras de menores en el preview público (parte del paso
+# facial). Decisión de Jair: APAGADO en prod (MINOR_BLUR_ENABLED=false) — quiere
+# que el blur nunca aparezca. El indexado de embeddings (búsqueda por selfie)
+# sigue funcionando; sólo se saltea la regeneración con blur. Default True para
+# local/tests (mantiene la cobertura de la lógica de blur de Fase 4).
+MINOR_BLUR_ENABLED = env.bool("MINOR_BLUR_ENABLED", default=True)
+
 # ----------------------------------------------------------------------------
 # Apps
 # ----------------------------------------------------------------------------

@@ -251,8 +251,9 @@ def run_face_recognition_on_photo(self, photo_id: int) -> dict[str, int | bool]:
             ]
         )
 
-    # Si hay menores confirmados, regenerar preview/thumb con blur en sus caras.
-    if minors > 0:
+    # Si hay menores confirmados Y el blur está habilitado, regenerar preview/thumb
+    # con blur. En prod MINOR_BLUR_ENABLED=false (decisión de Jair) → nunca blurea.
+    if minors > 0 and settings.MINOR_BLUR_ENABLED:
         regenerate_preview_with_minor_blur.delay(photo.id)
 
     return {

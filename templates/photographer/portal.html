@@ -102,40 +102,50 @@
     {# Cola en vivo (manejada por Alpine)                              #}
     {# ============================================================== #}
     <div class="mt-8" x-show="queue.length > 0" x-cloak>
-      <div class="flex justify-between items-baseline mb-3.5">
-        <h3 class="font-display font-bold text-base md:text-lg">{% trans "Cola de subida" %}</h3>
-        <span class="font-mono text-[11px] text-text-3">
-          <span x-text="queue.length"></span>
-          {% trans "archivos" %}
-          ·
-          <span x-text="totalSize"></span>
+      <div class="flex justify-between items-baseline mb-3.5 gap-3 flex-wrap">
+        <h3 class="font-display font-bold text-base md:text-lg">{% trans "Tus subidas" %}</h3>
+        <span class="font-mono text-[11px] inline-flex items-center gap-2.5">
+          <span x-show="counts.ready" x-cloak class="font-semibold" style="color:#10B981"><span x-text="counts.ready"></span> {% trans "listas" %}</span>
+          <span x-show="counts.busy" x-cloak style="color:#00D4FF"><span x-text="counts.busy"></span> {% trans "en curso" %}</span>
+          <span x-show="counts.error" x-cloak class="font-semibold" style="color:#EF4444"><span x-text="counts.error"></span> {% trans "con error" %}</span>
         </span>
       </div>
 
       <div class="bg-ink-1 border border-border rounded-xl overflow-hidden">
         <template x-for="(item, index) in queue" :key="item.key">
-          <div class="grid grid-cols-[52px_1fr_auto] md:grid-cols-[52px_1fr_200px_140px] items-center gap-3 md:gap-4 p-3.5 md:p-4 border-b border-border last:border-b-0">
-            <div class="w-[52px] h-[52px] rounded-md overflow-hidden bg-ink-2"
+          <div class="flex items-center gap-3 p-3 md:p-4 border-b border-border last:border-b-0">
+            <div class="w-12 h-12 shrink-0 rounded-md overflow-hidden bg-ink-2"
                  :style="!item.thumb ? `background: linear-gradient(135deg, hsl(${(item.key * 37) % 360} 30% 18%), hsl(${(item.key * 53) % 360} 25% 10%))` : ''">
               <template x-if="item.thumb">
                 <img :src="item.thumb" alt="" class="w-full h-full object-cover">
               </template>
             </div>
-            <div class="min-w-0">
-              <div class="font-mono text-[13px] font-medium truncate" x-text="item.name"></div>
-              <div class="font-mono text-[11px] text-text-3 mt-0.5" x-text="item.sizeFmt"></div>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center justify-between gap-2">
+                <div class="font-mono text-[13px] font-medium truncate" x-text="item.name"></div>
+                {# Estado SIEMPRE visible (también en mobile) con ícono ✓ / ✗ #}
+                <span class="shrink-0 inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.04em] font-bold px-2 py-0.5 rounded-full"
+                      :style="`background: ${item.color}1A; color: ${item.color};`">
+                  <template x-if="item.statusKey === 'ready'">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                  </template>
+                  <template x-if="item.statusKey === 'error'">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                  </template>
+                  <template x-if="item.statusKey === 'uploading' || item.statusKey === 'processing'">
+                    <span class="w-1.5 h-1.5 rounded-full animate-pulse" :style="`background: ${item.color};`"></span>
+                  </template>
+                  <span x-text="item.status"></span>
+                </span>
+              </div>
+              <div class="flex items-center gap-2 mt-1.5">
+                <div class="flex-1 h-1.5 rounded-full bg-ink-2 overflow-hidden">
+                  <div class="h-full transition-[width] duration-300"
+                       :style="`width: ${item.progress * 100}%; background: ${item.color};`"></div>
+                </div>
+                <span class="font-mono text-[10px] text-text-3 shrink-0" x-text="item.sizeFmt"></span>
+              </div>
             </div>
-            <div class="col-span-2 md:col-span-1 h-1.5 rounded-full bg-ink-2 overflow-hidden">
-              <div class="h-full transition-[width] duration-300"
-                   :style="`width: ${item.progress * 100}%; background: ${item.color};`"></div>
-            </div>
-            <span class="text-[10px] uppercase tracking-[0.04em] font-medium px-2.5 py-1 rounded-full border w-fit hidden md:inline-flex items-center gap-1.5"
-                  :style="`background: ${item.color}1A; color: ${item.color}; border-color: ${item.color}40;`">
-              <span class="w-1.5 h-1.5 rounded-full"
-                    :style="`background: ${item.color};`"
-                    :class="(item.statusKey === 'uploading' || item.statusKey === 'processing') ? 'animate-pulse' : ''"></span>
-              <span x-text="item.status"></span>
-            </span>
           </div>
         </template>
       </div>
@@ -202,6 +212,17 @@ function uploader(opts) {
       return formatBytes(bytes);
     },
 
+    // Resumen para el encabezado: cuántas listas / en curso / con error.
+    get counts() {
+      let ready = 0, busy = 0, error = 0;
+      for (const i of this.queue) {
+        if (i.statusKey === "ready") ready++;
+        else if (i.statusKey === "error") error++;
+        else busy++;
+      }
+      return { ready, busy, error };
+    },
+
     onPick(ev) {
       this.handleFiles(ev.target.files);
       ev.target.value = "";
@@ -228,6 +249,7 @@ function uploader(opts) {
           photoId: null,
           thumb: "",
           polls: 0,
+          retries: 0,
         };
         this.queue.unshift(item);
         this.uploadOne(item);
@@ -256,6 +278,15 @@ function uploader(opts) {
             /* sin id: queda en "Procesando" sin poder pollear */
           }
           this.startPolling();
+        } else if (xhr.status === 429 && item.retries < 6) {
+          // Rate limit del servidor (lote grande): reintentamos con backoff en
+          // vez de fallar, así no se "pierde" ninguna foto.
+          item.retries += 1;
+          item.color = "#F59E0B";
+          item.status = "{% trans 'Reintentando' %}";
+          item.statusKey = "uploading";
+          item.progress = 0;
+          setTimeout(() => this.uploadOne(item), 4000 + item.retries * 2000);
         } else {
           item.color = "#EF4444";
           item.status = "{% trans 'Error' %}";
@@ -279,7 +310,7 @@ function uploader(opts) {
 
     pollPending() {
       const pending = this.queue.filter(
-        (i) => i.statusKey === "processing" && i.photoId && i.polls < 20
+        (i) => i.statusKey === "processing" && i.photoId && i.polls < 40
       );
       if (pending.length === 0) {
         clearInterval(this._pollTimer);
