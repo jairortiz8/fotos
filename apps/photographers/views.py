@@ -15,12 +15,20 @@ import logging
 import re
 import unicodedata
 import uuid
+from io import BytesIO
 from typing import Any
 
 from django.conf import settings
 from django.db.models import F
-from django.http import HttpRequest, HttpResponse, JsonResponse
-from django.shortcuts import render
+from django.http import (
+    FileResponse,
+    Http404,
+    HttpRequest,
+    HttpResponse,
+    HttpResponseBase,
+    JsonResponse,
+)
+from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views import View
@@ -327,3 +335,77 @@ class PhotographerUploadStatusView(View):
             for photo in photos
         ]
         return JsonResponse({"photos": data})
+
+
+# ---------------------------------------------------------------------------
+# Imagen destacada de la carpeta del fotógrafo
+# ---------------------------------------------------------------------------
+class PhotographerCoverView(View):
+    """Sirve la imagen destacada (webp) de la carpeta del fotógrafo desde R2,
+    con cache. Pública (la portada de la carpeta se ve en la galería del evento).
+    URL versionada con `?v=` → cache largo sin quedar vieja."""
+
+    http_method_names = ["get"]
+
+    def get(self, request: HttpRequest, link_id: int) -> HttpResponseBase:
+        link = get_object_or_404(PhotographerLink, id=link_id)
+        if not link.featured_image_key:
+            raise Http404
+
+        buf = BytesIO()
+        try:
+            default_storage().download_fileobj(link.featured_image_key, buf)
+        except (R2NotConfiguredError, R2UploadError) as exc:
+            raise Http404 from exc
+        buf.seek(0)
+        resp = FileResponse(buf, content_type="image/webp")
+        resp["Cache-Control"] = "public, max-age=604800"  # 7 días (URL versionada)
+        return resp
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+@method_decorator(
+    ratelimit(key=upload_ratelimit_key, rate="20/m", method="POST", block=True),
+    name="dispatch",
+)
+class PhotographerFeaturedUploadView(View):
+    """El fotógrafo sube la imagen destacada de su carpeta (autenticado por token).
+    La procesa a webp → R2 → `featured_image_key`. csrf_exempt: el token URL es la
+    autenticación (igual que el upload de fotos)."""
+
+    http_method_names = ["post"]
+
+    def post(self, request: HttpRequest, token: str) -> HttpResponse:
+        link = lookup_link(token)
+        if link is None or not is_link_authenticatable(link):
+            return JsonResponse({"error": "invalid_link"}, status=410)
+
+        upload = request.FILES.get("file")
+        if not upload:
+            return JsonResponse({"error": "no_file"}, status=400)
+        if upload.size and upload.size > settings.PHOTO_UPLOAD_MAX_BYTES:
+            return JsonResponse({"error": "file_too_large"}, status=400)
+
+        from PIL import UnidentifiedImageError
+
+        from apps.photos.imaging import process_photographer_cover
+
+        try:
+            key = process_photographer_cover(upload, link.id)
+        except UnidentifiedImageError:
+            return JsonResponse({"error": "invalid_format"}, status=400)
+        except R2NotConfiguredError:
+            return JsonResponse({"error": "storage_not_configured"}, status=503)
+        except (R2UploadError, OSError):
+            logger.exception("Falló la imagen destacada (link=%s)", link.id)
+            return JsonResponse({"error": "upload_failed"}, status=500)
+
+        link.featured_image_key = key
+        link.save(update_fields=["featured_image_key", "updated_at"])
+        AuditLog.log(
+            "photographer_link.featured_set",
+            target=link,
+            metadata={"event_slug": link.event.slug},
+            ip=get_client_ip(request),
+        )
+        return JsonResponse({"featured_url": link.featured_url()})

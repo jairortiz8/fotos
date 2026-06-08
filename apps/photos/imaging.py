@@ -17,6 +17,7 @@ from apps.photos.storage import (
     R2Storage,
     default_storage,
     key_for_event_cover,
+    key_for_photographer_cover,
     key_for_preview,
     key_for_thumbnail,
 )
@@ -212,24 +213,15 @@ def generate_thumbnail(
 
 
 # ---------------------------------------------------------------------------
-# Portada del evento
+# Portadas (evento + carpeta de fotógrafo)
 # ---------------------------------------------------------------------------
 COVER_LONG_EDGE = 1400
 COVER_QUALITY = 82
 
 
-def process_event_cover(
-    file_obj: Any,
-    event_slug: str,
-    *,
-    storage: R2Storage | None = None,
-) -> str:
-    """Procesa la portada subida de un evento → WebP → R2. Devuelve el key.
-
-    `file_obj` puede ser un archivo subido (UploadedFile), un file-like o bytes.
-    Resize al lado largo COVER_LONG_EDGE, SIN watermark (es la portada del
-    evento, no una foto del corredor). Honra la orientación EXIF del celular.
-    """
+def _process_cover_to_key(file_obj: Any, key: str, storage: R2Storage | None = None) -> str:
+    """Procesa una imagen de portada (resize → WebP, SIN watermark, honra EXIF)
+    y la sube a R2 bajo `key`. `file_obj`: UploadedFile / file-like / bytes."""
     src: Any = BytesIO(file_obj) if isinstance(file_obj, (bytes, bytearray)) else file_obj
     img: Image.Image = Image.open(src)
     img = ImageOps.exif_transpose(img) or img  # rota según EXIF (fotos de celular)
@@ -239,9 +231,20 @@ def process_event_cover(
     img.convert("RGB").save(buf, format="WEBP", quality=COVER_QUALITY, method=6)
     buf.seek(0)
 
-    key = key_for_event_cover(event_slug)
     (storage or default_storage()).upload(buf, key, content_type="image/webp")
     return key
+
+
+def process_event_cover(file_obj: Any, event_slug: str, *, storage: R2Storage | None = None) -> str:
+    """Portada del evento → WebP → R2. Devuelve el key."""
+    return _process_cover_to_key(file_obj, key_for_event_cover(event_slug), storage)
+
+
+def process_photographer_cover(
+    file_obj: Any, link_id: int, *, storage: R2Storage | None = None
+) -> str:
+    """Imagen destacada de la carpeta del fotógrafo → WebP → R2. Devuelve el key."""
+    return _process_cover_to_key(file_obj, key_for_photographer_cover(link_id), storage)
 
 
 # ---------------------------------------------------------------------------

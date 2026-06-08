@@ -82,15 +82,28 @@ class EventGalleryView(View):
                 return render(request, "public/event_closed.html", {"event": event})
             raise Http404
 
-        return self._render_gallery(request, event)
+        # Modos de navegación (sólo con galería abierta):
+        #   ?vista=fotografos → "carpetas" por fotógrafo
+        #   ?fotografo=<id>   → las fotos de ese fotógrafo (cronológicas)
+        if request.GET.get("vista") == "fotografos":
+            return self._render_photographer_folders(request, event)
+        photographer = None
+        fid = request.GET.get("fotografo", "")
+        if fid.isdigit():
+            photographer = event.photographer_links.filter(id=int(fid)).first()
+            if photographer is None:
+                raise Http404
+        return self._render_gallery(request, event, photographer=photographer)
 
-    # ----- Galería completa -----
-    def _render_gallery(self, request: HttpRequest, event: Event) -> HttpResponse:
-        photos_qs = (
-            Photo.objects.filter(event=event, status=PhotoStatus.APPROVED).prefetch_related("bibs")
-            # Cronológico: la primera foto tomada (hora de disparo) primero.
-            .order_by("capture_time", "created_at")
-        )
+    # ----- Galería completa (o filtrada por un fotógrafo) -----
+    def _render_gallery(
+        self, request: HttpRequest, event: Event, photographer: Any = None
+    ) -> HttpResponse:
+        photos_qs = Photo.objects.filter(event=event, status=PhotoStatus.APPROVED)
+        if photographer is not None:
+            photos_qs = photos_qs.filter(photographer_link=photographer)
+        # Cronológico: la primera foto tomada (hora de disparo) primero.
+        photos_qs = photos_qs.prefetch_related("bibs").order_by("capture_time", "created_at")
         paginator = Paginator(photos_qs, GALLERY_PAGE_SIZE)
         page = paginator.get_page(request.GET.get("page", 1))
 
@@ -100,11 +113,34 @@ class EventGalleryView(View):
             "page_obj": page,
             "total_photos": paginator.count,
             "photographer_count": event.photographer_links.count(),
+            "photographer": photographer,
         }
         # HTMX infinite-scroll: solo el grid + el sentinel de la próxima página.
         if getattr(request, "htmx", False):
             return render(request, "public/_photo_grid.html", ctx)
         return render(request, "public/event_gallery.html", ctx)
+
+    # ----- Carpetas por fotógrafo -----
+    def _render_photographer_folders(self, request: HttpRequest, event: Event) -> HttpResponse:
+        from django.db.models import Count, Q
+
+        folders = list(
+            event.photographer_links.annotate(
+                approved_count=Count("photos", filter=Q(photos__status=PhotoStatus.APPROVED))
+            )
+            .filter(approved_count__gt=0)
+            .order_by("-approved_count", "photographer_name")
+        )
+        return render(
+            request,
+            "public/event_gallery.html",
+            {
+                "event": event,
+                "folders": folders,
+                "vista": "fotografos",
+                "photographer_count": len(folders),
+            },
+        )
 
     # ----- Búsqueda por dorsal -----
     def _handle_bib_search(

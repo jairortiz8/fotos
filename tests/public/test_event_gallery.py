@@ -11,7 +11,12 @@ from django.utils import timezone
 
 from apps.events.models import EventStatus, EventVisibility
 from apps.photos.models import PhotoStatus
-from tests.factories import ApprovedPhotoFactory, EventFactory, PhotoFactory
+from tests.factories import (
+    ApprovedPhotoFactory,
+    EventFactory,
+    PhotoFactory,
+    PhotographerLinkFactory,
+)
 
 
 @pytest.mark.django_db
@@ -99,3 +104,48 @@ def test_gallery_htmx_returns_partial(client: Client) -> None:
     assert response.status_code == 200
     # El partial no tiene <html>
     assert b"<html" not in response.content
+
+
+# ---------------------------------------------------------------------------
+# Carpetas por fotógrafo
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_gallery_photographer_folders(client: Client) -> None:
+    """?vista=fotografos lista los fotógrafos con fotos aprobadas + su conteo."""
+    event = EventFactory(status=EventStatus.LIVE)
+    ana = PhotographerLinkFactory(event=event, photographer_name="Ana Fotógrafa")
+    ApprovedPhotoFactory(event=event, photographer_link=ana)
+    ApprovedPhotoFactory(event=event, photographer_link=ana)
+    # Un fotógrafo sin fotos aprobadas NO aparece como carpeta.
+    PhotographerLinkFactory(event=event, photographer_name="Sin fotos")
+
+    resp = client.get(reverse("events:gallery", args=[event.slug]) + "?vista=fotografos")
+    assert resp.status_code == 200
+    folders = list(resp.context["folders"])
+    assert len(folders) == 1
+    assert folders[0].approved_count == 2
+    assert b"Ana Fot" in resp.content
+
+
+@pytest.mark.django_db
+def test_gallery_filter_by_photographer(client: Client) -> None:
+    """?fotografo=<id> muestra sólo las fotos de ese fotógrafo."""
+    event = EventFactory(status=EventStatus.LIVE)
+    a = PhotographerLinkFactory(event=event)
+    b = PhotographerLinkFactory(event=event)
+    pa = ApprovedPhotoFactory(event=event, photographer_link=a)
+    ApprovedPhotoFactory(event=event, photographer_link=b)
+
+    resp = client.get(reverse("events:gallery", args=[event.slug]) + f"?fotografo={a.id}")
+    assert resp.status_code == 200
+    photos = list(resp.context["photos"])
+    assert pa in photos
+    assert all(p.photographer_link_id == a.id for p in photos)
+    assert resp.context["photographer"].id == a.id
+
+
+@pytest.mark.django_db
+def test_gallery_unknown_photographer_404(client: Client) -> None:
+    event = EventFactory(status=EventStatus.LIVE)
+    resp = client.get(reverse("events:gallery", args=[event.slug]) + "?fotografo=999999")
+    assert resp.status_code == 404

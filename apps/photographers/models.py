@@ -79,6 +79,11 @@ class PhotographerLink(TimeStampedModel):
         null=True,
         blank=True,
     )
+    # Imagen destacada de la "carpeta" del fotógrafo (R2, webp). La sube el
+    # fotógrafo desde su portal. Se sirve por `PhotographerCoverView`.
+    featured_image_key = models.CharField(
+        _("imagen destacada (R2)"), max_length=255, blank=True, default=""
+    )
 
     class Meta:
         verbose_name = _("link de fotógrafo")
@@ -96,6 +101,18 @@ class PhotographerLink(TimeStampedModel):
         if self.last_used_ip:
             self.last_used_ip = anonymize_ip(self.last_used_ip) or self.last_used_ip
         super().save(*args, **kwargs)
+
+    def featured_url(self) -> str:
+        """URL (relativa) de la imagen destacada de la carpeta, o "" si no hay.
+        La sirve `PhotographerCoverView` desde R2; versionada para bustear cache."""
+        if not self.featured_image_key:
+            return ""
+        from django.urls import reverse
+
+        url = reverse("photographer:cover", kwargs={"link_id": self.id})
+        if self.updated_at:
+            return f"{url}?v={int(self.updated_at.timestamp())}"
+        return url
 
     # --- API ---
 

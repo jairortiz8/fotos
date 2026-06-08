@@ -44,10 +44,17 @@
         {% for link in links %}
         <tr class="hover:bg-ink-1/50 transition">
           <td>
-            <div class="font-semibold text-[13px]">{{ link.photographer_name }}</div>
-            {% if link.photographer_email %}
-              <div class="rf-num text-[10px] text-text-3 mt-0.5">{{ link.photographer_email }}</div>
-            {% endif %}
+            <div class="flex items-center gap-2.5">
+              <div class="w-9 h-9 rounded-md bg-ink-2 overflow-hidden shrink-0 border border-border" title="{% trans 'Imagen destacada de la carpeta' %}">
+                {% if link.featured_url %}<img src="{{ link.featured_url }}" alt="" class="w-full h-full object-cover">{% endif %}
+              </div>
+              <div class="min-w-0">
+                <div class="font-semibold text-[13px] truncate">{{ link.photographer_name }}</div>
+                {% if link.photographer_email %}
+                  <div class="rf-num text-[10px] text-text-3 mt-0.5 truncate">{{ link.photographer_email }}</div>
+                {% endif %}
+              </div>
+            </div>
           </td>
           <td>
             <a href="{% url 'dashboard:event_detail' slug=link.event.slug %}" class="text-[12px] text-text-2 hover:text-text-1">{{ link.event.name }}</a>
@@ -61,8 +68,8 @@
           <td>
             <div class="flex items-center justify-end gap-2">
               <a href="{% url 'dashboard:event_detail' slug=link.event.slug %}?tab=fotos" class="rf-ghost" style="padding:.35rem .7rem; font-size:11px">{% trans "Ver fotos" %}</a>
-              {# Regenerar: el token no se puede re-ver (se guarda hasheado), así que
-                 para reenviar un link se genera uno nuevo. Muestra el modal con la URL + QR. #}
+              {% comment %}Regenerar: el token no se puede re-ver (se guarda hasheado), así
+                 que para reenviar un link se genera uno nuevo. Muestra el modal con URL + QR.{% endcomment %}
               <form hx-post="{% url 'dashboard:regenerate_link' pk=link.id %}" hx-target="#modal-root" hx-swap="innerHTML"
                     hx-confirm="{% trans '¿Regenerar el link? Se crea uno nuevo y el anterior deja de funcionar.' %}">
                 {% csrf_token %}

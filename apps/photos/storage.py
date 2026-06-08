@@ -203,6 +203,10 @@ def key_for_event_cover(event_slug: str) -> str:
     return f"event_covers/{event_slug}.webp"
 
 
+def key_for_photographer_cover(link_id: int) -> str:
+    return f"photographer_covers/{link_id}.webp"
+
+
 def photo_uuid_from_key(key: str) -> str:
     """Extrae el UUID del filename de un key cualquiera del evento."""
     return key.rsplit("/", 1)[-1].rsplit(".", 1)[0]
