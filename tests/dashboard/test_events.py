@@ -170,3 +170,72 @@ def test_event_update_can_change_status_draft_to_live(admin_client: Client) -> N
     )
     event.refresh_from_db()
     assert event.status == EventStatus.LIVE
+
+
+@pytest.mark.django_db
+def test_event_saves_organizer_socials(admin_client: Client) -> None:
+    event = EventFactory()
+    admin_client.post(
+        reverse("dashboard:event_update", kwargs={"slug": event.slug}),
+        {
+            "name": event.name,
+            "date": event.date.isoformat(),
+            "visibility": event.visibility,
+            "organizer_name": "Club Runners",
+            "organizer_instagram": "@clubrunners",
+            "organizer_facebook": "https://facebook.com/clubrunners",
+        },
+    )
+    event.refresh_from_db()
+    assert event.organizer_name == "Club Runners"
+    assert event.instagram_url() == "https://instagram.com/clubrunners"
+    assert event.facebook_url() == "https://facebook.com/clubrunners"
+
+
+@pytest.mark.django_db
+def test_event_cover_upload_goes_to_r2(admin_client: Client, settings) -> None:  # type: ignore[no-untyped-def]
+    """La portada subida se procesa a webp y se guarda en R2 (cover_key), no en
+    el disco efímero."""
+    import boto3
+    from django.core.cache import cache
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    from moto import mock_aws
+
+    from apps.ml.synthetic import synthetic_jpeg_bytes
+    from apps.photos import storage as storage_module
+
+    settings.R2_ENDPOINT_URL = ""
+    settings.R2_ACCESS_KEY_ID = "AKIA-TEST"
+    settings.R2_SECRET_ACCESS_KEY = "SECRET-TEST"
+    settings.R2_BUCKET_NAME = "test-bucket"
+    storage_module.reset_default_storage_for_tests()
+    cache.clear()
+
+    with mock_aws():
+        client = boto3.client(
+            "s3",
+            aws_access_key_id="AKIA-TEST",
+            aws_secret_access_key="SECRET-TEST",
+            region_name="us-east-1",
+        )
+        client.create_bucket(Bucket="test-bucket")
+        event = EventFactory(slug="con-portada", cover_key="")
+        admin_client.post(
+            reverse("dashboard:event_update", kwargs={"slug": event.slug}),
+            {
+                "name": event.name,
+                "date": event.date.isoformat(),
+                "visibility": event.visibility,
+                "cover": SimpleUploadedFile(
+                    "portada.jpg", synthetic_jpeg_bytes("1"), content_type="image/jpeg"
+                ),
+            },
+        )
+        event.refresh_from_db()
+        assert event.cover_key == "event_covers/con-portada.webp"
+        # el objeto existe en R2 y es webp
+        obj = client.get_object(Bucket="test-bucket", Key=event.cover_key)
+        assert obj["ContentType"] == "image/webp"
+
+    storage_module.reset_default_storage_for_tests()
+    cache.clear()

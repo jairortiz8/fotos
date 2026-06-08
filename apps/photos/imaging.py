@@ -11,11 +11,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
-from PIL import ExifTags, Image, ImageDraw, ImageFont
+from PIL import ExifTags, Image, ImageDraw, ImageFont, ImageOps
 
 from apps.photos.storage import (
     R2Storage,
     default_storage,
+    key_for_event_cover,
     key_for_preview,
     key_for_thumbnail,
 )
@@ -183,6 +184,39 @@ def generate_thumbnail(
     buf.seek(0)
 
     key = key_for_thumbnail(photo.event.slug, _photo_uid(photo))
+    (storage or default_storage()).upload(buf, key, content_type="image/webp")
+    return key
+
+
+# ---------------------------------------------------------------------------
+# Portada del evento
+# ---------------------------------------------------------------------------
+COVER_LONG_EDGE = 1400
+COVER_QUALITY = 82
+
+
+def process_event_cover(
+    file_obj: Any,
+    event_slug: str,
+    *,
+    storage: R2Storage | None = None,
+) -> str:
+    """Procesa la portada subida de un evento → WebP → R2. Devuelve el key.
+
+    `file_obj` puede ser un archivo subido (UploadedFile), un file-like o bytes.
+    Resize al lado largo COVER_LONG_EDGE, SIN watermark (es la portada del
+    evento, no una foto del corredor). Honra la orientación EXIF del celular.
+    """
+    src: Any = BytesIO(file_obj) if isinstance(file_obj, (bytes, bytearray)) else file_obj
+    img: Image.Image = Image.open(src)
+    img = ImageOps.exif_transpose(img) or img  # rota según EXIF (fotos de celular)
+    img.thumbnail((COVER_LONG_EDGE, COVER_LONG_EDGE), Image.Resampling.LANCZOS)
+
+    buf = BytesIO()
+    img.convert("RGB").save(buf, format="WEBP", quality=COVER_QUALITY, method=6)
+    buf.seek(0)
+
+    key = key_for_event_cover(event_slug)
     (storage or default_storage()).upload(buf, key, content_type="image/webp")
     return key
 

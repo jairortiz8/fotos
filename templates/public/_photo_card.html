@@ -1,8 +1,7 @@
 {% comment %}Una celda del grid de fotos. Requiere `photo` y opcional `bib_filter`.
-Usa Alpine `sel` (photoSelection) del contenedor padre.{% endcomment %}
+Al tocarla se abre el lightbox, donde se descarga la foto (una a la vez).{% endcomment %}
 {% load i18n %}
-<div class="relative aspect-[4/5] bg-ink-0 group"
-     :class="{ 'ring-[3px] ring-brand ring-inset z-10': sel.has({{ photo.id }}) }">
+<div class="relative aspect-[4/5] bg-ink-0 group">
   <a href="{% url 'events:lightbox' slug=photo.event.slug photo_id=photo.id %}{% if bib_filter %}?bib={{ bib_filter }}{% endif %}"
      class="block w-full h-full">
     {% with thumb=photo.get_thumbnail_url %}
@@ -23,15 +22,4 @@ Usa Alpine `sel` (photoSelection) del contenedor padre.{% endcomment %}
     </div>
     {% endif %}
   {% endwith %}
-
-  {# Checkbox top-right (selección) #}
-  <button type="button"
-          @click.stop="sel.toggle({{ photo.id }})"
-          class="absolute top-2 right-2 w-5 h-5 rounded grid place-items-center backdrop-blur transition md:opacity-0 md:group-hover:opacity-100"
-          :class="sel.has({{ photo.id }}) ? 'bg-brand opacity-100 border-0' : 'opacity-100 border border-white/50'"
-          style="background-color: rgba(10,10,11,0.55);"
-          :style="sel.has({{ photo.id }}) ? 'background-color:#FC5200' : ''"
-          aria-label="{% trans 'Seleccionar foto' %}">
-    <svg x-show="sel.has({{ photo.id }})" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>
-  </button>
 </div>

@@ -199,6 +199,10 @@ def key_for_zip(event_slug: str, *, zip_uuid: str | None = None) -> str:
     return f"events/{event_slug}/zips/{uid}.zip"
 
 
+def key_for_event_cover(event_slug: str) -> str:
+    return f"event_covers/{event_slug}.webp"
+
+
 def photo_uuid_from_key(key: str) -> str:
     """Extrae el UUID del filename de un key cualquiera del evento."""
     return key.rsplit("/", 1)[-1].rsplit(".", 1)[0]

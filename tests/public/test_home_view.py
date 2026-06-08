@@ -31,6 +31,14 @@ def test_home_hides_private_events(client: Client) -> None:
 
 
 @pytest.mark.django_db
+def test_home_footer_shows_instagram(client: Client, settings) -> None:  # type: ignore[no-untyped-def]
+    settings.SITE_INSTAGRAM = "findyourfoto"
+    response = client.get(reverse("core:index"))
+    assert b"@findyourfoto" in response.content
+    assert b"https://instagram.com/findyourfoto" in response.content
+
+
+@pytest.mark.django_db
 def test_home_hides_archived_events(client: Client) -> None:
     EventFactory(name="Viejo", status=EventStatus.ARCHIVED, visibility=EventVisibility.PUBLIC)
     response = client.get(reverse("core:index"))

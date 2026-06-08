@@ -69,12 +69,36 @@
           {% if form.description.errors %}<p class="text-danger text-[11px] mt-1">{{ form.description.errors.0 }}</p>{% endif %}
         </div>
 
-        {# cover_image #}
+        {# cover (portada) — va a R2, no al disco efímero #}
+        <div class="sm:col-span-2">
+          <label class="rf-label" for="{{ form.cover.id_for_label }}">{{ form.cover.label }}</label>
+          {% if object.cover_url %}
+          <div class="mb-2 rounded-lg overflow-hidden border border-border aspect-[16/9] max-w-xs bg-ink-1">
+            <img src="{{ object.cover_url }}" alt="{% trans 'Portada actual' %}" class="w-full h-full object-cover">
+          </div>
+          {% endif %}
+          {{ form.cover }}
+          {% if form.cover.help_text %}<p class="text-[11px] text-text-3 mt-1">{{ form.cover.help_text }}</p>{% endif %}
+          {% if form.cover.errors %}<p class="text-danger text-[11px] mt-1">{{ form.cover.errors.0 }}</p>{% endif %}
+        </div>
+
+        {# organizador: nombre + redes #}
         <div>
-          <label class="rf-label" for="{{ form.cover_image.id_for_label }}">{{ form.cover_image.label }}</label>
-          {{ form.cover_image }}
-          {% if form.cover_image.help_text %}<p class="text-[11px] text-text-3 mt-1">{{ form.cover_image.help_text }}</p>{% endif %}
-          {% if form.cover_image.errors %}<p class="text-danger text-[11px] mt-1">{{ form.cover_image.errors.0 }}</p>{% endif %}
+          <label class="rf-label" for="{{ form.organizer_name.id_for_label }}">{{ form.organizer_name.label }}</label>
+          {{ form.organizer_name }}
+          {% if form.organizer_name.errors %}<p class="text-danger text-[11px] mt-1">{{ form.organizer_name.errors.0 }}</p>{% endif %}
+        </div>
+        <div>
+          <label class="rf-label" for="{{ form.organizer_instagram.id_for_label }}">{{ form.organizer_instagram.label }}</label>
+          {{ form.organizer_instagram }}
+          {% if form.organizer_instagram.help_text %}<p class="text-[11px] text-text-3 mt-1">{{ form.organizer_instagram.help_text }}</p>{% endif %}
+          {% if form.organizer_instagram.errors %}<p class="text-danger text-[11px] mt-1">{{ form.organizer_instagram.errors.0 }}</p>{% endif %}
+        </div>
+        <div>
+          <label class="rf-label" for="{{ form.organizer_facebook.id_for_label }}">{{ form.organizer_facebook.label }}</label>
+          {{ form.organizer_facebook }}
+          {% if form.organizer_facebook.help_text %}<p class="text-[11px] text-text-3 mt-1">{{ form.organizer_facebook.help_text }}</p>{% endif %}
+          {% if form.organizer_facebook.errors %}<p class="text-danger text-[11px] mt-1">{{ form.organizer_facebook.errors.0 }}</p>{% endif %}
         </div>
 
         {# visibility #}

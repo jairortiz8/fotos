@@ -161,6 +161,20 @@ def check_zip_rate_limit(request: HttpRequest) -> bool:
     return not limited
 
 
+def check_photo_download_rate_limit(request: HttpRequest) -> bool:
+    """200 descargas de foto/hora por IP. Generoso (un corredor baja varias de a
+    una), pero frena el scrapeo de un evento entero por el proxy. True = permitido."""
+    limited = is_ratelimited(
+        request,
+        group="photo-download",
+        key="ip",
+        rate="200/h",
+        method=("GET",),
+        increment=True,
+    )
+    return not limited
+
+
 def check_selfie_rate_limit(request: HttpRequest) -> bool:
     """20 búsquedas por selfie/hora por IP (más caro computacionalmente)."""
     limited = is_ratelimited(

@@ -30,6 +30,7 @@ env = environ.Env(
     CELERY_RESULT_BACKEND=(str, "redis://localhost:6379/2"),
     SITE_NAME=(str, "find your foto"),
     SITE_DOMAIN=(str, "localhost:8000"),
+    SITE_INSTAGRAM=(str, "findyourfoto"),
     SENTRY_DSN=(str, ""),
     SENTRY_ENVIRONMENT=(str, "development"),
     SENTRY_TRACES_SAMPLE_RATE=(float, 0.0),
@@ -73,6 +74,8 @@ CSRF_TRUSTED_ORIGINS = env("CSRF_TRUSTED_ORIGINS")
 # ----------------------------------------------------------------------------
 SITE_NAME = env("SITE_NAME")
 SITE_DOMAIN = env("SITE_DOMAIN")
+# Usuario de Instagram del sitio (sin @). Vacío = no se muestra en el footer.
+SITE_INSTAGRAM = env("SITE_INSTAGRAM").lstrip("@").strip()
 
 # Búsqueda por selfie / borrado por selfie (Fase 4). Ver nota en env() arriba.
 FACE_SEARCH_ENABLED = env("FACE_SEARCH_ENABLED")

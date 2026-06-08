@@ -78,8 +78,8 @@
          class="group block bg-ink-1 border border-border rounded-xl overflow-hidden hover:border-text-3 transition">
         <div class="relative h-32 overflow-hidden"
              style="background: linear-gradient(135deg, #1f1f23, #0e0e10);">
-          {% if event.cover_image %}
-            <img src="{{ event.cover_image.url }}" alt="{{ event.name }}" loading="lazy" decoding="async" class="w-full h-full object-cover">
+          {% if event.cover_url %}
+            <img src="{{ event.cover_url }}" alt="{{ event.name }}" loading="lazy" decoding="async" class="w-full h-full object-cover">
           {% endif %}
           {% if event.status == 'live' %}
           <div class="absolute top-2.5 left-2.5">
@@ -121,6 +121,16 @@
       <a href="{% url 'core:contacto' %}" class="hover:text-text-1 transition">{% trans "Contacto" %}</a>
       <a href="{% url 'privacy:delete_my_data' %}" class="hover:text-text-1 transition">{% trans "Borrar mis fotos" %}</a>
     </div>
+    {% if site_instagram %}
+    <a href="{{ site_instagram_url }}" target="_blank" rel="noopener me"
+       class="inline-flex items-center gap-2 mt-5 text-[12px] text-text-2 hover:text-text-1 transition"
+       aria-label="{% blocktrans %}Seguinos en Instagram: {{ site_instagram }}{% endblocktrans %}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><path d="M17.5 6.5h.01"/>
+      </svg>
+      <span class="font-mono">@{{ site_instagram }}</span>
+    </a>
+    {% endif %}
     <div class="font-mono text-[10px] text-text-3 mt-5 tracking-[0.1em]">© 2026 · EL SALVADOR</div>
   </footer>
 </div>

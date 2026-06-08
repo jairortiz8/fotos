@@ -2,17 +2,31 @@
 
 from __future__ import annotations
 
-from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
-from django.shortcuts import get_object_or_404, redirect, render
+from io import BytesIO
+
+from django.http import (
+    FileResponse,
+    Http404,
+    HttpRequest,
+    HttpResponse,
+    HttpResponseBase,
+    JsonResponse,
+)
+from django.shortcuts import get_object_or_404, render
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
-from apps.core.utils import check_zip_rate_limit, get_client_ip, hash_ip
+from apps.core.utils import (
+    check_photo_download_rate_limit,
+    check_zip_rate_limit,
+    get_client_ip,
+    hash_ip,
+)
 from apps.downloads.models import MAX_PHOTOS_PER_ZIP, ZipDownload, ZipStatus
 from apps.events.models import EventVisibility
 from apps.photos.models import Photo, PhotoStatus
-from apps.photos.storage import R2NotConfiguredError, default_storage
+from apps.photos.storage import R2NotConfiguredError, R2UploadError, default_storage
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -86,12 +100,17 @@ class ZipStatusView(View):
 # Descarga de UNA foto (original, alta resolución, sin watermark)
 # ---------------------------------------------------------------------------
 class PhotoDownloadView(View):
-    """Redirige a una URL firmada del ORIGINAL con `attachment` → fuerza la
-    descarga en alta resolución (no el preview de 1200px con watermark)."""
+    """Sirve el ORIGINAL (alta resolución, sin watermark) como DESCARGA.
+
+    Lo servimos same-origin con `Content-Disposition: attachment` (en vez de
+    redirigir a una URL firmada de R2) para que el navegador lo baje como
+    ARCHIVO. En iOS/Safari un redirect a una imagen la abría como página ("se
+    descarga como webpage"); same-origin + attachment la baja al carrete/Archivos.
+    """
 
     http_method_names = ["get"]
 
-    def get(self, request: HttpRequest, photo_id: int) -> HttpResponse:
+    def get(self, request: HttpRequest, photo_id: int) -> HttpResponseBase:
         photo = get_object_or_404(
             Photo.objects.select_related("event"),
             id=photo_id,
@@ -102,14 +121,20 @@ class PhotoDownloadView(View):
             raise Http404
         if not photo.original_key:
             raise Http404
+        if not check_photo_download_rate_limit(request):
+            return JsonResponse({"error": "rate_limited"}, status=429)
+
         filename = photo.original_filename or f"foto_{photo.id}.jpg"
+        if not filename.lower().endswith((".jpg", ".jpeg")):
+            filename = f"{filename}.jpg"
+
+        buf = BytesIO()
         try:
-            url = default_storage().get_signed_url(
-                photo.original_key, expires_in=900, download_filename=filename
-            )
-        except R2NotConfiguredError as exc:
+            default_storage().download_fileobj(photo.original_key, buf)
+        except (R2NotConfiguredError, R2UploadError) as exc:
             raise Http404 from exc
-        return redirect(url)
+        buf.seek(0)
+        return FileResponse(buf, as_attachment=True, filename=filename, content_type="image/jpeg")
 
 
 # ---------------------------------------------------------------------------

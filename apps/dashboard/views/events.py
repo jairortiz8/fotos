@@ -25,6 +25,21 @@ from apps.photos.models import Bib, Photo, PhotoStatus
 _TABS = ("resumen", "fotos", "fotografos", "links", "dorsales")
 
 
+def _save_event_cover(event: Event | None, form: EventForm) -> None:
+    """Si el form trae una portada nueva, la procesa (webp) → R2 → cover_key.
+
+    Se hace acá (no en el ModelForm) porque la portada va a R2, no al disco
+    efímero de Railway. Se llama después de guardar el evento (ya tiene slug).
+    """
+    cover = form.cleaned_data.get("cover")
+    if not event or not cover:
+        return
+    from apps.photos.imaging import process_event_cover
+
+    event.cover_key = process_event_cover(cover, event.slug)
+    event.save(update_fields=["cover_key", "updated_at"])
+
+
 class EventListView(DashboardContextMixin, ListView):
     template_name = "dashboard/event_list.html"
     context_object_name = "events"
@@ -53,6 +68,7 @@ class EventCreateView(DashboardContextMixin, CreateView):
 
     def form_valid(self, form: EventForm) -> HttpResponse:
         response = super().form_valid(form)
+        _save_event_cover(self.object, form)
         AuditLog.log("event.created", target=self.object, user=self.staff_user)
         messages.success(self.request, _("Evento creado."))
         return response
@@ -76,6 +92,7 @@ class EventUpdateView(DashboardContextMixin, UpdateView):
 
     def form_valid(self, form: EventForm) -> HttpResponse:
         response = super().form_valid(form)
+        _save_event_cover(self.object, form)
         AuditLog.log(
             "event.updated",
             target=self.object,

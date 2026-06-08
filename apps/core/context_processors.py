@@ -20,10 +20,13 @@ def site(request: HttpRequest) -> dict[str, str | bool]:
     # hardcodear el nombre. Nombre de una sola palabra → prefix vacío.
     name: str = settings.SITE_NAME
     prefix, _, last = name.rpartition(" ")
+    instagram: str = settings.SITE_INSTAGRAM
     return {
         "site_name": name,
         "site_name_prefix": prefix,
         "site_name_last": last or name,
         "site_domain": settings.SITE_DOMAIN,
         "face_search_enabled": settings.FACE_SEARCH_ENABLED,
+        "site_instagram": instagram,
+        "site_instagram_url": f"https://instagram.com/{instagram}" if instagram else "",
     }

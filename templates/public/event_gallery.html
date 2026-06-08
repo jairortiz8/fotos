@@ -18,15 +18,15 @@
   "eventAttendanceMode": "https://schema.org/OfflineEventAttendanceMode",
   {% if event.location %}"location": {"@type": "Place", "name": "{{ event.location|escapejs }}"},{% endif %}
   {% if event.description %}"description": "{{ event.description|escapejs }}",{% endif %}
-  {% if event.cover_image %}"image": "{{ request.scheme }}://{{ request.get_host }}{{ event.cover_image.url }}",{% endif %}
+  {% if event.cover_url %}"image": "{{ request.scheme }}://{{ request.get_host }}{{ event.cover_url }}",{% endif %}
   "url": "{{ request.scheme }}://{{ request.get_host }}{% url 'events:gallery' slug=event.slug %}",
-  "organizer": {"@type": "Organization", "name": "{{ site_name|escapejs }}"}
+  "organizer": {"@type": "Organization", "name": "{% if event.organizer_name %}{{ event.organizer_name|escapejs }}{% else %}{{ site_name|escapejs }}{% endif %}"}
 }
 </script>
 {% endblock %}
 
 {% block body %}
-<div class="min-h-screen pb-24" x-data="photoSelection('{{ event.slug }}')">
+<div class="min-h-screen pb-10">
 
   {# ===== Mini top ===== #}
   <header class="flex items-center justify-between px-5 md:px-10 py-3.5 border-b border-border sticky top-0 bg-ink-0/95 backdrop-blur z-20">
@@ -40,6 +40,12 @@
   {# ===== Event hero ===== #}
   <section class="relative overflow-hidden px-6 md:px-10 pt-9 pb-7"
            style="background: linear-gradient(180deg, #1a1418 0%, #0a0a0b 100%);">
+    {% if event.cover_url %}
+    {# Portada de fondo, atenuada para que el texto siga legible. #}
+    <img src="{{ event.cover_url }}" alt="" aria-hidden="true"
+         class="absolute inset-0 w-full h-full object-cover opacity-25">
+    <div class="absolute inset-0" style="background: linear-gradient(180deg, rgba(10,10,11,0.55) 0%, #0a0a0b 100%);"></div>
+    {% endif %}
     <div class="relative">
       <div class="flex items-center gap-3 mb-4">
         {% if event.status == 'live' %}
@@ -56,6 +62,21 @@
         <span class="w-1 h-1 rounded-full bg-text-3"></span>
         <span><span class="text-text-1">{{ photographer_count|default:event.photographer_count }}</span> {% trans "fotógrafos" %}</span>
       </div>
+      {% if event.has_organizer %}
+      <div class="flex items-center gap-3 mt-4 text-xs text-text-2">
+        {% if event.organizer_name %}<span>{% trans "Organiza" %} <span class="text-text-1">{{ event.organizer_name }}</span></span>{% endif %}
+        {% if event.instagram_url %}
+        <a href="{{ event.instagram_url }}" target="_blank" rel="noopener" class="hover:text-text-1 transition" aria-label="{% trans 'Instagram del organizador' %}">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><path d="M17.5 6.5h.01"/></svg>
+        </a>
+        {% endif %}
+        {% if event.facebook_url %}
+        <a href="{{ event.facebook_url }}" target="_blank" rel="noopener" class="hover:text-text-1 transition" aria-label="{% trans 'Facebook del organizador' %}">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M14 9h3V6h-3c-1.7 0-3 1.3-3 3v2H8v3h3v6h3v-6h2.5l.5-3H14V9z"/></svg>
+        </a>
+        {% endif %}
+      </div>
+      {% endif %}
     </div>
   </section>
 
@@ -110,66 +131,7 @@
     </div>
   {% endif %}
 
-  {# ===== Pill flotante de selección + bottom sheet ===== #}
-  <div x-show="sel.count > 0" x-cloak
-       class="fixed bottom-5 left-1/2 -translate-x-1/2 z-30 flex items-center gap-4 bg-ink-1 border border-border rounded-full py-2 pl-5 pr-2"
-       x-transition>
-    <span class="font-mono text-[13px] font-semibold" x-text="sel.count + ' {% trans "fotos" %}'"></span>
-    <button @click="sheetOpen = true" class="rf-cta !py-2 !px-4">{% trans "Descargar" %}</button>
-  </div>
-
-  {% include "public/_download_sheet.html" %}
+  {# La descarga es por foto: se abre el lightbox y se baja desde ahí (una a la
+     vez, sin ZIP — evita confundir al usuario). #}
 </div>
-{% endblock %}
-
-{% block extra_scripts %}
-<script>
-function photoSelection(eventSlug) {
-  return {
-    sheetOpen: false,
-    zipStatus: null,
-    sel: {
-      _set: new Set(),
-      count: 0,
-      has(id) { return this._set.has(id); },
-      toggle(id) {
-        this._set.has(id) ? this._set.delete(id) : this._set.add(id);
-        this.count = this._set.size;
-        sessionStorage.setItem('rf_sel_' + eventSlug, JSON.stringify([...this._set]));
-      },
-      ids() { return [...this._set]; },
-      clear() { this._set.clear(); this.count = 0; sessionStorage.removeItem('rf_sel_' + eventSlug); },
-      load() {
-        const s = sessionStorage.getItem('rf_sel_' + eventSlug);
-        if (s) { this._set = new Set(JSON.parse(s)); this.count = this._set.size; }
-      },
-    },
-    init() { this.sel.load(); },
-
-    async startDownload() {
-      this.zipStatus = { status: 'pending' };
-      const fd = new FormData();
-      fd.append('ids', this.sel.ids().join(','));
-      const res = await fetch('{% url "downloads:create" %}', { method: 'POST', body: fd });
-      const data = await res.json();
-      if (data.error) { this.zipStatus = { status: 'failed', error: data.error }; return; }
-      this.pollZip(data.download_id);
-    },
-
-    async pollZip(id) {
-      for (let i = 0; i < 60; i++) {
-        await new Promise(r => setTimeout(r, 2000));
-        const res = await fetch(`/descargas/estado/${id}/`);
-        const data = await res.json();
-        this.zipStatus = data;
-        if (data.status === 'ready') {
-          window.location.href = data.download_url;
-          return;
-        }
-        if (data.status === 'failed') return;
-      }
-    },
-  };
-}
-</script>
 {% endblock %}

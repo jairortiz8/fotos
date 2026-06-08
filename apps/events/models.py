@@ -61,6 +61,29 @@ class Event(TimeStampedModel):
         blank=True,
         null=True,
     )
+    # Key de R2 de la portada (webp). El ImageField de arriba quedó obsoleto:
+    # iba al disco LOCAL, que en Railway es efímero y no se sirve → la portada
+    # "se guardaba pero no se mostraba". La portada real vive en R2 bajo esta key
+    # y se sirve por `EventCoverView`. (cover_image se mantiene dormido para no
+    # hacer una migración destructiva; se puede dropear más adelante.)
+    cover_key = models.CharField(_("portada (R2)"), max_length=255, blank=True, default="")
+
+    # --- Organizador (opcional, por evento) ---
+    organizer_name = models.CharField(_("organizador"), max_length=120, blank=True, default="")
+    organizer_instagram = models.CharField(
+        _("Instagram del organizador"),
+        max_length=200,
+        blank=True,
+        default="",
+        help_text=_("Usuario (@evento) o link completo."),
+    )
+    organizer_facebook = models.CharField(
+        _("Facebook del organizador"),
+        max_length=200,
+        blank=True,
+        default="",
+        help_text=_("Usuario o link completo de la página."),
+    )
 
     status = models.CharField(
         _("estado"),
@@ -156,6 +179,29 @@ class Event(TimeStampedModel):
         except Exception:
             return f"/admin/events/event/{self.pk}/change/"
 
+    def cover_url(self) -> str:
+        """URL (relativa) de la portada, o "" si no hay. La sirve `EventCoverView`
+        desde R2 con cache — URL estable y cacheable (a diferencia de una URL
+        firmada que expira y no se cachea). Lleva `?v=<updated_at>` para invalidar
+        el cache cuando se cambia la portada."""
+        if not self.cover_key:
+            return ""
+        url = reverse("events:cover", kwargs={"slug": self.slug})
+        if self.updated_at:
+            return f"{url}?v={int(self.updated_at.timestamp())}"
+        return url
+
+    # --- Redes del organizador ---
+
+    def instagram_url(self) -> str:
+        return _social_url(self.organizer_instagram, "instagram.com")
+
+    def facebook_url(self) -> str:
+        return _social_url(self.organizer_facebook, "facebook.com")
+
+    def has_organizer(self) -> bool:
+        return bool(self.organizer_name or self.organizer_instagram or self.organizer_facebook)
+
     # --- Estado derivado de la política de retención ---
 
     def is_public(self) -> bool:
@@ -187,3 +233,19 @@ class Event(TimeStampedModel):
             return None
         delta = self.archive_until - timezone.now()
         return max(delta.days, 0)
+
+
+def _social_url(value: str, domain: str) -> str:
+    """Normaliza un campo de red social a una URL completa.
+
+    Acepta un link completo (`https://instagram.com/evento`) tal cual, o un
+    usuario (`@evento` / `evento`) y arma `https://<domain>/<usuario>`. Devuelve
+    "" si está vacío.
+    """
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if value.startswith(("http://", "https://")):
+        return value
+    handle = value.lstrip("@").strip("/")
+    return f"https://{domain}/{handle}"

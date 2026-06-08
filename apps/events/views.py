@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from typing import Any
 
 from django.core.cache import cache
 from django.core.paginator import Paginator
 from django.db.models import F
-from django.http import Http404, HttpRequest, HttpResponse
+from django.http import FileResponse, Http404, HttpRequest, HttpResponse, HttpResponseBase
 from django.shortcuts import get_object_or_404, render
 from django.views import View
 from django.views.generic import TemplateView
@@ -202,3 +203,35 @@ def get_similar_bibs_in_event(event: Event, query: str, *, limit: int = 5) -> li
     )
     similar = [v for v in sorted(existing) if v != query]
     return similar[:limit]
+
+
+# ---------------------------------------------------------------------------
+# EventCoverView — sirve la portada del evento desde R2
+# ---------------------------------------------------------------------------
+class EventCoverView(View):
+    """Sirve la portada (webp) desde R2 con cache.
+
+    La portada vive en el bucket PRIVADO; en vez de exponer una URL firmada
+    (que expira y no se cachea), la servimos por acá con `Cache-Control` largo.
+    La URL lleva `?v=<updated_at>` para bustear el cache cuando cambia.
+    """
+
+    http_method_names = ["get"]
+
+    def get(self, request: HttpRequest, slug: str) -> HttpResponseBase:
+        event = get_object_or_404(Event, slug=slug)
+        if not event.cover_key or event.status == EventStatus.DELETED:
+            raise Http404
+
+        from apps.photos.storage import R2NotConfiguredError, R2UploadError, default_storage
+
+        buf = BytesIO()
+        try:
+            default_storage().download_fileobj(event.cover_key, buf)
+        except (R2NotConfiguredError, R2UploadError) as exc:
+            raise Http404 from exc
+        buf.seek(0)
+
+        resp = FileResponse(buf, content_type="image/webp")
+        resp["Cache-Control"] = "public, max-age=604800"  # 7 días (URL versionada)
+        return resp

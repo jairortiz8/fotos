@@ -26,6 +26,15 @@ class EventForm(_DashMixin, forms.ModelForm):
     """Crear / editar evento. Las fechas de retención son opcionales: si quedan
     vacías, el `Event.save()` las calcula (90/180/365 días desde la fecha)."""
 
+    # La portada NO es el ImageField del modelo (que iba a disco efímero): es un
+    # campo de subida que la vista procesa → R2 → `event.cover_key`.
+    cover = forms.ImageField(
+        label=_("Imagen de portada"),
+        required=False,
+        widget=forms.ClearableFileInput(attrs={"accept": "image/*"}),
+        help_text=_("JPG o PNG. Se muestra en la home y arriba de la página del evento."),
+    )
+
     class Meta:
         model = Event
         fields = [
@@ -34,7 +43,9 @@ class EventForm(_DashMixin, forms.ModelForm):
             "date",
             "location",
             "description",
-            "cover_image",
+            "organizer_name",
+            "organizer_instagram",
+            "organizer_facebook",
             "visibility",
             "public_until",
             "searchable_until",
@@ -67,7 +78,8 @@ class EventForm(_DashMixin, forms.ModelForm):
         super().__init__(*args, **kwargs)  # type: ignore[arg-type]
         self.fields["location"].required = False
         self.fields["description"].required = False
-        self.fields["cover_image"].required = False
+        for f in ("organizer_name", "organizer_instagram", "organizer_facebook"):
+            self.fields[f].required = False
         # Estado del evento: exponemos sólo los que el admin setea a mano. "Galería
         # abierta" = público + buscable. Los automáticos (sólo búsqueda, archivado,
         # borrado) los maneja el cron de retención; si el evento YA está en uno, lo
