@@ -151,6 +151,27 @@ def extract_faces(image_path: Path) -> list[FaceDetection]:
     return detections
 
 
+def _pad_for_detection(img: np.ndarray) -> np.ndarray:
+    """Escala + agrega borde a una imagen para que el detector la "vea".
+
+    RetinaFace (det_10g) necesita CONTEXTO alrededor de la cara y un tamaño
+    mínimo. Cuando el usuario sube un recorte AJUSTADO (la cara llena todo el
+    cuadro, sin margen) o muy chico, el detector devuelve 0 caras aunque la
+    cara esté ahí. Escalamos el lado menor a ~640px y agregamos un borde del
+    35% (replicando los pixeles del borde) para darle ese contexto. Sólo se
+    usa como FALLBACK cuando la detección directa no encontró nada.
+    """
+    import cv2
+
+    h, w = img.shape[:2]
+    scale = max(1.0, 640.0 / max(1, min(h, w)))
+    if scale > 1.0:
+        img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
+    bh = int(img.shape[0] * 0.35)
+    bw = int(img.shape[1] * 0.35)
+    return cv2.copyMakeBorder(img, bh, bh, bw, bw, cv2.BORDER_REPLICATE)
+
+
 def embedding_from_bytes(image_bytes: bytes) -> np.ndarray:
     """Extrae el embedding de UN selfie desde bytes EN MEMORIA.
 
@@ -165,13 +186,28 @@ def embedding_from_bytes(image_bytes: bytes) -> np.ndarray:
     if img is None:
         raise InvalidImageError("No se pudo decodificar la imagen.")
 
-    faces = get_face_model().get(img)
+    model = get_face_model()
+    faces = model.get(img)
+
+    # Fallback: el usuario suele recortar la cara muy justa (sin margen) o la
+    # imagen es chica → el detector devuelve 0 caras. Reintentamos con la
+    # imagen escalada + con borde para darle contexto. (Un selfie normal pasa
+    # por la rama de arriba y nunca llega acá — sin cambio de comportamiento.)
+    used_fallback = False
+    if not faces:
+        faces = model.get(_pad_for_detection(img))
+        used_fallback = True
+
     if not faces:
         raise NoFaceDetectedError("No se detectó ninguna cara en el selfie.")
-    if len(faces) > 1:
+    # En el flujo normal, varias caras es ambiguo (¿a quién busco?) → error.
+    # En el fallback (recorte ajustado de UNA cara) elegimos la más prominente:
+    # los reintentos con borde pueden generar detecciones espurias en el borde.
+    if len(faces) > 1 and not used_fallback:
         raise MultipleFacesDetectedError(
             f"Se detectaron {len(faces)} caras; subí una selfie con una sola cara."
         )
 
+    face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
     logger.info("embedding_from_bytes: embedding extracted dims=%d", EMBEDDING_DIM)
-    return normalize_embedding(faces[0].embedding)
+    return normalize_embedding(face.embedding)
