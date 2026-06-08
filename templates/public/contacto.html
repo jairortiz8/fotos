@@ -8,32 +8,28 @@
   <h1 class="font-display font-bold text-3xl mb-2">{% trans "Contacto" %}</h1>
   <p class="text-text-3 text-sm mb-8">{% trans "Estamos para ayudarte." %}</p>
 
-  <p class="text-text-2 leading-relaxed mb-3">
-    {% blocktrans %}¿Tenés una consulta, querés reportar una foto o pedir que borremos tus datos? Acá te contamos cómo.{% endblocktrans %}
+  <p class="text-text-2 leading-relaxed mb-6">
+    {% blocktrans %}¿Tenés una consulta, querés reportar una foto o sos organizador y querés tus fotos acá? Escribinos por Instagram — te respondemos por mensaje directo.{% endblocktrans %}
   </p>
 
-  <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "Para borrar tus fotos" %}</h2>
-  <p class="text-text-2 leading-relaxed mb-3">
-    {% blocktrans %}Si querés que borremos tus fotos y datos, podés hacerlo vos mismo de forma inmediata. Subís una selfie, encontramos tus fotos en todos los eventos y las borramos.{% endblocktrans %}
-  </p>
-  <div class="rf-card p-5">
-    <p class="text-text-1 font-display font-bold text-base mb-1">{% trans "Borrá tus fotos al instante" %}</p>
-    <p class="text-text-2 leading-relaxed mb-3">
-      {% trans "Es un proceso automático y gratuito. No necesitás cuenta." %}
-    </p>
-    <a href="{% url 'privacy:delete_my_data' %}" class="rf-cta">{% trans "Borrar mis datos" %}</a>
+  {% if site_instagram %}
+  <div class="rf-card p-5 flex items-center justify-between gap-4 flex-wrap">
+    <div class="flex items-center gap-3">
+      <span class="text-data">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><path d="M17.5 6.5h.01"/></svg>
+      </span>
+      <div>
+        <p class="text-text-1 font-display font-bold text-base leading-tight">{% trans "Instagram" %}</p>
+        <p class="font-mono text-data text-sm">@{{ site_instagram }}</p>
+      </div>
+    </div>
+    <a href="{{ site_instagram_url }}" target="_blank" rel="noopener" class="rf-cta">{% trans "Enviar mensaje" %}</a>
   </div>
+  {% endif %}
 
-  <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "Reportar una foto u otras consultas" %}</h2>
+  <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "Reportar una foto" %}</h2>
   <p class="text-text-2 leading-relaxed mb-3">
-    {% blocktrans %}Si aparecés en una foto y no querés que esté publicada, o si tenés cualquier otra consulta, escribinos por WhatsApp o por email:{% endblocktrans %}
-  </p>
-  <ul class="list-disc pl-5 text-text-2 space-y-1.5 mb-3">
-    <li>{% trans "WhatsApp:" %} <span class="font-mono text-data">[{% trans "contacto del organizador" %}]</span></li>
-    <li>{% trans "Email:" %} <span class="font-mono text-data">[{% trans "contacto del organizador" %}]</span></li>
-  </ul>
-  <p class="text-text-2 leading-relaxed mb-3">
-    {% blocktrans %}Te respondemos lo antes posible.{% endblocktrans %}
+    {% blocktrans %}Si aparecés en una foto y no querés que esté publicada, mandanos un mensaje por Instagram con el nombre del evento y tu número de dorsal, y la quitamos.{% endblocktrans %}
   </p>
 
   <a href="{% url 'core:index' %}" class="text-data hover:underline text-sm">{% trans "← Volver al inicio" %}</a>

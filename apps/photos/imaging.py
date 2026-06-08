@@ -67,9 +67,22 @@ def _exif_to_dict(img: Image.Image) -> dict[str, Any]:
     if not raw:
         return {}
     result: dict[str, Any] = {}
+    # IFD principal: Make, Model, Orientation y `DateTime` (= hora en que se
+    # GUARDÓ/exportó el archivo, NO el disparo).
     for tag_id, value in raw.items():
         tag = ExifTags.TAGS.get(tag_id, str(tag_id))
         result[tag] = _make_json_safe(value)
+    # Sub-IFD de EXIF: acá viven `DateTimeOriginal` (hora del DISPARO),
+    # OffsetTime, ISO, FNumber, ExposureTime, FocalLength, LensModel, etc.
+    # Sin leerlo, la hora caía a `DateTime` (la de exportado → "hora rara") y los
+    # datos de cámara salían vacíos en el drawer de aprobación.
+    try:
+        sub_ifd = raw.get_ifd(ExifTags.IFD.Exif)
+    except (AttributeError, KeyError, OSError, ValueError):
+        sub_ifd = {}
+    for tag_id, value in sub_ifd.items():
+        tag = ExifTags.TAGS.get(tag_id, str(tag_id))
+        result.setdefault(tag, _make_json_safe(value))  # no pisar el IFD principal
     return result
 
 
@@ -94,19 +107,29 @@ def _safe_int(value: Any) -> int | None:
 
 
 def _parse_capture_time(exif: dict[str, Any]) -> Any:
-    """EXIF guarda fechas tipo `'2026:05:14 09:23:11'`."""
-    raw = exif.get("DateTimeOriginal") or exif.get("DateTime")
+    """Hora del DISPARO. EXIF la guarda como `'2026:05:14 09:23:11'` en hora local
+    de la cámara, SIN zona. La interpretamos como hora de El Salvador (el
+    `TIME_ZONE` del proyecto) — el `OffsetTime` del EXIF se ignora a propósito
+    porque las cámaras suelen traerlo mal configurado (ej. `-12:00`).
+
+    Prioridad: DateTimeOriginal (disparo) > DateTimeDigitized > DateTime (guardado).
+    """
+    from datetime import datetime
+
+    from django.utils import timezone
+
+    raw = exif.get("DateTimeOriginal") or exif.get("DateTimeDigitized") or exif.get("DateTime")
     if not raw:
         return None
     try:
-        from datetime import datetime
-
         dt = datetime.strptime(str(raw).strip(), "%Y:%m:%d %H:%M:%S")
-        from django.utils import timezone
-
-        return timezone.make_aware(dt) if timezone.is_naive(dt) else dt
     except (ValueError, TypeError):
         return None
+    if timezone.is_naive(dt):
+        # make_aware con el TIME_ZONE configurado (El Salvador), no el "activo",
+        # para que sea correcto también en el worker de Celery.
+        return timezone.make_aware(dt, timezone.get_default_timezone())
+    return dt
 
 
 def _format_focal(value: Any) -> str:

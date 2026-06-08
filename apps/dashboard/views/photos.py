@@ -117,7 +117,9 @@ class PendingPhotosView(DashboardContextMixin, ListView):
         if rng in ("7d", "30d"):
             days = 7 if rng == "7d" else 30
             qs = qs.filter(created_at__gte=timezone.now() - timedelta(days=days))
-        return qs.order_by("created_at")
+        # Cronológico por hora de disparo (las que no tienen capture_time van al
+        # final); el admin revisa en orden de carrera.
+        return qs.order_by("capture_time", "created_at")
 
     def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
         ctx = super().get_context_data(**kwargs)

@@ -87,9 +87,9 @@ class EventGalleryView(View):
     # ----- Galería completa -----
     def _render_gallery(self, request: HttpRequest, event: Event) -> HttpResponse:
         photos_qs = (
-            Photo.objects.filter(event=event, status=PhotoStatus.APPROVED)
-            .prefetch_related("bibs")
-            .order_by("-capture_time", "-created_at")
+            Photo.objects.filter(event=event, status=PhotoStatus.APPROVED).prefetch_related("bibs")
+            # Cronológico: la primera foto tomada (hora de disparo) primero.
+            .order_by("capture_time", "created_at")
         )
         paginator = Paginator(photos_qs, GALLERY_PAGE_SIZE)
         page = paginator.get_page(request.GET.get("page", 1))

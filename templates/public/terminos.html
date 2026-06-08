@@ -35,13 +35,17 @@
     {% blocktrans with site_name=site_name %}Las fotos pertenecen a los fotógrafos y organizadores de cada evento. {{ site_name }} solo las distribuye para que las puedas encontrar y descargar; no reclama propiedad sobre ellas.{% endblocktrans %}
   </p>
 
+  <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "Consentimiento del participante" %}</h2>
+  <p class="text-text-2 leading-relaxed mb-3">
+    {% blocktrans with site_name=site_name %}Al inscribirte y participar en el evento, aceptaste las bases del organizador, que incluyen ser fotografiado durante la competencia y que esas fotos puedan publicarse en esta plataforma para que los participantes las encuentren y descarguen. {{ site_name }} muestra y distribuye esas fotos en nombre del organizador y del fotógrafo.{% endblocktrans %}
+  </p>
+
   <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "Privacidad y datos" %}</h2>
   <p class="text-text-2 leading-relaxed mb-3">
-    {% blocktrans %}Tu privacidad nos importa. Te recomendamos leer nuestra política de privacidad para entender qué datos procesamos y por cuánto tiempo. Si en algún momento querés que borremos tus fotos y datos, podés hacerlo vos mismo en cualquier momento.{% endblocktrans %}
+    {% blocktrans %}Tu privacidad nos importa. Te recomendamos leer nuestra política de privacidad para entender qué datos procesamos y por cuánto tiempo.{% endblocktrans %}
   </p>
   <ul class="list-disc pl-5 text-text-2 space-y-1.5 mb-3">
     <li><a href="{% url 'privacy:policy' %}" class="text-data hover:underline">{% trans "Política de privacidad" %}</a></li>
-    <li><a href="{% url 'privacy:delete_my_data' %}" class="text-data hover:underline">{% trans "Borrar mis datos" %}</a></li>
   </ul>
 
   <h2 class="font-display font-bold text-lg mt-8 mb-3">{% trans "Cambios en estos términos" %}</h2>

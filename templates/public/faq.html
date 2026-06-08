@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Preguntas frecuentes" %} · {{ site_name }}{% endblock %}
+
+{% block body %}
+<main class="max-w-2xl mx-auto px-6 py-12">
+  <h1 class="font-display font-bold text-3xl mb-2">{% trans "Preguntas frecuentes" %}</h1>
+  <p class="text-text-3 text-sm mb-8">{% blocktrans with site_name=site_name %}Todo lo que necesitás saber para encontrar y descargar tus fotos en {{ site_name }}.{% endblocktrans %}</p>
+
+  <div class="space-y-7">
+
+    <div>
+      <h2 class="font-display font-bold text-base mb-1.5">{% trans "¿Cuánto cuesta?" %}</h2>
+      <p class="text-text-2 leading-relaxed">{% trans "Nada. Las fotos son 100% gratuitas. No necesitás crear una cuenta ni dejar tus datos para buscar ni para descargar." %}</p>
+    </div>
+
+    <div>
+      <h2 class="font-display font-bold text-base mb-1.5">{% trans "¿Cómo encuentro mis fotos?" %}</h2>
+      <p class="text-text-2 leading-relaxed">{% trans "Entrá al evento y buscá por tu número de dorsal. En algunos eventos también podés subir una selfie y el sistema encuentra las fotos donde aparecés." %}</p>
+    </div>
+
+    <div>
+      <h2 class="font-display font-bold text-base mb-1.5">{% trans "Busqué mi dorsal y no aparezco, ¿qué hago?" %}</h2>
+      <p class="text-text-2 leading-relaxed">{% trans "El número se detecta de forma automática y a veces se lee mal (por el ángulo, la ropa o el movimiento). Probá con variantes parecidas (por ejemplo 0 y 8, 1 y 7) o buscá por selfie si está disponible. Si igual no las encontrás, contactanos." %}</p>
+    </div>
+
+    <div>
+      <h2 class="font-display font-bold text-base mb-1.5">{% trans "¿Las fotos tienen marca de agua?" %}</h2>
+      <p class="text-text-2 leading-relaxed">{% trans "Lo que ves en la galería es una vista previa con marca de agua. Cuando descargás, bajás la foto original en alta resolución y SIN marca de agua." %}</p>
+    </div>
+
+    <div>
+      <h2 class="font-display font-bold text-base mb-1.5">{% trans "¿Cómo descargo una foto?" %}</h2>
+      <p class="text-text-2 leading-relaxed">{% trans "Tocá la foto para abrirla y después tocá «Descargar». Se baja de a una, en alta resolución. Así elegís solo las tuyas." %}</p>
+    </div>
+
+    {% if face_search_enabled %}
+    <div>
+      <h2 class="font-display font-bold text-base mb-1.5">{% trans "Si subo una selfie, ¿qué pasa con mi privacidad?" %}</h2>
+      {% url 'privacy:policy' as policy_url %}
+      <p class="text-text-2 leading-relaxed">{% blocktrans %}Tu selfie se usa solo para buscar tus fotos en ese momento y se descarta enseguida — no la guardamos. Podés leer más en la <a href="{{ policy_url }}" class="text-data hover:underline">política de privacidad</a>.{% endblocktrans %}</p>
+    </div>
+    {% endif %}
+
+    <div>
+      <h2 class="font-display font-bold text-base mb-1.5">{% trans "¿Por cuánto tiempo están disponibles las fotos?" %}</h2>
+      <p class="text-text-2 leading-relaxed">{% trans "La galería pública del evento queda abierta un tiempo después de la carrera. Pasado ese plazo, todavía podés buscar tus fotos por dorsal o selfie durante un período más. Después, el evento se archiva." %}</p>
+    </div>
+
+    {% url 'core:contacto' as contacto_url %}
+    <div>
+      <h2 class="font-display font-bold text-base mb-1.5">{% trans "No quiero que una foto mía esté publicada." %}</h2>
+      <p class="text-text-2 leading-relaxed">{% blocktrans %}Escribinos por la <a href="{{ contacto_url }}" class="text-data hover:underline">página de contacto</a> con el evento y tu número de dorsal, y la quitamos.{% endblocktrans %}</p>
+    </div>
+
+    <div>
+      <h2 class="font-display font-bold text-base mb-1.5">{% trans "Soy fotógrafo u organizador, ¿cómo subo fotos?" %}</h2>
+      <p class="text-text-2 leading-relaxed">{% blocktrans %}Contactanos por la <a href="{{ contacto_url }}" class="text-data hover:underline">página de contacto</a>. Te pasamos un link privado de subida; no necesitás cuenta.{% endblocktrans %}</p>
+    </div>
+
+  </div>
+
+  <a href="{% url 'core:index' %}" class="text-data hover:underline text-sm inline-block mt-10">{% trans "← Volver al inicio" %}</a>
+</main>
+{% endblock %}

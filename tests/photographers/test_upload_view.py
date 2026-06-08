@@ -97,8 +97,9 @@ def test_upload_increments_photos_uploaded(
 ) -> None:
     link, raw_token = link_token
     url = reverse("photographer:upload", args=[raw_token])
-    client.post(url, {"file": _jpeg_upload("a.jpg")})
-    client.post(url, {"file": _jpeg_upload("b.jpg")})
+    # Contenido distinto en cada una (si no, la 2da sería duplicada y no contaría).
+    client.post(url, {"file": _jpeg_upload("a.jpg", "1042")})
+    client.post(url, {"file": _jpeg_upload("b.jpg", "2042")})
     link.refresh_from_db()
     assert link.photos_uploaded == 2
 
@@ -186,3 +187,34 @@ def test_upload_no_file_returns_400(client: Client, link_token, r2_bucket) -> No
     response = client.post(reverse("photographer:upload", args=[raw_token]), {})
     assert response.status_code == 400
     assert response.json()["error"] == "no_file"
+
+
+@pytest.mark.django_db
+def test_upload_duplicate_content_returns_409(
+    client: Client, link_token, r2_bucket, no_celery_dispatch
+) -> None:
+    """Subir la MISMA foto dos veces al mismo evento → la 2da es 'duplicate' (409)."""
+    link, raw_token = link_token
+    url = reverse("photographer:upload", args=[raw_token])
+
+    r1 = client.post(url, {"file": _jpeg_upload("a.jpg", "1042")})
+    assert r1.status_code == 200
+
+    r2 = client.post(url, {"file": _jpeg_upload("b.jpg", "1042")})  # mismo contenido
+    assert r2.status_code == 409
+    assert r2.json()["error"] == "duplicate"
+    assert r2.json()["duplicate_of"] == r1.json()["id"]
+    assert Photo.objects.filter(event=link.event).count() == 1
+
+
+@pytest.mark.django_db
+def test_upload_different_content_not_flagged_duplicate(
+    client: Client, link_token, r2_bucket, no_celery_dispatch
+) -> None:
+    """Fotos distintas (otro contenido) NO se marcan como duplicadas."""
+    link, raw_token = link_token
+    url = reverse("photographer:upload", args=[raw_token])
+
+    assert client.post(url, {"file": _jpeg_upload("a.jpg", "1042")}).status_code == 200
+    assert client.post(url, {"file": _jpeg_upload("b.jpg", "7777")}).status_code == 200
+    assert Photo.objects.filter(event=link.event).count() == 2

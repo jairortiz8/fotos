@@ -203,6 +203,20 @@ class PhotographerUploadView(View):
                 status=400,
             )
 
+        # Duplicados: hash del contenido. Si esta MISMA foto ya está en el evento
+        # (no borrada), no la volvemos a subir → el portal la marca "Repetida".
+        upload.seek(0)
+        content_hash = hashlib.sha256(upload.read()).hexdigest()
+        upload.seek(0)
+        duplicate_id = (
+            Photo.objects.filter(event=link.event, content_hash=content_hash)
+            .exclude(status=PhotoStatus.DELETED)
+            .values_list("id", flat=True)
+            .first()
+        )
+        if duplicate_id is not None:
+            return JsonResponse({"error": "duplicate", "duplicate_of": duplicate_id}, status=409)
+
         photo = Photo.objects.create(
             event=link.event,
             photographer_link=link,
@@ -212,6 +226,7 @@ class PhotographerUploadView(View):
             width=0,
             height=0,
             file_size=upload.size or 0,
+            content_hash=content_hash,
             status=PhotoStatus.UPLOADING,
         )
 

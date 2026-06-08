@@ -67,6 +67,11 @@ class Photo(TimeStampedModel):
     width = models.PositiveIntegerField(_("ancho (px)"))
     height = models.PositiveIntegerField(_("alto (px)"))
     file_size = models.PositiveBigIntegerField(_("tamaño (bytes)"))
+    # sha256 del contenido del archivo, para detectar duplicados dentro de un
+    # evento (la misma foto subida dos veces). "" en fotos viejas sin hash.
+    content_hash = models.CharField(
+        _("hash de contenido"), max_length=64, blank=True, default="", db_index=True
+    )
 
     # --- EXIF ---
     capture_time = models.DateTimeField(_("fecha de captura"), null=True, blank=True)

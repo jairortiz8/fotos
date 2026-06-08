@@ -41,4 +41,9 @@ urlpatterns = [
         TemplateView.as_view(template_name="public/contacto.html"),
         name="contacto",
     ),
+    path(
+        "preguntas/",
+        TemplateView.as_view(template_name="public/faq.html"),
+        name="faq",
+    ),
 ]

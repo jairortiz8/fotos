@@ -116,6 +116,7 @@
       {% trans "Sin cuentas. Sin costo. Solo tus fotos." %}
     </div>
     <div class="flex flex-wrap gap-4 mt-5 text-[12px] text-text-2">
+      <a href="{% url 'core:faq' %}" class="hover:text-text-1 transition">{% trans "Preguntas" %}</a>
       <a href="{% url 'privacy:policy' %}" class="hover:text-text-1 transition">{% trans "Privacidad" %}</a>
       <a href="{% url 'core:terminos' %}" class="hover:text-text-1 transition">{% trans "Términos" %}</a>
       <a href="{% url 'core:contacto' %}" class="hover:text-text-1 transition">{% trans "Contacto" %}</a>

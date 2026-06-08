@@ -37,13 +37,14 @@ def test_gallery_paginates_60_per_page(client: Client) -> None:
 
 
 @pytest.mark.django_db
-def test_gallery_orders_by_capture_time_desc(client: Client) -> None:
+def test_gallery_orders_by_capture_time_asc(client: Client) -> None:
+    """Cronológico: la primera foto tomada (hora de disparo) aparece primero."""
     event = EventFactory(status=EventStatus.LIVE)
     older = ApprovedPhotoFactory(event=event, capture_time=timezone.now() - dt.timedelta(hours=2))
     newer = ApprovedPhotoFactory(event=event, capture_time=timezone.now())
     response = client.get(reverse("events:gallery", args=[event.slug]))
     photos = list(response.context["photos"])
-    assert photos.index(newer) < photos.index(older)
+    assert photos.index(older) < photos.index(newer)
 
 
 @pytest.mark.django_db

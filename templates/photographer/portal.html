@@ -104,9 +104,10 @@
     <div class="mt-8" x-show="queue.length > 0" x-cloak>
       <div class="flex justify-between items-baseline mb-3.5 gap-3 flex-wrap">
         <h3 class="font-display font-bold text-base md:text-lg">{% trans "Tus subidas" %}</h3>
-        <span class="font-mono text-[11px] inline-flex items-center gap-2.5">
-          <span x-show="counts.ready" x-cloak class="font-semibold" style="color:#10B981"><span x-text="counts.ready"></span> {% trans "listas" %}</span>
+        <span class="font-mono text-[11px] inline-flex items-center gap-2.5 flex-wrap">
+          <span x-show="counts.ready" x-cloak class="font-semibold" style="color:#10B981"><span x-text="counts.ready"></span> {% trans "subidas" %}</span>
           <span x-show="counts.busy" x-cloak style="color:#00D4FF"><span x-text="counts.busy"></span> {% trans "en curso" %}</span>
+          <span x-show="counts.dup" x-cloak style="color:#8a8a93"><span x-text="counts.dup"></span> {% trans "repetidas" %}</span>
           <span x-show="counts.error" x-cloak class="font-semibold" style="color:#EF4444"><span x-text="counts.error"></span> {% trans "con error" %}</span>
         </span>
       </div>
@@ -126,13 +127,16 @@
                 {# Estado SIEMPRE visible (también en mobile) con ícono ✓ / ✗ #}
                 <span class="shrink-0 inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.04em] font-bold px-2 py-0.5 rounded-full"
                       :style="`background: ${item.color}1A; color: ${item.color};`">
-                  <template x-if="item.statusKey === 'ready'">
+                  <template x-if="item.statusKey === 'uploaded'">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
                   </template>
                   <template x-if="item.statusKey === 'error'">
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
                   </template>
-                  <template x-if="item.statusKey === 'uploading' || item.statusKey === 'processing'">
+                  <template x-if="item.statusKey === 'duplicate'">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>
+                  </template>
+                  <template x-if="item.statusKey === 'uploading'">
                     <span class="w-1.5 h-1.5 rounded-full animate-pulse" :style="`background: ${item.color};`"></span>
                   </template>
                   <span x-text="item.status"></span>
@@ -215,15 +219,16 @@ function uploader(opts) {
       return formatBytes(bytes);
     },
 
-    // Resumen para el encabezado: cuántas listas / en curso / con error.
+    // Resumen para el encabezado: subidas (en el server) / en curso / repetidas / error.
     get counts() {
-      let ready = 0, busy = 0, error = 0;
+      let ready = 0, busy = 0, error = 0, dup = 0;
       for (const i of this.queue) {
-        if (i.statusKey === "ready") ready++;
+        if (i.statusKey === "uploaded") ready++;
         else if (i.statusKey === "error") error++;
+        else if (i.statusKey === "duplicate") dup++;
         else busy++;
       }
-      return { ready, busy, error };
+      return { ready, busy, error, dup };
     },
 
     onPick(ev) {
@@ -297,17 +302,27 @@ function uploader(opts) {
       };
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) {
+          // Éxito real para el fotógrafo: la foto LLEGÓ al servidor. No hace falta
+          // esperar al worker (que con 600 fotos tarda mucho). El thumbnail/“Lista”
+          // se completan por polling si el worker termina mientras mira.
           item.progress = 1;
-          item.color = "#00D4FF";
-          item.status = "{% trans 'Procesando' %}";
-          item.statusKey = "processing";
+          item.color = "#10B981";
+          item.status = "{% trans 'Subida' %}";
+          item.statusKey = "uploaded";
           item.polls = 0;
           try {
             item.photoId = JSON.parse(xhr.responseText).id;
           } catch (e) {
-            /* sin id: queda en "Procesando" sin poder pollear */
+            /* sin id: queda "Subida" sin thumbnail */
           }
           this.startPolling();
+          this._slotDone();
+        } else if (xhr.status === 409) {
+          // Repetida: ya existe en el evento. NO es error y NO se reintenta.
+          item.progress = 1;
+          item.color = "#8a8a93";
+          item.status = "{% trans 'Repetida' %}";
+          item.statusKey = "duplicate";
           this._slotDone();
         } else if (xhr.status === 429 && item.retries < 8) {
           // Rate limit del server: liberamos el slot y reintentamos con backoff,
@@ -346,8 +361,12 @@ function uploader(opts) {
     },
 
     pollPending() {
+      // "Subida" ya es éxito. El polling sólo intenta MEJORARLO: traer el
+      // thumbnail cuando el worker termina, o detectar una falla. Sólo pollea
+      // subidas sin thumbnail todavía y sin pasarse del límite. Si el worker
+      // tarda (lote de 600), la foto queda en "Subida" verde — nunca pegada.
       const pending = this.queue.filter(
-        (i) => i.statusKey === "processing" && i.photoId && i.polls < 40
+        (i) => i.statusKey === "uploaded" && i.photoId && !i.thumb && i.polls < 60
       );
       if (pending.length === 0) {
         clearInterval(this._pollTimer);
@@ -364,12 +383,7 @@ function uploader(opts) {
           (data.photos || []).forEach((p) => {
             const item = this.queue.find((i) => i.photoId === p.id);
             if (!item) return;
-            if (p.status === "pending_review" || p.status === "approved") {
-              item.color = "#10B981";
-              item.status = "{% trans 'Lista' %}";
-              item.statusKey = "ready";
-              if (p.thumb_url) item.thumb = p.thumb_url;
-            } else if (p.status === "processing_failed") {
+            if (p.status === "processing_failed") {
               item.color = "#EF4444";
               item.status = "{% trans 'Falló' %}";
               item.statusKey = "error";
@@ -377,8 +391,12 @@ function uploader(opts) {
               item.color = "#EF4444";
               item.status = "{% trans 'Rechazada' %}";
               item.statusKey = "error";
+            } else if (p.thumb_url) {
+              // Worker terminó: mostramos el thumbnail real y “Lista”.
+              item.thumb = p.thumb_url;
+              item.status = "{% trans 'Lista' %}";
             }
-            // processing/uploading → sigue en "Procesando", se vuelve a pollear
+            // sin thumbnail aún → sigue "Subida", se vuelve a pollear
           });
         })
         .catch(() => {});

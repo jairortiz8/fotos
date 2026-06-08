@@ -221,3 +221,36 @@ def test_make_json_safe_handles_bytes() -> None:
     assert _make_json_safe(b"hello") == "hello"
     assert _make_json_safe(123) == 123
     assert _make_json_safe(None) is None
+
+
+def test_parse_capture_time_prefers_original_over_datetime() -> None:
+    """DateTimeOriginal (disparo) gana sobre DateTime (hora de exportado)."""
+    from apps.photos.imaging import _parse_capture_time
+
+    exif = {
+        "DateTimeOriginal": "2026:03:14 05:51:21",  # disparo (madrugada)
+        "DateTime": "2026:03:16 20:51:47",  # exportado 2 días después
+    }
+    ct = _parse_capture_time(exif)
+    assert ct is not None
+    # Se interpreta como hora El Salvador (UTC-6) → 05:51 local = 11:51 UTC.
+    assert ct.utcoffset().total_seconds() == -6 * 3600
+    assert (ct.year, ct.month, ct.day, ct.hour, ct.minute) == (2026, 3, 14, 5, 51)
+
+
+def test_parse_capture_time_falls_back_to_datetime() -> None:
+    from apps.photos.imaging import _parse_capture_time
+
+    ct = _parse_capture_time({"DateTime": "2026:05:14 09:23:11"})
+    assert ct is not None
+    assert (ct.month, ct.day, ct.hour, ct.minute) == (5, 14, 9, 23)
+
+
+def test_parse_capture_time_uses_el_salvador_timezone() -> None:
+    """La hora de cámara (naive) se ancla a El Salvador, no a UTC."""
+    from apps.photos.imaging import _parse_capture_time
+
+    ct = _parse_capture_time({"DateTimeOriginal": "2026:01:01 12:00:00"})
+    assert ct is not None
+    # 12:00 El Salvador (UTC-6) == 18:00 UTC.
+    assert ct.astimezone(__import__("datetime").timezone.utc).hour == 18
