@@ -61,6 +61,13 @@
           <td>
             <div class="flex items-center justify-end gap-2">
               <a href="{% url 'dashboard:event_detail' slug=link.event.slug %}?tab=fotos" class="rf-ghost" style="padding:.35rem .7rem; font-size:11px">{% trans "Ver fotos" %}</a>
+              {# Regenerar: el token no se puede re-ver (se guarda hasheado), así que
+                 para reenviar un link se genera uno nuevo. Muestra el modal con la URL + QR. #}
+              <form hx-post="{% url 'dashboard:regenerate_link' pk=link.id %}" hx-target="#modal-root" hx-swap="innerHTML"
+                    hx-confirm="{% trans '¿Regenerar el link? Se crea uno nuevo y el anterior deja de funcionar.' %}">
+                {% csrf_token %}
+                <button type="submit" class="rf-ghost" style="padding:.35rem .7rem; font-size:11px">{% trans "Regenerar" %}</button>
+              </form>
               {% if link.is_active %}
                 <form method="post" action="{% url 'dashboard:revoke_link' pk=link.id %}"
                       onsubmit="return confirm('{% trans "¿Revocar este link? El fotógrafo ya no podrá subir." %}')">
@@ -97,4 +104,6 @@
   {% endif %}
 
 </div>
+{# Donde se renderiza el modal de "Regenerar" (URL + QR del link nuevo). #}
+<div id="modal-root"></div>
 {% endblock %}

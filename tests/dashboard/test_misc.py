@@ -109,6 +109,17 @@ def test_photographer_list_shows_approval_pct(admin_client: Client) -> None:
     assert links[0].approval_pct == 75  # 3 aprobadas / 4 subidas
 
 
+@pytest.mark.django_db
+def test_photographer_list_has_regenerate_button(admin_client: Client) -> None:
+    """El link no se puede re-ver (hash), así que la lista ofrece 'Regenerar'."""
+    link = PhotographerLinkFactory()
+    resp = admin_client.get(reverse("dashboard:photographer_list"))
+    assert resp.status_code == 200
+    assert b"Regenerar" in resp.content
+    assert reverse("dashboard:regenerate_link", kwargs={"pk": link.id}).encode() in resp.content
+    assert b'id="modal-root"' in resp.content  # el modal del link nuevo tiene dónde ir
+
+
 # --- Settings ---
 @pytest.mark.django_db
 def test_settings_change_password(admin) -> None:  # type: ignore[no-untyped-def]
