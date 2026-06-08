@@ -47,8 +47,9 @@ env = environ.Env(
     R2_BUCKET_NAME=(str, ""),
     R2_ENDPOINT_URL=(str, ""),
     R2_PUBLIC_BASE_URL=(str, ""),
-    # Upload limits (Fase 2)
-    PHOTO_UPLOAD_MAX_MB=(int, 15),
+    # Upload limits (Fase 2). 40 MB: las fotos pro de alta resolución (Canon R,
+    # 45MP) pesan 20-30 MB → con 15 MB fallaban por tamaño.
+    PHOTO_UPLOAD_MAX_MB=(int, 40),
     # Búsqueda por selfie (Fase 4). El modelo buffalo_l necesita >1GB de RAM
     # al cargar. En el dyno de prod (capado a 1GB) se deshabilita poniendo esto
     # en False hasta subir la RAM o cambiar de modelo (decisión pendiente).

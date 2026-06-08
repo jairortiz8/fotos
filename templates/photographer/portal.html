@@ -104,12 +104,16 @@
     <div class="mt-8" x-show="queue.length > 0" x-cloak>
       <div class="flex justify-between items-baseline mb-3.5 gap-3 flex-wrap">
         <h3 class="font-display font-bold text-base md:text-lg">{% trans "Tus subidas" %}</h3>
-        <span class="font-mono text-[11px] inline-flex items-center gap-2.5 flex-wrap">
-          <span x-show="counts.ready" x-cloak class="font-semibold" style="color:#10B981"><span x-text="counts.ready"></span> {% trans "subidas" %}</span>
-          <span x-show="counts.busy" x-cloak style="color:#00D4FF"><span x-text="counts.busy"></span> {% trans "en curso" %}</span>
-          <span x-show="counts.dup" x-cloak style="color:#8a8a93"><span x-text="counts.dup"></span> {% trans "repetidas" %}</span>
-          <span x-show="counts.error" x-cloak class="font-semibold" style="color:#EF4444"><span x-text="counts.error"></span> {% trans "con error" %}</span>
-        </span>
+        <div class="flex items-center gap-3 flex-wrap">
+          <span class="font-mono text-[11px] inline-flex items-center gap-2.5 flex-wrap">
+            <span x-show="counts.ready" x-cloak class="font-semibold" style="color:#10B981"><span x-text="counts.ready"></span> {% trans "subidas" %}</span>
+            <span x-show="counts.busy" x-cloak style="color:#00D4FF"><span x-text="counts.busy"></span> {% trans "en curso" %}</span>
+            <span x-show="counts.dup" x-cloak style="color:#8a8a93"><span x-text="counts.dup"></span> {% trans "repetidas" %}</span>
+            <span x-show="counts.error" x-cloak class="font-semibold" style="color:#EF4444"><span x-text="counts.error"></span> {% trans "con error" %}</span>
+          </span>
+          <button x-show="counts.error" x-cloak type="button" @click="retryFailed()"
+                  class="rf-cta !py-1.5 !px-3.5 text-[11px]">{% trans "Reintentar las que fallaron" %}</button>
+        </div>
       </div>
 
       <div class="bg-ink-1 border border-border rounded-xl overflow-hidden">
@@ -301,7 +305,8 @@ function uploader(opts) {
         if (e.lengthComputable) item.progress = e.loaded / e.total;
       };
       xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
+        const s = xhr.status;
+        if (s >= 200 && s < 300) {
           // Éxito real para el fotógrafo: la foto LLEGÓ al servidor. No hace falta
           // esperar al worker (que con 600 fotos tarda mucho). El thumbnail/“Lista”
           // se completan por polling si el worker termina mientras mira.
@@ -317,40 +322,85 @@ function uploader(opts) {
           }
           this.startPolling();
           this._slotDone();
-        } else if (xhr.status === 409) {
+        } else if (s === 409) {
           // Repetida: ya existe en el evento. NO es error y NO se reintenta.
           item.progress = 1;
           item.color = "#8a8a93";
           item.status = "{% trans 'Repetida' %}";
           item.statusKey = "duplicate";
           this._slotDone();
-        } else if (xhr.status === 429 && item.retries < 8) {
-          // Rate limit del server: liberamos el slot y reintentamos con backoff,
-          // así en lotes grandes no se pierde ninguna foto.
-          item.retries += 1;
-          item.color = "#F59E0B";
-          item.status = "{% trans 'Reintentando' %}";
-          item.statusKey = "uploading";
-          item.progress = 0;
-          this._active = Math.max(0, this._active - 1);
-          setTimeout(() => {
-            this._pending.push(item);
-            this.pump();
-          }, 3000 + item.retries * 1500);
+        } else if (s === 429 || s >= 500) {
+          // Transitorio (server ocupado / error temporal) → se reintenta solo.
+          this._retryTransient(item);
         } else {
-          item.color = "#EF4444";
-          item.status = "{% trans 'Error' %}";
-          item.statusKey = "error";
-          this._slotDone();
+          // Permanente (formato, tamaño, link): reintentar no cambia nada.
+          this._failPermanent(item, xhr);
         }
       };
-      xhr.onerror = () => {
-        item.color = "#EF4444";
-        item.status = "{% trans 'Sin conexión' %}";
-        item.statusKey = "error";
-        this._slotDone();
-      };
+      // Corte de red → transitorio (no es culpa de la foto): se reintenta solo.
+      xhr.onerror = () => this._retryTransient(item);
       xhr.send(fd);
+    },
+
+    // Reintenta una falla TRANSITORIA (red, server ocupado, 5xx) con backoff.
+    // La gracia: que el fotógrafo NO tenga que cazar la que falló. Tras varios
+    // intentos la deja en error, pero "Reintentar las que fallaron" la re-encola.
+    _retryTransient(item) {
+      this._active = Math.max(0, this._active - 1);
+      if (item.retries >= 6) {
+        item.color = "#EF4444";
+        item.status = "{% trans 'Error de red' %}";
+        item.statusKey = "error";
+      } else {
+        item.retries += 1;
+        item.color = "#F59E0B";
+        item.status = "{% trans 'Reintentando' %}";
+        item.statusKey = "uploading";
+        item.progress = 0;
+        setTimeout(() => {
+          this._pending.push(item);
+          this.pump();
+        }, 2000 + item.retries * 2000);
+      }
+      this.pump();
+    },
+
+    // Falla PERMANENTE: mostramos el motivo claro (no se reintenta sola).
+    _failPermanent(item, xhr) {
+      let err = "";
+      try {
+        err = (JSON.parse(xhr.responseText) || {}).error || "";
+      } catch (e) {
+        /* sin json */
+      }
+      item.status =
+        err === "invalid_format"
+          ? "{% trans 'Solo JPG' %}"
+          : err === "file_too_large"
+            ? "{% trans 'Muy grande' %}"
+            : err === "photo_limit_reached"
+              ? "{% trans 'Límite alcanzado' %}"
+              : xhr.status === 410
+                ? "{% trans 'Link vencido' %}"
+                : "{% trans 'Error' %}";
+      item.color = "#EF4444";
+      item.statusKey = "error";
+      this._slotDone();
+    },
+
+    // Re-encola TODAS las que quedaron en error (un toque, sin buscar por nombre).
+    retryFailed() {
+      this.queue
+        .filter((i) => i.statusKey === "error" && i.file)
+        .forEach((i) => {
+          i.retries = 0;
+          i.progress = 0;
+          i.status = "{% trans 'En cola' %}";
+          i.statusKey = "queued";
+          i.color = "#8a8a93";
+          this._pending.push(i);
+        });
+      this.pump();
     },
 
     // Poll del estado REAL de procesamiento (en vez de adivinar con un timeout).
