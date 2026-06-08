@@ -15,18 +15,33 @@
     </div>
   </header>
 
-  {# ===== Hero ===== #}
+  {# ===== Hero (B: foto real nítida + tratamiento de marca + zoom lento) ===== #}
+  <style>
+    @keyframes rf-kenburns { from { transform: scale(1.04); } to { transform: scale(1.14); } }
+    .rf-hero-img { animation: rf-kenburns 26s ease-in-out infinite alternate; transform-origin: 60% 55%; }
+    @media (prefers-reduced-motion: reduce) { .rf-hero-img { animation: none; transform: scale(1.04); } }
+    /* Scrim para legibilidad del texto: en desktop oscurece la izquierda y deja
+       vibrante la derecha; en mobile (texto a todo el ancho) oscurece más parejo. */
+    .rf-hero-scrim { background: linear-gradient(90deg, rgba(10,10,11,0.95) 0%, rgba(10,10,11,0.78) 30%, rgba(10,10,11,0.34) 54%, rgba(10,10,11,0.06) 80%, transparent 100%); }
+    @media (max-width: 767px) {
+      .rf-hero-scrim { background: linear-gradient(175deg, rgba(10,10,11,0.92) 0%, rgba(10,10,11,0.86) 42%, rgba(10,10,11,0.55) 66%, rgba(10,10,11,0.78) 100%); }
+    }
+  </style>
   <section class="px-4 md:px-14 pt-4 md:pt-14">
-    <div class="relative overflow-hidden rounded-3xl border border-border md:border-0 md:rounded-none px-6 md:px-0 py-12 md:py-20"
-         style="background: linear-gradient(180deg, #131316 0%, #0a0a0b 100%);">
-      {# Fondo: amanecer de carrera con corredores difuminados (decorativo). #}
-      <img src="{% static 'img/hero-bg.webp' %}" alt="" aria-hidden="true" decoding="async"
-           class="absolute inset-0 w-full h-full object-cover pointer-events-none" style="opacity:.9;">
-      {# Oscurece la izquierda (texto) y deja ver el amanecer a la derecha. #}
+    <div class="relative overflow-hidden rounded-3xl border border-border md:border-0 md:rounded-none px-6 md:px-0 py-14 md:py-28"
+         style="background:#0a0a0b;">
+      {# Foto stock de carrera (Pexels, licencia libre), foco suave + zoom lento. #}
+      <img src="{% static 'img/hero-race.webp' %}" alt="" aria-hidden="true" decoding="async"
+           class="rf-hero-img absolute inset-0 w-full h-full object-cover pointer-events-none"
+           style="object-position: 50% 70%;">
+      {# Scrim para el texto (responsive: ver .rf-hero-scrim en el <style>). #}
+      <div class="rf-hero-scrim absolute inset-0 pointer-events-none"></div>
+      {# Brillo naranja de marca, sutil, arriba a la derecha. #}
       <div class="absolute inset-0 pointer-events-none"
-           style="background: linear-gradient(90deg, rgba(10,10,11,0.94) 0%, rgba(10,10,11,0.72) 40%, rgba(10,10,11,0.15) 100%);"></div>
+           style="background: radial-gradient(120% 100% at 88% 18%, rgba(252,82,0,0.28), transparent 55%); mix-blend-mode: soft-light;"></div>
+      {# Fade abajo para la transición al contenido. #}
       <div class="absolute inset-0 pointer-events-none"
-           style="background: linear-gradient(180deg, transparent 55%, rgba(10,10,11,0.9) 100%);"></div>
+           style="background: linear-gradient(180deg, transparent 62%, rgba(10,10,11,0.80) 100%);"></div>
 
       <div class="relative max-w-3xl">
         {% if live_count %}
@@ -80,6 +95,13 @@
              style="background: linear-gradient(135deg, #1f1f23, #0e0e10);">
           {% if event.cover_url %}
             <img src="{{ event.cover_url }}" alt="{{ event.name }}" loading="lazy" decoding="async" class="w-full h-full object-cover">
+          {% else %}
+            {# Sin portada: placeholder de marca (nombre del evento + brillo naranja). #}
+            <div class="absolute inset-0 flex items-center justify-center px-5 text-center"
+                 style="background: radial-gradient(130% 130% at 112% -12%, rgba(252,82,0,0.22), transparent 56%), linear-gradient(135deg, #1b1519 0%, #0d0d0f 100%);">
+              <span class="font-display font-black uppercase tracking-tight leading-[0.95] text-lg md:text-xl"
+                    style="color: rgba(250,250,250,0.16);">{{ event.name }}</span>
+            </div>
           {% endif %}
           {% if event.status == 'live' %}
           <div class="absolute top-2.5 left-2.5">
