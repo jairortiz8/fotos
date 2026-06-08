@@ -121,11 +121,24 @@ class R2Storage:
             logger.exception("R2 download failed for key %s", key)
             raise R2UploadError(str(exc)) from exc
 
-    def get_signed_url(self, key: str, expires_in: int = PRESIGNED_URL_DEFAULT_TTL) -> str:
-        """URL firmada para `GET`. Default 15 min (CLAUDE.md §3)."""
+    def get_signed_url(
+        self,
+        key: str,
+        expires_in: int = PRESIGNED_URL_DEFAULT_TTL,
+        download_filename: str | None = None,
+    ) -> str:
+        """URL firmada para `GET`. Default 15 min (CLAUDE.md §3).
+
+        Si `download_filename` está seteado, el navegador fuerza la DESCARGA
+        (Content-Disposition: attachment) con ese nombre — se usa para bajar el
+        ORIGINAL en alta resolución (no el preview con watermark).
+        """
+        params: dict[str, str] = {"Bucket": self.bucket, "Key": key}
+        if download_filename:
+            params["ResponseContentDisposition"] = f'attachment; filename="{download_filename}"'
         return self.client.generate_presigned_url(
             "get_object",
-            Params={"Bucket": self.bucket, "Key": key},
+            Params=params,
             ExpiresIn=expires_in,
         )
 

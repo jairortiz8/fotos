@@ -57,7 +57,7 @@
       <span class="text-[12px] md:text-[13px] text-text-1 truncate">{{ photographer_name }}</span>
     </div>
   </div>
-  <a href="{{ preview_url }}" target="_blank" rel="noopener" class="rf-cta shrink-0" aria-label="{% trans 'Descargar' %}">
+  <a href="{% url 'downloads:photo' photo_id=photo.id %}" class="rf-cta shrink-0" aria-label="{% trans 'Descargar en alta resolución' %}">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
     <span class="hidden sm:inline">{% trans "Descargar" %}</span>
   </a>

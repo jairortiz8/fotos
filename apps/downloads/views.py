@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from django.http import HttpRequest, HttpResponse, JsonResponse
-from django.shortcuts import get_object_or_404, render
+from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
 from apps.core.utils import check_zip_rate_limit, get_client_ip, hash_ip
 from apps.downloads.models import MAX_PHOTOS_PER_ZIP, ZipDownload, ZipStatus
+from apps.events.models import EventVisibility
 from apps.photos.models import Photo, PhotoStatus
+from apps.photos.storage import R2NotConfiguredError, default_storage
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -78,6 +80,36 @@ class ZipStatusView(View):
                 "error": download.error_message,
             }
         )
+
+
+# ---------------------------------------------------------------------------
+# Descarga de UNA foto (original, alta resolución, sin watermark)
+# ---------------------------------------------------------------------------
+class PhotoDownloadView(View):
+    """Redirige a una URL firmada del ORIGINAL con `attachment` → fuerza la
+    descarga en alta resolución (no el preview de 1200px con watermark)."""
+
+    http_method_names = ["get"]
+
+    def get(self, request: HttpRequest, photo_id: int) -> HttpResponse:
+        photo = get_object_or_404(
+            Photo.objects.select_related("event"),
+            id=photo_id,
+            status=PhotoStatus.APPROVED,
+        )
+        event = photo.event
+        if event.visibility == EventVisibility.PRIVATE or not event.is_searchable():
+            raise Http404
+        if not photo.original_key:
+            raise Http404
+        filename = photo.original_filename or f"foto_{photo.id}.jpg"
+        try:
+            url = default_storage().get_signed_url(
+                photo.original_key, expires_in=900, download_filename=filename
+            )
+        except R2NotConfiguredError as exc:
+            raise Http404 from exc
+        return redirect(url)
 
 
 # ---------------------------------------------------------------------------
