@@ -270,6 +270,67 @@ def test_detect_bibs_exhaustive_runs_both_engines_and_upscaled_pass(tmp_path, mo
     assert calls["easy"] == 2  # corre SIEMPRE en exhaustivo + sobre la agrandada
 
 
+def test_detect_bibs_exhaustive_tiles_large_photos(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
+    """Fotos de cámara (grandes): el exhaustivo corre Paddle también por
+    cuadrantes con solape y remapea los bboxes a la imagen completa."""
+    from PIL import Image
+
+    from apps.ml import ocr
+
+    img_path = tmp_path / "big.jpg"
+    Image.new("RGB", (4000, 3000), "white").save(img_path, "JPEG", quality=60)
+
+    paddle_paths: list[str] = []
+
+    def fake_paddle(p):  # type: ignore[no-untyped-def]
+        paddle_paths.append(str(p))
+        if str(p) == str(img_path):
+            return []  # en la imagen completa el dorsal "no se ve" (chico)
+        # En cada cuadrante sí: detección centrada, bbox relativo AL TILE.
+        return [
+            ocr.BibDetection(
+                number="42",
+                confidence=0.9,
+                bbox={"x": 0.5, "y": 0.5, "w": 0.1, "h": 0.1},
+                engine="paddle",
+            )
+        ]
+
+    monkeypatch.setattr(ocr, "run_paddle_ocr", fake_paddle)
+    monkeypatch.setattr(ocr, "run_easy_ocr", lambda _p: [])
+
+    result = ocr.detect_bibs(img_path, exhaustive=True)
+    # 4000px >= umbral → NO se agranda, SÍ se tilea: full + 4 cuadrantes.
+    assert len(paddle_paths) == 5
+    assert {d.number for d in result} == {"42"}  # dedup entre tiles
+    bbox = result[0].bbox
+    # Remapeado al lienzo completo: dentro de [0,1] y más chico que en el tile.
+    assert 0.0 <= bbox["x"] <= 1.0 and 0.0 <= bbox["y"] <= 1.0
+    assert 0.0 < bbox["w"] < 0.1 and 0.0 < bbox["h"] < 0.1
+
+
+def test_detect_bibs_exhaustive_small_photo_upscales_not_tiles(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
+    """Fotos chicas: se agrandan (upscale), no se tilean."""
+    from PIL import Image
+
+    from apps.ml import ocr
+
+    img_path = tmp_path / "small.jpg"
+    Image.new("RGB", (800, 600), "white").save(img_path, "JPEG", quality=60)
+
+    calls = {"paddle": 0}
+
+    def fake_paddle(_p):  # type: ignore[no-untyped-def]
+        calls["paddle"] += 1
+        return []
+
+    monkeypatch.setattr(ocr, "run_paddle_ocr", fake_paddle)
+    monkeypatch.setattr(ocr, "run_easy_ocr", lambda _p: [])
+
+    ocr.detect_bibs(img_path, exhaustive=True)
+    assert calls["paddle"] == 2  # original + copia agrandada; sin tiles
+
+
 # ---------------------------------------------------------------------------
 # BibDetection dataclass
 # ---------------------------------------------------------------------------

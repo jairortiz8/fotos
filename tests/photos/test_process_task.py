@@ -133,6 +133,26 @@ def test_run_ocr_with_no_detections(tmp_path: Path) -> None:
 
 
 @pytest.mark.django_db
+def test_process_photo_enqueues_ocr_exhaustive_per_setting(tmp_path: Path, settings) -> None:  # type: ignore[no-untyped-def]
+    """OCR_EXHAUSTIVE_ON_UPLOAD gobierna el modo del OCR post-subida."""
+    for flag in (True, False):
+        settings.OCR_EXHAUSTIVE_ON_UPLOAD = flag
+        photo = PhotoFactory(
+            original_key=f"events/x/originals/exh-{flag}.jpg", status=PhotoStatus.UPLOADING
+        )
+        with (
+            patch(
+                "apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)
+            ),
+            patch("apps.photos.tasks.generate_preview", return_value="p.webp"),
+            patch("apps.photos.tasks.generate_thumbnail", return_value="t.webp"),
+            patch("apps.photos.tasks.run_ocr_on_photo.delay") as mock_ocr,
+        ):
+            process_photo.apply(args=[photo.id]).get()
+        mock_ocr.assert_called_once_with(photo.id, exhaustive=flag)
+
+
+@pytest.mark.django_db
 def test_run_ocr_exhaustive_passes_flag_and_clears_cache(tmp_path: Path) -> None:
     """El modo exhaustivo pasa exhaustive=True a detect_bibs y, al terminar,
     limpia el flag de cache `ocr_rerun:<id>` (corta el "re-detectando…")."""

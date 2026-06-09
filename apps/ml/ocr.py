@@ -194,11 +194,21 @@ def detect_bibs(image_path: Path, *, exhaustive: bool = False) -> list[BibDetect
         detections += run_easy_ocr(image_path)
 
     if exhaustive:
-        # Pasada extra sobre una copia agrandada → recall de dorsales chicos.
+        # Pasada extra sobre una copia agrandada → recall de dorsales chicos en
+        # fotos CHICAS (la copia sólo se genera si el original es < ~2600px).
         with _upscaled_copy(image_path) as big:
             if big is not None:
                 detections += run_paddle_ocr(big)
                 detections += run_easy_ocr(big)
+        # Pasada extra por CUADRANTES en fotos GRANDES (cámara pro). Los engines
+        # reescalan internamente la imagen a un lado fijo (~960px Paddle): en una
+        # foto de 6000px un dorsal lejano les queda de ~20px e ilegible; en el
+        # cuadrante queda ~2x más grande y se vuelve legible. Sólo Paddle por
+        # tile (Easy es ~2x más lento y ya corrió sobre la imagen completa).
+        with _detection_tiles(image_path) as tiles:
+            for tile_path, geom in tiles:
+                for det in run_paddle_ocr(tile_path):
+                    detections.append(_remap_tile_detection(det, geom))
 
     # Dedup conservando la mayor confidence por número (independiente del engine).
     best_by_number: dict[str, BibDetection] = {}
@@ -240,6 +250,69 @@ def _upscaled_copy(image_path: Path, *, target_long_side: int = 2600) -> Iterato
         if tmp_path is not None:
             with suppress(OSError):
                 tmp_path.unlink(missing_ok=True)
+
+
+# Fotos con lado largo >= este umbral se parten en cuadrantes (las menores se
+# agrandan con _upscaled_copy — mismo umbral para que no quede un hueco).
+_TILE_MIN_LONG_SIDE = 2600
+# Solape entre cuadrantes: un dorsal justo al medio cae COMPLETO en al menos
+# un tile (un dorsal típico ocupa <10% del ancho de la foto; 15% lo cubre).
+_TILE_OVERLAP = 0.15
+
+
+@contextmanager
+def _detection_tiles(image_path: Path) -> Iterator[list[tuple[Path, dict[str, float]]]]:
+    """Parte una foto GRANDE en 4 cuadrantes con solape (tempfiles, se borran al
+    salir) para una pasada OCR extra. Devuelve [] si la foto no llega al umbral
+    o si algo falla (best-effort). Cada item es (path_del_tile, geometría en px
+    para remapear los bboxes del tile a coordenadas de la imagen completa)."""
+    tiles: list[tuple[Path, dict[str, float]]] = []
+    try:
+        from PIL import Image
+
+        with Image.open(image_path) as img:
+            fw, fh = img.width, img.height
+            if max(fw, fh) >= _TILE_MIN_LONG_SIDE:
+                rgb = img.convert("RGB")
+                tw = int(fw * (0.5 + _TILE_OVERLAP / 2))
+                th = int(fh * (0.5 + _TILE_OVERLAP / 2))
+                for ox in (0, fw - tw):
+                    for oy in (0, fh - th):
+                        crop = rgb.crop((ox, oy, ox + tw, oy + th))
+                        fd, raw = tempfile.mkstemp(suffix=".jpg", prefix="rf_ocr_tile_")
+                        os.close(fd)
+                        path = Path(raw)
+                        crop.save(path, "JPEG", quality=92)
+                        geom = {"ox": ox, "oy": oy, "tw": tw, "th": th, "fw": fw, "fh": fh}
+                        tiles.append((path, {k: float(v) for k, v in geom.items()}))
+    except Exception:
+        logger.exception("Tiles OCR fallaron: %s", image_path)
+        for path, _geom in tiles:
+            with suppress(OSError):
+                path.unlink(missing_ok=True)
+        tiles = []
+    try:
+        yield tiles
+    finally:
+        for path, _geom in tiles:
+            with suppress(OSError):
+                path.unlink(missing_ok=True)
+
+
+def _remap_tile_detection(det: BibDetection, geom: dict[str, float]) -> BibDetection:
+    """Convierte el bbox relativo-al-tile en relativo-a-la-imagen-completa."""
+    b = det.bbox
+    return BibDetection(
+        number=det.number,
+        confidence=det.confidence,
+        engine=det.engine,
+        bbox={
+            "x": (geom["ox"] + b.get("x", 0.0) * geom["tw"]) / geom["fw"],
+            "y": (geom["oy"] + b.get("y", 0.0) * geom["th"]) / geom["fh"],
+            "w": b.get("w", 0.0) * geom["tw"] / geom["fw"],
+            "h": b.get("h", 0.0) * geom["th"] / geom["fh"],
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

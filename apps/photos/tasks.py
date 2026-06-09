@@ -115,10 +115,12 @@ def process_photo(self, photo_id: int) -> dict[str, str | int]:
         ]
     )
 
-    # OCR siempre. Reconocimiento facial SOLO si está habilitado: en prod
-    # (FACE_PROCESSING_ENABLED=False) el worker no carga InsightFace, así el
-    # procesamiento queda liviano (preview/thumbnail + OCR). Ver config/settings.
-    run_ocr_on_photo.delay(photo.id)
+    # OCR siempre (exhaustivo si OCR_EXHAUSTIVE_ON_UPLOAD — mejor recall de
+    # dorsales a costa de más tiempo de OCR; el preview ya salió, así que la
+    # foto queda aprobable igual de rápido). Reconocimiento facial SOLO si está
+    # habilitado: en prod (FACE_PROCESSING_ENABLED=False) el worker no carga
+    # InsightFace, así el procesamiento queda liviano. Ver config/settings.
+    run_ocr_on_photo.delay(photo.id, exhaustive=settings.OCR_EXHAUSTIVE_ON_UPLOAD)
     if settings.FACE_PROCESSING_ENABLED:
         run_face_recognition_on_photo.delay(photo.id)
 

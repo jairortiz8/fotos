@@ -89,6 +89,14 @@ FACE_SEARCH_ENABLED = env("FACE_SEARCH_ENABLED")
 # aparte si algún día se quiere extraer embeddings sin exponer la búsqueda.
 FACE_PROCESSING_ENABLED = env.bool("FACE_PROCESSING_ENABLED", default=FACE_SEARCH_ENABLED)
 
+# OCR exhaustivo automático en cada subida (pedido de Jair: el OCR normal
+# perdía dorsales y le tocaba cargarlos a mano). Corre ambos engines + pasadas
+# extra (copia agrandada en fotos chicas / cuadrantes en fotos de cámara).
+# Más lento por foto (~15-20s vs ~5s) pero el preview va por otra task → las
+# fotos quedan aprobables igual de rápido; sólo el dorsal completo tarda más.
+# Apagable por env si algún día el ruido extra molesta más de lo que aporta.
+OCR_EXHAUSTIVE_ON_UPLOAD = env.bool("OCR_EXHAUSTIVE_ON_UPLOAD", default=True)
+
 # Blur automático de caras de menores en el preview público (parte del paso
 # facial). Decisión de Jair: APAGADO en prod (MINOR_BLUR_ENABLED=false) — quiere
 # que el blur nunca aparezca. El indexado de embeddings (búsqueda por selfie)
