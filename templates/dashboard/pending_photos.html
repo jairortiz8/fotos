@@ -132,7 +132,7 @@ function approvalQueue(){
     move(d){ const n=this.ids().length; if(!n) return; this.focused = this.focused<0 ? 0 : Math.max(0, Math.min(n-1, this.focused+d));
              document.getElementById('card-'+this.focusedId())?.scrollIntoView({block:'nearest'}) },
     openDrawer(id){ this.drawerOpen=true;
-      fetch(`/dashboard/fotos/${id}/`, {headers:{'HX-Request':'true'}}).then(r=>r.text()).then(h=>{
+      fetch(`/dashboard/fotos/${id}/?mode=queue`, {headers:{'HX-Request':'true'}}).then(r=>r.text()).then(h=>{
         const el=document.getElementById('drawer-content'); el.innerHTML=h;
         if(window.htmx) htmx.process(el);
         if(window.Alpine) Alpine.initTree(el);

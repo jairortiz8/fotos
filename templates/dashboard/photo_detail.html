@@ -3,17 +3,62 @@
 {% block title %}{{ photo.original_filename }} · {{ site_name }}{% endblock %}
 
 {% block dashboard_content %}
-<div x-data="{ drawerOpen: true }"
-     x-init="$watch('drawerOpen', v => { if(!v) window.location='{% url 'dashboard:pending_photos' %}' })"
+{% url 'dashboard:event_detail' slug=photo.event.slug as event_url %}
+<div x-data="{
+       drawerOpen: true,
+       backUrl: '{{ event_url }}?tab=fotos',
+       prevUrl: '{% if prev_id %}{% url 'dashboard:photo_detail' pk=prev_id %}{% endif %}',
+       nextUrl: '{% if next_id %}{% url 'dashboard:photo_detail' pk=next_id %}{% endif %}',
+       go(url){ if(url){ window.location = url } }
+     }"
+     x-init="$watch('drawerOpen', v => { if(!v) window.location = backUrl })"
+     @keydown.left.window="if(!['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) go(prevUrl)"
+     @keydown.right.window="if(!['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) go(nextUrl)"
      class="lg:flex lg:h-[calc(100vh-1px)]">
 
-  {# Foto grande #}
-  <div class="flex-1 grid place-items-center p-6 lg:p-10 bg-ink-0 min-h-[40vh]">
+  {# Foto grande + navegación #}
+  <div class="relative flex-1 grid place-items-center p-6 lg:p-10 bg-ink-0 min-h-[40vh]">
+
+    {# Volver al evento #}
+    <a href="{{ event_url }}?tab=fotos"
+       class="absolute top-4 left-4 z-10 flex items-center gap-2 text-[12px] text-text-2 hover:text-text-1 transition">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+      {% trans "Volver al evento" %}
+    </a>
+
+    {# Posición en el evento #}
+    {% if nav_position %}
+    <span class="absolute top-4 right-4 z-10 rf-num text-[11px] text-text-3">{{ nav_position }} / {{ nav_total }}</span>
+    {% endif %}
+
+    {# Flecha anterior #}
+    {% if prev_id %}
+    <a href="{% url 'dashboard:photo_detail' pk=prev_id %}" aria-label="{% trans 'Anterior' %}"
+       class="absolute left-2 lg:left-4 top-1/2 -translate-y-1/2 z-10 w-11 h-11 rounded-full grid place-items-center bg-ink-2/80 border border-border text-text-1 hover:bg-ink-2 transition">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+    </a>
+    {% endif %}
+
+    {# Flecha siguiente #}
+    {% if next_id %}
+    <a href="{% url 'dashboard:photo_detail' pk=next_id %}" aria-label="{% trans 'Siguiente' %}"
+       class="absolute right-2 lg:right-4 top-1/2 -translate-y-1/2 z-10 w-11 h-11 rounded-full grid place-items-center bg-ink-2/80 border border-border text-text-1 hover:bg-ink-2 transition">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+    </a>
+    {% endif %}
+
     <div class="relative aspect-[4/5] max-h-[78vh] w-full max-w-[520px] rounded-md overflow-hidden bg-ink-2">
       {% if photo.preview_key %}<img src="{{ photo.get_preview_url }}" alt="" class="w-full h-full object-contain">{% endif %}
-      <div class="absolute inset-0 grid place-items-center pointer-events-none">
-        <span class="font-display font-bold text-text-1/15 text-3xl -rotate-[30deg] tracking-widest">{% trans "PENDING REVIEW" %}</span>
-      </div>
+      {# Marca de agua de estado SOLO si no está aprobada (aprobada = limpia). #}
+      {% if photo.status == 'pending_review' %}
+        <div class="absolute inset-0 grid place-items-center pointer-events-none">
+          <span class="font-display font-bold text-text-1/15 text-3xl -rotate-[30deg] tracking-widest">{% trans "PENDIENTE" %}</span>
+        </div>
+      {% elif photo.status == 'rejected' %}
+        <div class="absolute inset-0 grid place-items-center pointer-events-none">
+          <span class="font-display font-bold text-3xl -rotate-[30deg] tracking-widest" style="color: rgba(239,68,68,0.28);">{% trans "RECHAZADA" %}</span>
+        </div>
+      {% endif %}
     </div>
   </div>
 

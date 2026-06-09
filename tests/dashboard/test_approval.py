@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 from django.test import Client
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.core.models import AuditLog
 from apps.photos.models import Bib, BibSource, Photo, PhotoStatus
@@ -13,6 +16,7 @@ from tests.factories import (
     BibFactory,
     EventFactory,
     PendingPhotoFactory,
+    PhotoFactory,
 )
 
 
@@ -154,3 +158,134 @@ def test_photo_detail_minor_warning(admin_client: Client) -> None:
     resp = admin_client.get(reverse("dashboard:photo_detail", kwargs={"pk": photo.id}))
     assert resp.status_code == 200
     assert resp.context["has_minor"] is True
+
+
+# ---------------------------------------------------------------------------
+# Detalle consciente del estado (aprobada / pendiente / rechazada)
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_photo_detail_approved_shows_as_published(admin_client: Client) -> None:
+    """Una foto aprobada se identifica como aprobada (no estampa "PENDIENTE")."""
+    photo = ApprovedPhotoFactory()
+    resp = admin_client.get(reverse("dashboard:photo_detail", kwargs={"pk": photo.id}))
+    assert resp.status_code == 200
+    assert resp.context["status_tone"] == "green"
+    assert b"Publicada en la galer" in resp.content  # footer de aprobada
+    assert b"PENDIENTE" not in resp.content  # ya no estampa el watermark de pendiente
+
+
+@pytest.mark.django_db
+def test_photo_detail_pending_shows_watermark(admin_client: Client) -> None:
+    photo = PendingPhotoFactory()
+    resp = admin_client.get(reverse("dashboard:photo_detail", kwargs={"pk": photo.id}))
+    assert resp.context["status_tone"] == "amber"
+    assert b"PENDIENTE" in resp.content
+
+
+# ---------------------------------------------------------------------------
+# Transiciones desde el detalle (no solo desde "pendiente")
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_approve_rejected_photo_restores(admin_client: Client) -> None:
+    photo = PhotoFactory(status=PhotoStatus.REJECTED)
+    resp = admin_client.post(reverse("dashboard:approve_photo", kwargs={"pk": photo.id}))
+    assert resp.status_code == 200
+    photo.refresh_from_db()
+    assert photo.status == PhotoStatus.APPROVED
+
+
+@pytest.mark.django_db
+def test_reject_approved_photo_unpublishes(admin_client: Client) -> None:
+    photo = ApprovedPhotoFactory()
+    resp = admin_client.post(reverse("dashboard:reject_photo", kwargs={"pk": photo.id}))
+    assert resp.status_code == 200
+    photo.refresh_from_db()
+    assert photo.status == PhotoStatus.REJECTED
+
+
+@pytest.mark.django_db
+def test_approve_uploading_returns_400(admin_client: Client) -> None:
+    """Aprobar una foto que todavía se está procesando no tiene sentido → 400."""
+    photo = PhotoFactory(status=PhotoStatus.UPLOADING)
+    resp = admin_client.post(reverse("dashboard:approve_photo", kwargs={"pk": photo.id}))
+    assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Dorsales sobre fotos YA aprobadas (el caso de uso de Jair)
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_add_bib_on_approved_photo(admin_client: Client) -> None:
+    photo = ApprovedPhotoFactory()
+    resp = admin_client.post(
+        reverse("dashboard:add_bib", kwargs={"pk": photo.id}), {"number": "555"}
+    )
+    assert resp.status_code == 200
+    assert Bib.objects.filter(photo=photo, number="555", rejected=False).exists()
+
+
+@pytest.mark.django_db
+def test_remove_bib_on_approved_photo(admin_client: Client) -> None:
+    photo = ApprovedPhotoFactory()
+    bib = BibFactory(photo=photo)
+    resp = admin_client.post(reverse("dashboard:remove_bib", kwargs={"pk": bib.id}))
+    assert resp.status_code == 200
+    bib.refresh_from_db()
+    assert bib.rejected is True
+
+
+# ---------------------------------------------------------------------------
+# Navegación entre fotos del evento + comportamiento de la cola
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_photo_detail_nav_between_event_photos(admin_client: Client) -> None:
+    event = EventFactory()
+    p1 = ApprovedPhotoFactory(event=event, capture_time=timezone.now() - dt.timedelta(hours=2))
+    p2 = ApprovedPhotoFactory(event=event, capture_time=timezone.now() - dt.timedelta(hours=1))
+    p3 = ApprovedPhotoFactory(event=event, capture_time=timezone.now())
+    resp = admin_client.get(reverse("dashboard:photo_detail", kwargs={"pk": p2.id}))
+    assert resp.status_code == 200
+    assert resp.context["prev_id"] == p1.id
+    assert resp.context["next_id"] == p3.id
+    assert resp.context["nav_position"] == 2
+    assert resp.context["nav_total"] == 3
+
+
+@pytest.mark.django_db
+def test_photo_detail_first_photo_has_no_prev(admin_client: Client) -> None:
+    event = EventFactory()
+    p1 = ApprovedPhotoFactory(event=event, capture_time=timezone.now() - dt.timedelta(hours=1))
+    ApprovedPhotoFactory(event=event, capture_time=timezone.now())
+    resp = admin_client.get(reverse("dashboard:photo_detail", kwargs={"pk": p1.id}))
+    assert resp.context["prev_id"] is None
+    assert resp.context["next_id"] is not None
+
+
+@pytest.mark.django_db
+def test_queue_mode_approve_advances_to_next_pending(admin_client: Client) -> None:
+    event = EventFactory()
+    p1 = PendingPhotoFactory(event=event)
+    p2 = PendingPhotoFactory(event=event)
+    Photo.objects.filter(pk=p1.pk).update(created_at=timezone.now() - dt.timedelta(minutes=5))
+    Photo.objects.filter(pk=p2.pk).update(created_at=timezone.now())
+    resp = admin_client.post(
+        reverse("dashboard:approve_photo", kwargs={"pk": p1.id}),
+        {"mode": "queue"},
+        HTTP_HX_REQUEST="true",
+    )
+    assert resp.status_code == 200  # renderiza el drawer de la siguiente pendiente
+    assert str(p2.id) in resp.content.decode()
+    p1.refresh_from_db()
+    assert p1.status == PhotoStatus.APPROVED
+
+
+@pytest.mark.django_db
+def test_detail_mode_approve_triggers_page_refresh(admin_client: Client) -> None:
+    """Sin mode=queue, una acción HTMX recarga la página (HX-Refresh) para que se
+    vea el nuevo estado en la imagen + el drawer."""
+    photo = PendingPhotoFactory()
+    resp = admin_client.post(
+        reverse("dashboard:approve_photo", kwargs={"pk": photo.id}), HTTP_HX_REQUEST="true"
+    )
+    assert resp.status_code == 204
+    assert resp["HX-Refresh"] == "true"

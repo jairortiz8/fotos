@@ -64,8 +64,22 @@ def _next_pending(photo: Photo) -> Photo | None:
     )
 
 
+def _status_display(photo: Photo) -> tuple[str, bool]:
+    """(tono del pill, pulse) según el estado de la foto. La etiqueta sale de
+    `photo.get_status_display()` (ya traducida)."""
+    tone_pulse: dict[str, tuple[str, bool]] = {
+        PhotoStatus.APPROVED: ("green", False),
+        PhotoStatus.PENDING_REVIEW: ("amber", True),
+        PhotoStatus.REJECTED: ("red", False),
+        PhotoStatus.PROCESSING_FAILED: ("red", False),
+        PhotoStatus.PROCESSING: ("neutral", True),
+        PhotoStatus.UPLOADING: ("neutral", True),
+    }
+    return tone_pulse.get(photo.status, ("neutral", False))
+
+
 def _next_or_done(request: HttpRequest, photo: Photo) -> HttpResponse:
-    """Tras aprobar/rechazar vía HTMX: cargar el siguiente pendiente o volver."""
+    """Cola (modo queue) vía HTMX: cargar el siguiente pendiente o volver."""
     if not request.htmx:  # type: ignore[attr-defined]
         return JsonResponse({"success": True, "photo_id": photo.id})
     nxt = _next_pending(photo)
@@ -73,17 +87,60 @@ def _next_or_done(request: HttpRequest, photo: Photo) -> HttpResponse:
         resp = HttpResponse(status=204)
         resp["HX-Redirect"] = reverse("dashboard:pending_photos")
         return resp
-    return render(request, "dashboard/partials/photo_drawer.html", _drawer_context(nxt))
+    return render(
+        request, "dashboard/partials/photo_drawer.html", _drawer_context(nxt, queue_mode=True)
+    )
 
 
-def _drawer_context(photo: Photo) -> dict[str, Any]:
+def _after_action(request: HttpRequest, photo: Photo) -> HttpResponse:
+    """Tras aprobar/rechazar:
+    - En la cola (``mode=queue``) avanza a la siguiente pendiente (revisión rápida).
+    - En el detalle full-page recarga la página (HX-Refresh) para reflejar el
+      nuevo estado en la imagen grande + el drawer.
+    - Sin HTMX (tests / JS de la cola) devuelve JSON.
+    """
+    if not request.htmx:  # type: ignore[attr-defined]
+        return JsonResponse({"success": True, "photo_id": photo.id, "status": photo.status})
+    if request.POST.get("mode") == "queue":
+        return _next_or_done(request, photo)
+    resp = HttpResponse(status=204)
+    resp["HX-Refresh"] = "true"
+    return resp
+
+
+def _event_nav(photo: Photo) -> dict[str, Any]:
+    """IDs de la foto anterior/siguiente del MISMO evento (orden cronológico de
+    la galería), para navegar en el detalle sin salir. Entre todas las no-borradas."""
+    ids = list(
+        Photo.objects.filter(event_id=photo.event_id)
+        .exclude(status=PhotoStatus.DELETED)
+        .order_by("capture_time", "created_at", "id")
+        .values_list("id", flat=True)
+    )
+    try:
+        i = ids.index(photo.id)
+    except ValueError:
+        return {"prev_id": None, "next_id": None, "nav_position": None, "nav_total": len(ids)}
+    return {
+        "prev_id": ids[i - 1] if i > 0 else None,
+        "next_id": ids[i + 1] if i < len(ids) - 1 else None,
+        "nav_position": i + 1,
+        "nav_total": len(ids),
+    }
+
+
+def _drawer_context(photo: Photo, queue_mode: bool = False) -> dict[str, Any]:
     tone, label = confidence_label(photo)
     faces = photo.face_embeddings.all()
+    status_tone, status_pulse = _status_display(photo)
     return {
         "photo": photo,
         "bibs": [b for b in photo.bibs.all() if not b.rejected],
         "confidence_tone": tone,
         "confidence_label": label,
+        "status_tone": status_tone,
+        "status_pulse": status_pulse,
+        "queue_mode": queue_mode,
         "photographer": _photographer_stats(photo.photographer_link),
         "face_count": len(faces),
         "has_minor": photo.has_minors_detected or photo.needs_minor_review,
@@ -154,38 +211,42 @@ class PhotoDetailView(StaffRequiredMixin, View):
 
     def get(self, request: HttpRequest, pk: int) -> HttpResponse:
         photo = get_object_or_404(Photo.objects.prefetch_related("bibs", "face_embeddings"), pk=pk)
-        ctx = _drawer_context(photo)
-        template = (
-            "dashboard/partials/photo_drawer.html"
-            if request.htmx  # type: ignore[attr-defined]
-            else "dashboard/photo_detail.html"
-        )
-        if not request.htmx:  # type: ignore[attr-defined]
-            ctx["active_nav"] = "approval"
-            ctx["nav_pending_count"] = Photo.objects.filter(
-                status=PhotoStatus.PENDING_REVIEW
-            ).count()
-        return render(request, template, ctx)
+        # mode=queue → la cola de pendientes (drawer slide-over con avance rápido).
+        queue_mode = request.GET.get("mode") == "queue"
+        ctx = _drawer_context(photo, queue_mode=queue_mode)
+        if request.htmx:  # type: ignore[attr-defined]
+            return render(request, "dashboard/partials/photo_drawer.html", ctx)
+        # Página completa: navegación entre fotos del evento + chrome del dashboard.
+        ctx.update(_event_nav(photo))
+        ctx["active_nav"] = "approval"
+        ctx["nav_pending_count"] = Photo.objects.filter(status=PhotoStatus.PENDING_REVIEW).count()
+        return render(request, "dashboard/photo_detail.html", ctx)
 
 
 # ---------------------------------------------------------------------------
 # Acciones individuales
 # ---------------------------------------------------------------------------
 class ApprovePhotoView(StaffRequiredMixin, View):
+    # Aprobar vale desde "pendiente" (cola) o "rechazada" (restaurar a la galería).
+    ALLOWED_FROM = {PhotoStatus.PENDING_REVIEW, PhotoStatus.REJECTED}
+
     def post(self, request: HttpRequest, pk: int) -> HttpResponse:
         photo = get_object_or_404(Photo, pk=pk)
-        if photo.status != PhotoStatus.PENDING_REVIEW:
+        if photo.status not in self.ALLOWED_FROM:
             return JsonResponse({"error": "invalid_status"}, status=400)
         photo.mark_approved(by_admin=True)
         AuditLog.log("photo.approved", target=photo, user=self.staff_user)
         services.recalculate_event_counters(photo.event)
-        return _next_or_done(request, photo)
+        return _after_action(request, photo)
 
 
 class RejectPhotoView(StaffRequiredMixin, View):
+    # Rechazar vale desde "pendiente" (cola) o "aprobada" (quitar de la galería).
+    ALLOWED_FROM = {PhotoStatus.PENDING_REVIEW, PhotoStatus.APPROVED}
+
     def post(self, request: HttpRequest, pk: int) -> HttpResponse:
         photo = get_object_or_404(Photo, pk=pk)
-        if photo.status != PhotoStatus.PENDING_REVIEW:
+        if photo.status not in self.ALLOWED_FROM:
             return JsonResponse({"error": "invalid_status"}, status=400)
         reason = request.POST.get("reason", "").strip()[:255]
         photo.status = PhotoStatus.REJECTED
@@ -195,7 +256,7 @@ class RejectPhotoView(StaffRequiredMixin, View):
             "photo.rejected", target=photo, user=self.staff_user, metadata={"reason": reason}
         )
         services.recalculate_event_counters(photo.event)
-        return _next_or_done(request, photo)
+        return _after_action(request, photo)
 
 
 # ---------------------------------------------------------------------------
