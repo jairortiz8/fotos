@@ -1,9 +1,10 @@
 {% load i18n %}
-<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+<div class="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
   <div class="rf-statcard"><div class="rf-statcard__label">{% trans "Fotos totales" %}</div><div class="rf-statcard__value mt-1">{{ summary.total }}</div></div>
   <div class="rf-statcard"><div class="rf-statcard__label">{% trans "Pendientes" %}</div><div class="rf-statcard__value mt-1 {% if summary.pending %}!text-warning{% endif %}">{{ summary.pending }}</div></div>
   <div class="rf-statcard"><div class="rf-statcard__label">{% trans "Aprobadas" %}</div><div class="rf-statcard__value mt-1">{{ summary.approved }}</div></div>
   <div class="rf-statcard"><div class="rf-statcard__label">{% trans "Búsquedas" %}</div><div class="rf-statcard__value mt-1">{{ summary.searches }}</div></div>
+  <div class="rf-statcard"><div class="rf-statcard__label">{% trans "Descargas" %}</div><div class="rf-statcard__value mt-1">{{ summary.downloads }}</div></div>
 </div>
 
 <div class="grid lg:grid-cols-2 gap-5">

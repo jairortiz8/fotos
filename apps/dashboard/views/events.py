@@ -150,6 +150,7 @@ class EventDetailView(DashboardContextMixin, DetailView):
                     "pending": photos.filter(status=PhotoStatus.PENDING_REVIEW).count(),
                     "approved": photos.filter(status=PhotoStatus.APPROVED).count(),
                     "searches": event.search_count,
+                    "downloads": event.download_count,
                 },
                 "recent_photos": list(
                     photos.exclude(status=PhotoStatus.DELETED).order_by("-created_at")[:8]

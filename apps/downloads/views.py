@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from io import BytesIO
 
+from django.db.models import F
 from django.http import (
     FileResponse,
     Http404,
@@ -24,7 +25,7 @@ from apps.core.utils import (
     hash_ip,
 )
 from apps.downloads.models import MAX_PHOTOS_PER_ZIP, ZipDownload, ZipStatus
-from apps.events.models import EventVisibility
+from apps.events.models import Event, EventVisibility
 from apps.photos.models import Photo, PhotoStatus
 from apps.photos.storage import R2NotConfiguredError, R2UploadError, default_storage
 
@@ -134,6 +135,12 @@ class PhotoDownloadView(View):
         except (R2NotConfiguredError, R2UploadError) as exc:
             raise Http404 from exc
         buf.seek(0)
+
+        # Contamos la descarga SOLO cuando el original bajó OK de R2 (atómico, sin
+        # carrera). Alimenta el contador por foto + el total por evento del dashboard.
+        photo.increment_download_count()
+        Event.objects.filter(pk=event.id).update(download_count=F("download_count") + 1)
+
         return FileResponse(buf, as_attachment=True, filename=filename, content_type="image/jpeg")
 
 

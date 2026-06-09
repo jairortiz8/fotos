@@ -66,6 +66,23 @@ def test_download_serves_original_as_attachment(r2) -> None:  # type: ignore[no-
 
 
 @pytest.mark.django_db
+def test_download_increments_counters(r2) -> None:  # type: ignore[no-untyped-def]
+    """Cada descarga exitosa suma al contador de la foto y al total del evento
+    (lo que alimenta la tarjeta "Descargas" del dashboard)."""
+    event = EventFactory(status=EventStatus.LIVE, visibility=EventVisibility.PUBLIC)
+    key = "events/e/originals/foto.jpg"
+    r2.put_object(Bucket=BUCKET, Key=key, Body=synthetic_jpeg_bytes("123"))
+    photo = ApprovedPhotoFactory(event=event, original_key=key)
+
+    resp = Client().get(reverse("downloads:photo", kwargs={"photo_id": photo.id}))
+    assert resp.status_code == 200
+    photo.refresh_from_db()
+    event.refresh_from_db()
+    assert photo.download_count == 1
+    assert event.download_count == 1
+
+
+@pytest.mark.django_db
 def test_download_filename_gets_jpg_extension(r2) -> None:  # type: ignore[no-untyped-def]
     event = EventFactory(status=EventStatus.LIVE, visibility=EventVisibility.PUBLIC)
     key = "events/e/originals/foto.jpg"
