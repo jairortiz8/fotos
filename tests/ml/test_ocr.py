@@ -211,6 +211,65 @@ def test_engine_singletons_reset(monkeypatch) -> None:  # type: ignore[no-untype
     assert ocr._easy is None
 
 
+def test_detect_bibs_normal_skips_easy_when_paddle_enough(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
+    """En modo normal, si Paddle ya trae ≥2 candidatos, NO corre EasyOCR."""
+    from apps.ml import ocr
+
+    img_path = write_synthetic_jpeg("100", target=tmp_path / "n.jpg")
+    calls = {"easy": 0}
+    monkeypatch.setattr(
+        ocr,
+        "run_paddle_ocr",
+        lambda _p: [
+            ocr.BibDetection(number="100", confidence=0.9, bbox={}, engine="paddle"),
+            ocr.BibDetection(number="200", confidence=0.9, bbox={}, engine="paddle"),
+        ],
+    )
+
+    def fake_easy(_p):  # type: ignore[no-untyped-def]
+        calls["easy"] += 1
+        return []
+
+    monkeypatch.setattr(ocr, "run_easy_ocr", fake_easy)
+    ocr.detect_bibs(img_path)  # exhaustive=False
+    assert calls["easy"] == 0
+
+
+def test_detect_bibs_exhaustive_runs_both_engines_and_upscaled_pass(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
+    """Exhaustivo: corre Paddle+Easy sobre el original Y la copia agrandada,
+    aunque Paddle ya haya encontrado ≥2 (mejor recall de dorsales chicos)."""
+    from contextlib import contextmanager
+
+    from apps.ml import ocr
+
+    img_path = write_synthetic_jpeg("100", target=tmp_path / "e.jpg")
+    calls = {"paddle": 0, "easy": 0}
+
+    def fake_paddle(_p):  # type: ignore[no-untyped-def]
+        calls["paddle"] += 1
+        return [
+            ocr.BibDetection(number="100", confidence=0.9, bbox={}, engine="paddle"),
+            ocr.BibDetection(number="200", confidence=0.9, bbox={}, engine="paddle"),
+        ]
+
+    def fake_easy(_p):  # type: ignore[no-untyped-def]
+        calls["easy"] += 1
+        return [ocr.BibDetection(number="300", confidence=0.8, bbox={}, engine="easy")]
+
+    @contextmanager
+    def fake_upscale(_p, **kw):  # type: ignore[no-untyped-def]
+        yield tmp_path / "big.jpg"
+
+    monkeypatch.setattr(ocr, "run_paddle_ocr", fake_paddle)
+    monkeypatch.setattr(ocr, "run_easy_ocr", fake_easy)
+    monkeypatch.setattr(ocr, "_upscaled_copy", fake_upscale)
+
+    result = ocr.detect_bibs(img_path, exhaustive=True)
+    assert {d.number for d in result} == {"100", "200", "300"}
+    assert calls["paddle"] == 2  # original + agrandada
+    assert calls["easy"] == 2  # corre SIEMPRE en exhaustivo + sobre la agrandada
+
+
 # ---------------------------------------------------------------------------
 # BibDetection dataclass
 # ---------------------------------------------------------------------------

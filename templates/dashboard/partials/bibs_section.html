@@ -18,7 +18,28 @@
 </div>
 <form hx-post="{% url 'dashboard:add_bib' pk=photo.id %}"
       hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
-      hx-target="#bibs-section" hx-swap="innerHTML" class="flex gap-2">
+      hx-target="#bibs-section" hx-swap="innerHTML" class="flex gap-2 mb-2.5">
   <input type="text" name="number" aria-label="{% trans 'Número de dorsal a agregar' %}" placeholder="{% trans 'Agregar dorsal…' %}" class="rf-input !py-2 text-xs flex-1" required>
   <button type="submit" class="rf-ghost" style="padding:.5rem .85rem">{% trans "Agregar" %}</button>
 </form>
+
+{% if ocr_rerunning %}
+  {# Re-detectando: el poller re-pide esta sección cada 2s hasta que el worker
+     limpia el flag de cache → el próximo render trae el botón (no el poller). #}
+  <div class="flex items-center gap-2 text-[12px] text-text-2 rf-card px-3 py-2"
+       hx-get="{% url 'dashboard:bibs_section' pk=photo.id %}"
+       hx-trigger="every 2s" hx-target="#bibs-section" hx-swap="innerHTML">
+    <span class="rf-pill__dot rf-pulse"></span>
+    {% trans "Re-detectando dorsales… puede tardar unos segundos." %}
+  </div>
+{% else %}
+  {# OCR exhaustivo bajo demanda: corre ambos engines sobre el original + una
+     copia agrandada. Útil cuando el OCR automático perdió o leyó mal el dorsal. #}
+  <button type="button" class="rf-ghost w-full !justify-center text-xs gap-1.5"
+          hx-post="{% url 'dashboard:rerun_ocr' pk=photo.id %}"
+          hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+          hx-target="#bibs-section" hx-swap="innerHTML">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+    {% trans "Re-detectar (OCR exhaustivo)" %}
+  </button>
+{% endif %}

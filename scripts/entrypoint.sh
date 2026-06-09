@@ -18,20 +18,18 @@ echo "[entrypoint] arrancando rol: ${ROLE}"
 
 case "$ROLE" in
   worker)
-    # Worker PESADO: consume `celery` (todo) + `faces` (reconocimiento facial, que
-    # carga InsightFace ~1GB). concurrency 1 = una foto a la vez → poca RAM.
-    # Consume AMBAS colas para ser backward-compatible: si no existe `worker_fast`,
-    # este worker sigue haciendo TODO sin gap. Cuando existe el liviano, este se
-    # enfoca en la cara (lenta) y el liviano se lleva las tareas rápidas.
-    exec celery -A config worker --loglevel=info -Q celery,faces \
+    # Worker PESADO: consume las 3 colas → `celery` (crons + tasks viejas sin ruta),
+    # `faces` (reconocimiento facial, carga InsightFace ~1GB) y `fast` (respaldo de
+    # process_photo/OCR si el worker liviano no está). concurrency 1 = poca RAM.
+    exec celery -A config worker --loglevel=info -Q celery,faces,fast \
       --concurrency="${CELERY_CONCURRENCY:-1}"
     ;;
   worker_fast)
-    # Worker LIVIANO: SOLO la cola `celery` (process_photo = preview/thumbnail,
-    # OCR, crons). NUNCA consume `faces`, así que no carga el modelo facial → se
-    # mantiene liviano y deja las fotos listas para aprobar en segundos sin
-    # esperar la extracción de caras (que corre en el worker pesado).
-    exec celery -A config worker --loglevel=info -Q celery \
+    # Worker LIVIANO: SOLO la cola `fast` (process_photo = preview/thumbnail + OCR).
+    # NUNCA consume `faces` ni `celery`, así que jamás agarra una task de cara y no
+    # carga el modelo facial → se mantiene liviano y deja las fotos listas para
+    # aprobar en segundos sin esperar la extracción de caras (worker pesado).
+    exec celery -A config worker --loglevel=info -Q fast \
       --concurrency="${CELERY_FAST_CONCURRENCY:-2}"
     ;;
   beat)

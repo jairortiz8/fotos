@@ -246,18 +246,21 @@ CELERY_TIMEZONE = env("TIME_ZONE")
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 60 * 30  # 30 min
 
-# Routing de tasks a colas. El reconocimiento facial es LENTO (~15s/foto con
-# InsightFace) y, en un solo worker, tapa la cola: los `process_photo` (preview/
-# thumbnail, ~2s → deja la foto lista para aprobar) quedan atrás y la foto se ve
-# "procesando" un buen rato. Lo separamos:
-#   - cola `faces`  → SOLO run_face_recognition_on_photo (worker pesado con modelo).
-#   - cola `celery` → todo lo demás (process_photo, OCR, crons), también consumida
-#     por un worker LIVIANO dedicado (PROCESS_TYPE=worker_fast) → las fotos quedan
-#     listas para aprobar en segundos sin esperar a la cara.
-# Backward-compatible: el worker pesado consume `celery,faces`, así que hasta que
-# exista el worker liviano sigue procesando todo (sin gap).
+# Routing de tasks a colas (3 colas). El reconocimiento facial es LENTO (~15s/
+# foto con InsightFace) y, en un solo worker, tapa la cola: los `process_photo`
+# (preview/thumbnail, ~2s → deja la foto lista para aprobar) quedan atrás y la
+# foto se ve "procesando" un buen rato. Separamos:
+#   - cola `fast`   → process_photo + OCR (rápido, NO carga el modelo facial).
+#                     La consume EXCLUSIVAMENTE el worker liviano (worker_fast).
+#   - cola `faces`  → SOLO la cara (worker pesado, con InsightFace).
+#   - cola `celery` → crons (beat) + cualquier task sin ruta explícita.
+# Clave: worker_fast escucha SOLO `fast`, así NUNCA agarra una task de cara (si
+# escuchara `celery` agarraría las de cara viejas encoladas antes del routing y
+# se quedaría sin RAM cargando el modelo). El worker pesado escucha las 3.
 CELERY_TASK_DEFAULT_QUEUE = "celery"
 CELERY_TASK_ROUTES = {
+    "photos.process_photo": {"queue": "fast"},
+    "photos.run_ocr_on_photo": {"queue": "fast"},
     "photos.run_face_recognition_on_photo": {"queue": "faces"},
 }
 

@@ -130,3 +130,27 @@ def test_run_ocr_with_no_detections(tmp_path: Path) -> None:
     assert result["detected"] == 0
     assert result["created"] == 0
     assert not Bib.objects.filter(photo=photo).exists()
+
+
+@pytest.mark.django_db
+def test_run_ocr_exhaustive_passes_flag_and_clears_cache(tmp_path: Path) -> None:
+    """El modo exhaustivo pasa exhaustive=True a detect_bibs y, al terminar,
+    limpia el flag de cache `ocr_rerun:<id>` (corta el "re-detectando…")."""
+    from django.core.cache import cache
+
+    photo = PhotoFactory(original_key="events/x/originals/abc.jpg")
+    cache.set(f"ocr_rerun:{photo.id}", "1", 180)
+    captured: dict[str, object] = {}
+
+    def fake_detect(_path: Path, *, exhaustive: bool = False) -> list[BibDetection]:
+        captured["exhaustive"] = exhaustive
+        return []
+
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch("apps.ml.ocr.detect_bibs", side_effect=fake_detect),
+    ):
+        run_ocr_on_photo.apply(args=[photo.id], kwargs={"exhaustive": True}).get()
+
+    assert captured["exhaustive"] is True
+    assert cache.get(f"ocr_rerun:{photo.id}") is None  # flag limpiado

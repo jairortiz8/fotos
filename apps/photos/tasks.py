@@ -138,46 +138,59 @@ def process_photo(self, photo_id: int) -> dict[str, str | int]:
     default_retry_delay=120,
     autoretry_for=(Exception,),
 )
-def run_ocr_on_photo(self, photo_id: int) -> dict[str, int | list[str]]:
-    """OCR sobre el original, crea registros `Bib`, marca `has_bibs_detected`."""
+def run_ocr_on_photo(self, photo_id: int, exhaustive: bool = False) -> dict[str, int | list[str]]:
+    """OCR sobre el original, crea registros `Bib`, marca `has_bibs_detected`.
+
+    `exhaustive=True` (botón "Re-detectar" del dashboard): pasada más agresiva
+    (ambos engines + copia agrandada). Limpia al final el flag de cache
+    `ocr_rerun:<id>` que el dashboard usa para mostrar "re-detectando…".
+    """
+    from django.core.cache import cache
+
     from apps.ml.ocr import detect_bibs  # import local (libs pesadas)
 
-    photo = Photo.objects.get(id=photo_id)
-    if photo.status == PhotoStatus.DELETED:
-        return {"photo_id": photo_id, "skipped": ["deleted"]}
+    try:
+        photo = Photo.objects.get(id=photo_id)
+        if photo.status == PhotoStatus.DELETED:
+            return {"photo_id": photo_id, "skipped": ["deleted"]}
 
-    bib_sources_created: list[str] = []
-    with download_temp_file(photo.original_key) as source:
-        detections = detect_bibs(source)
+        bib_sources_created: list[str] = []
+        with download_temp_file(photo.original_key) as source:
+            detections = detect_bibs(source, exhaustive=exhaustive)
 
-    if not detections:
-        return {"photo_id": photo.id, "detected": 0, "created": 0}
+        if not detections:
+            return {"photo_id": photo.id, "detected": 0, "created": 0}
 
-    with transaction.atomic():
-        for det in detections:
-            source_value = "ocr_paddle" if det.engine == "paddle" else "ocr_easy"
-            _bib, created = Bib.objects.get_or_create(
-                photo=photo,
-                number=det.number,
-                source=source_value,
-                defaults={
-                    "confidence": det.confidence,
-                    "bbox": det.bbox,
-                },
-            )
-            if created:
-                bib_sources_created.append(f"{det.number}/{source_value}")
+        with transaction.atomic():
+            for det in detections:
+                source_value = "ocr_paddle" if det.engine == "paddle" else "ocr_easy"
+                _bib, created = Bib.objects.get_or_create(
+                    photo=photo,
+                    number=det.number,
+                    source=source_value,
+                    defaults={
+                        "confidence": det.confidence,
+                        "bbox": det.bbox,
+                    },
+                )
+                if created:
+                    bib_sources_created.append(f"{det.number}/{source_value}")
 
-        if not photo.has_bibs_detected:
-            photo.has_bibs_detected = True
-            photo.save(update_fields=["has_bibs_detected", "updated_at"])
+            if not photo.has_bibs_detected:
+                photo.has_bibs_detected = True
+                photo.save(update_fields=["has_bibs_detected", "updated_at"])
 
-    return {
-        "photo_id": photo.id,
-        "detected": len(detections),
-        "created": len(bib_sources_created),
-        "bibs": bib_sources_created,
-    }
+        return {
+            "photo_id": photo.id,
+            "detected": len(detections),
+            "created": len(bib_sources_created),
+            "bibs": bib_sources_created,
+        }
+    finally:
+        # Apaga el indicador "re-detectando…" del dashboard (aunque haya fallado:
+        # así el poller se corta y no queda girando para siempre).
+        if exhaustive:
+            cache.delete(f"ocr_rerun:{photo_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -201,24 +214,29 @@ MINOR_REVIEW_AGE = 22
     default_retry_delay=120,
     autoretry_for=(Exception,),
 )
-def run_face_recognition_on_photo(self, photo_id: int) -> dict[str, int | bool]:
+def run_face_recognition_on_photo(self, photo_id: int) -> dict[str, object]:
     """Extrae embeddings de las caras y persiste `FaceEmbedding`.
 
     Marca menores (`is_minor`, blur automático) y caras dudosas
     (`needs_minor_review`). Si hay menores, regenera el preview con blur.
     """
-    from apps.ml.face_recognition import extract_faces
-
     photo = Photo.objects.get(id=photo_id)
     if photo.status in {PhotoStatus.DELETED, PhotoStatus.REJECTED}:
-        return {"photo_id": photo_id, "skipped": True}
+        return {"photo_id": photo_id, "skipped": "status"}
+
+    # IDEMPOTENCIA: si la foto YA tiene embeddings, no re-procesar. Evita
+    # DUPLICAR embeddings (inflaría el matching del selfie) y evita cargar el
+    # modelo de nuevo. El chequeo va ANTES de importar/llamar a InsightFace, así
+    # un re-encolado o reintento sobre algo ya indexado es baratísimo (un COUNT).
+    if photo.has_faces_detected or photo.face_embeddings.exists():
+        return {"photo_id": photo_id, "skipped": "already_indexed"}
+
+    from apps.ml.face_recognition import extract_faces  # carga lazy del modelo
 
     with download_temp_file(photo.original_key) as source:
         detections = extract_faces(source)
 
     if not detections:
-        if not photo.has_faces_detected:
-            return {"photo_id": photo.id, "faces": 0, "minors": 0}
         return {"photo_id": photo.id, "faces": 0, "minors": 0}
 
     minors = 0

@@ -102,7 +102,18 @@ def test_face_task_skips_deleted(stub_download) -> None:  # type: ignore[no-unty
     with patch("apps.photos.tasks.download_temp_file") as mock_dl:
         result = run_face_recognition_on_photo.apply(args=[photo.id]).get()
     assert mock_dl.called is False
-    assert result.get("skipped") is True
+    assert result.get("skipped") == "status"
+
+
+@pytest.mark.django_db
+def test_face_task_skips_already_indexed(stub_download) -> None:  # type: ignore[no-untyped-def]
+    """Idempotencia: si la foto ya tiene caras detectadas, NO re-procesa (evita
+    duplicar embeddings y no carga el modelo). Ni siquiera descarga el original."""
+    photo = PhotoFactory(has_faces_detected=True)
+    with patch("apps.photos.tasks.download_temp_file") as mock_dl:
+        result = run_face_recognition_on_photo.apply(args=[photo.id]).get()
+    assert mock_dl.called is False
+    assert result.get("skipped") == "already_indexed"
 
 
 # ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@ from datetime import timedelta
 from typing import Any
 
 from django.contrib import messages
+from django.core.cache import cache
 from django.db import transaction
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -129,6 +130,23 @@ def _event_nav(photo: Photo) -> dict[str, Any]:
     }
 
 
+def _ocr_rerun_key(photo_id: int) -> str:
+    """Clave de cache (Redis, compartida web↔worker) del flag "re-detectando…"."""
+    return f"ocr_rerun:{photo_id}"
+
+
+def _bibs_context(photo: Photo) -> dict[str, Any]:
+    """Contexto mínimo para `bibs_section.html` (chips + estado de re-detección)."""
+    tone, label = confidence_label(photo)
+    return {
+        "photo": photo,
+        "bibs": [b for b in photo.bibs.all() if not b.rejected],
+        "confidence_tone": tone,
+        "confidence_label": label,
+        "ocr_rerunning": cache.get(_ocr_rerun_key(photo.id)) is not None,
+    }
+
+
 def _drawer_context(photo: Photo, queue_mode: bool = False) -> dict[str, Any]:
     tone, label = confidence_label(photo)
     faces = photo.face_embeddings.all()
@@ -146,6 +164,7 @@ def _drawer_context(photo: Photo, queue_mode: bool = False) -> dict[str, Any]:
         "has_minor": photo.has_minors_detected or photo.needs_minor_review,
         "add_bib_form": AddBibForm(),
         "reject_form": RejectPhotoForm(),
+        "ocr_rerunning": cache.get(_ocr_rerun_key(photo.id)) is not None,
         "next_pending_id": (np := _next_pending(photo)) and np.id,
     }
 
@@ -387,7 +406,7 @@ class AddBibView(StaffRequiredMixin, View):
                 user=self.staff_user,
                 metadata={"number": form.cleaned_data["number"]},
             )
-        return render(request, "dashboard/partials/bibs_section.html", _drawer_context(photo))
+        return render(request, "dashboard/partials/bibs_section.html", _bibs_context(photo))
 
 
 class RemoveBibView(StaffRequiredMixin, View):
@@ -401,4 +420,33 @@ class RemoveBibView(StaffRequiredMixin, View):
         AuditLog.log(
             "bib.rejected", target=photo, user=self.staff_user, metadata={"number": bib.number}
         )
-        return render(request, "dashboard/partials/bibs_section.html", _drawer_context(photo))
+        return render(request, "dashboard/partials/bibs_section.html", _bibs_context(photo))
+
+
+class RerunOcrView(StaffRequiredMixin, View):
+    """Re-corre el OCR en modo EXHAUSTIVO sobre una foto (botón del drawer).
+
+    Async (worker, cola `celery` → la toma el worker liviano): marca un flag en
+    cache para que el dashboard muestre "re-detectando…" y haga polling hasta que
+    aparezcan los dorsales nuevos. Los dorsales se agregan (no se borran los que
+    ya estaban); el admin cura los falsos positivos.
+    """
+
+    def post(self, request: HttpRequest, pk: int) -> HttpResponse:
+        photo = get_object_or_404(Photo, pk=pk)
+        cache.set(_ocr_rerun_key(photo.id), "1", 180)  # TTL de seguridad
+        from apps.photos.tasks import run_ocr_on_photo
+
+        run_ocr_on_photo.delay(photo.id, exhaustive=True)
+        AuditLog.log("bib.ocr_rerun", target=photo, user=self.staff_user)
+        return render(request, "dashboard/partials/bibs_section.html", _bibs_context(photo))
+
+
+class BibsSectionView(StaffRequiredMixin, View):
+    """Re-renderiza SOLO la sección de dorsales (GET). Lo usa el polling HTMX del
+    're-detectando…': cuando el worker termina y limpia el flag, el próximo render
+    ya no trae el poller → se corta solo y muestra los dorsales nuevos."""
+
+    def get(self, request: HttpRequest, pk: int) -> HttpResponse:
+        photo = get_object_or_404(Photo, pk=pk)
+        return render(request, "dashboard/partials/bibs_section.html", _bibs_context(photo))

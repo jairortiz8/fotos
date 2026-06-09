@@ -289,3 +289,32 @@ def test_detail_mode_approve_triggers_page_refresh(admin_client: Client) -> None
     )
     assert resp.status_code == 204
     assert resp["HX-Refresh"] == "true"
+
+
+# ---------------------------------------------------------------------------
+# OCR exhaustivo bajo demanda (botón "Re-detectar")
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_rerun_ocr_enqueues_exhaustive_and_sets_flag(admin_client: Client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from django.core.cache import cache
+
+    photo = ApprovedPhotoFactory()
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "apps.photos.tasks.run_ocr_on_photo.delay",
+        lambda pid, exhaustive=False: captured.update(pid=pid, exhaustive=exhaustive),
+    )
+    resp = admin_client.post(reverse("dashboard:rerun_ocr", kwargs={"pk": photo.id}))
+    assert resp.status_code == 200
+    assert captured == {"pid": photo.id, "exhaustive": True}
+    assert cache.get(f"ocr_rerun:{photo.id}") is not None  # flag "re-detectando"
+    assert b"Re-detectando" in resp.content
+    cache.delete(f"ocr_rerun:{photo.id}")
+
+
+@pytest.mark.django_db
+def test_bibs_section_get_shows_rerun_button(admin_client: Client) -> None:
+    photo = ApprovedPhotoFactory()
+    resp = admin_client.get(reverse("dashboard:bibs_section", kwargs={"pk": photo.id}))
+    assert resp.status_code == 200
+    assert b"Re-detectar" in resp.content

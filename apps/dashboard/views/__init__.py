@@ -21,12 +21,14 @@ from apps.dashboard.views.photos import (
     AddBibView,
     ApproveAllPendingView,
     ApprovePhotoView,
+    BibsSectionView,
     BulkApproveView,
     BulkRejectView,
     PendingPhotosView,
     PhotoDetailView,
     RejectPhotoView,
     RemoveBibView,
+    RerunOcrView,
 )
 
 __all__ = [
@@ -34,6 +36,7 @@ __all__ = [
     "ApproveAllPendingView",
     "ApprovePhotoView",
     "AuditLogView",
+    "BibsSectionView",
     "BulkApproveView",
     "BulkRejectView",
     "DashboardHomeView",
@@ -50,6 +53,7 @@ __all__ = [
     "RegenerateLinkView",
     "RejectPhotoView",
     "RemoveBibView",
+    "RerunOcrView",
     "RevokeLinkView",
     "SettingsView",
     "StatsView",

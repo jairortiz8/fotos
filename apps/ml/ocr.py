@@ -10,7 +10,11 @@ Output: lista de `BibDetection` con (number, confidence, bbox, engine).
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -166,7 +170,7 @@ def run_easy_ocr(image_path: Path) -> list[BibDetection]:
     return detections
 
 
-def detect_bibs(image_path: Path) -> list[BibDetection]:
+def detect_bibs(image_path: Path, *, exhaustive: bool = False) -> list[BibDetection]:
     """Orquesta Paddle + EasyOCR y devuelve candidatos únicos.
 
     Antes EasyOCR sólo corría si Paddle devolvía CERO. Problema real (visto en
@@ -174,13 +178,27 @@ def detect_bibs(image_path: Path) -> list[BibDetection]:
     de un cartel o el fondo, no un dorsal — y ese único resultado "se tragaba" el
     fallback, perdiendo los dorsales reales. Ahora también corremos EasyOCR
     cuando Paddle encuentra POCOS (<2) candidatos, para mejorar el recall.
+
+    Modo `exhaustive` (botón "Re-detectar" del dashboard): corre SIEMPRE los dos
+    engines sobre el original Y sobre una copia agrandada 2x — los dorsales
+    chicos/lejanos que a tamaño normal no cruzan el umbral de detección suelen
+    leerse al agrandar. Es más lento (~2-3x) pero mejor recall. Trae más ruido →
+    el admin cura (quita falsos positivos, agrega los que falten).
+
     OCR sigue siendo best-effort: el admin corrige/agrega dorsales en el
     dashboard (tab "Dorsales" / detalle de foto).
     """
     paddle = run_paddle_ocr(image_path)
     detections = list(paddle)
-    if len(paddle) < 2:
+    if exhaustive or len(paddle) < 2:
         detections += run_easy_ocr(image_path)
+
+    if exhaustive:
+        # Pasada extra sobre una copia agrandada → recall de dorsales chicos.
+        with _upscaled_copy(image_path) as big:
+            if big is not None:
+                detections += run_paddle_ocr(big)
+                detections += run_easy_ocr(big)
 
     # Dedup conservando la mayor confidence por número (independiente del engine).
     best_by_number: dict[str, BibDetection] = {}
@@ -189,6 +207,39 @@ def detect_bibs(image_path: Path) -> list[BibDetection]:
         if existing is None or det.confidence > existing.confidence:
             best_by_number[det.number] = det
     return list(best_by_number.values())
+
+
+@contextmanager
+def _upscaled_copy(image_path: Path, *, target_long_side: int = 2600) -> Iterator[Path | None]:
+    """Crea (en un tempfile) una copia agrandada de la imagen para una pasada OCR
+    extra; la borra al salir. Devuelve None si la imagen ya es grande (no agranda
+    para no generar imágenes gigantes) o si algo falla (best-effort)."""
+    tmp_path: Path | None = None
+    try:
+        try:
+            from PIL import Image
+
+            with Image.open(image_path) as img:
+                rgb = img.convert("RGB")
+                long_side = max(rgb.width, rgb.height)
+                if long_side < target_long_side:
+                    scale = min(2.5, target_long_side / long_side)
+                    big = rgb.resize(
+                        (int(rgb.width * scale), int(rgb.height * scale)),
+                        Image.Resampling.LANCZOS,
+                    )
+                    fd, raw = tempfile.mkstemp(suffix=".jpg", prefix="rf_ocr_big_")
+                    os.close(fd)
+                    tmp_path = Path(raw)
+                    big.save(tmp_path, "JPEG", quality=92)
+        except Exception:
+            logger.exception("Copia agrandada OCR falló: %s", image_path)
+            tmp_path = None
+        yield tmp_path
+    finally:
+        if tmp_path is not None:
+            with suppress(OSError):
+                tmp_path.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
