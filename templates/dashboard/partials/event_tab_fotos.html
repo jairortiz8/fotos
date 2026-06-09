@@ -1,15 +1,27 @@
 {% load i18n %}
-<form method="get" class="flex gap-2 items-center mb-4">
+<form method="get" class="flex flex-wrap gap-2 items-center mb-3">
   <input type="hidden" name="tab" value="fotos">
   <select name="foto_status" class="rf-input !w-auto !py-2 text-xs"
-          hx-get="{% url 'dashboard:event_detail' slug=event.slug %}" hx-include="[name='tab'],[name='foto_status']"
+          hx-get="{% url 'dashboard:event_detail' slug=event.slug %}" hx-include="[name='tab'],[name='foto_status'],[name='q']"
           hx-target="#tab-content" hx-swap="innerHTML">
     <option value="">{% trans "Todos los estados" %}</option>
     {% for val, label in photo_status_choices %}
       <option value="{{ val }}" {% if foto_status == val %}selected{% endif %}>{{ label }}</option>
     {% endfor %}
   </select>
+  {# Búsqueda por nombre de archivo (debounced al tipear). #}
+  <input type="search" name="q" value="{{ foto_query|default:'' }}"
+         placeholder="{% trans 'Buscar por nombre de archivo…' %}"
+         aria-label="{% trans 'Buscar foto por nombre de archivo' %}"
+         class="rf-input !py-2 text-xs flex-1 min-w-[180px]"
+         hx-get="{% url 'dashboard:event_detail' slug=event.slug %}" hx-include="[name='tab'],[name='foto_status'],[name='q']"
+         hx-target="#tab-content" hx-swap="innerHTML"
+         hx-trigger="search, keyup changed delay:400ms">
+  <span class="rf-num text-[11px] text-text-3 whitespace-nowrap">{{ event_photos_total }} {% trans "fotos" %}</span>
 </form>
+{% if event_photos_total > 120 %}
+  <p class="text-[11px] text-text-3 mb-3">{% trans "Mostrando las primeras 120 — afiná la búsqueda por nombre para encontrar una foto puntual." %}</p>
+{% endif %}
 
 {% if event_photos %}
 <div class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-1.5">

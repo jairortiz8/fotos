@@ -11,7 +11,7 @@ from django.urls import reverse
 from apps.core.models import AuditLog
 from apps.events.models import Event, EventStatus, EventVisibility
 from apps.photographers.models import PhotographerLink
-from tests.factories import EventFactory
+from tests.factories import ApprovedPhotoFactory, EventFactory
 
 
 @pytest.mark.django_db
@@ -46,6 +46,22 @@ def test_create_event_custom_retention(admin_client: Client) -> None:
     )
     event = Event.objects.get(name="Permanente 2026")
     assert event.permanent_archive is True
+
+
+@pytest.mark.django_db
+def test_event_fotos_tab_search_by_filename(admin_client: Client) -> None:
+    """La pestaña Fotos se puede filtrar por nombre de archivo (para encontrar
+    una foto puntual entre cientos, p. ej. la que el fotógrafo reportó)."""
+    event = EventFactory(status=EventStatus.LIVE)
+    target = ApprovedPhotoFactory(event=event, original_filename="6K2A8244.jpg")
+    ApprovedPhotoFactory(event=event, original_filename="otra_cosa.jpg")
+    resp = admin_client.get(
+        reverse("dashboard:event_detail", kwargs={"slug": event.slug}) + "?tab=fotos&q=8244"
+    )
+    assert resp.status_code == 200
+    ids = {p.id for p in resp.context["event_photos"]}
+    assert ids == {target.id}
+    assert resp.context["event_photos_total"] == 1
 
 
 @pytest.mark.django_db

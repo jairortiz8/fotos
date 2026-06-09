@@ -160,12 +160,21 @@ class EventDetailView(DashboardContextMixin, DetailView):
             }
         if tab == "fotos":
             status = self.request.GET.get("foto_status", "")
+            query = self.request.GET.get("q", "").strip()
             grid = photos.exclude(status=PhotoStatus.DELETED)
             if status:
                 grid = grid.filter(status=status)
+            if query:
+                # Buscar por nombre de archivo (para encontrar una foto puntual,
+                # p. ej. la que el fotógrafo reportó como fallida).
+                grid = grid.filter(original_filename__icontains=query)
+            # Cronológico (igual que la galería pública y la navegación del detalle).
+            grid = grid.prefetch_related("bibs").order_by("capture_time", "created_at")
             return {
-                "event_photos": list(grid.prefetch_related("bibs").order_by("-created_at")[:120]),
+                "event_photos": list(grid[:120]),
+                "event_photos_total": grid.count(),
                 "foto_status": status,
+                "foto_query": query,
                 "photo_status_choices": PhotoStatus.choices,
             }
         if tab in ("fotografos", "links"):

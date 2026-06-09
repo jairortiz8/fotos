@@ -120,6 +120,26 @@ def upload_ratelimit_key(group: str, request: HttpRequest) -> str:
     return token or (get_client_ip(request) or "anonymous")
 
 
+def log_upload_outcome(
+    outcome: str, link: PhotographerLink, *, filename: str = "", size: int = 0, failed: bool = True
+) -> None:
+    """Deja un rastro en los logs (Railway/Sentry) de qué pasó con cada subida.
+
+    Sirve para auditar las que el fotógrafo ve "reintentando" y confirmar si en
+    realidad entraron o no. NUNCA logea el token — sólo el id interno del link.
+    """
+    log = logger.warning if failed else logger.info
+    log(
+        "upload %s | outcome=%s event=%s link=%s file=%r size=%s",
+        "FALLO" if failed else "OK",
+        outcome,
+        link.event.slug,
+        link.id,
+        filename or "?",
+        size,
+    )
+
+
 # ---------------------------------------------------------------------------
 # PortalView (GET)
 # ---------------------------------------------------------------------------
@@ -192,20 +212,29 @@ class PhotographerUploadView(View):
 
         # El límite tiene su propio status code (403) — distinto de 410 (token muerto).
         if link.photo_limit is not None and link.photos_uploaded >= link.photo_limit:
+            _f = request.FILES.get("file")
+            log_upload_outcome("photo_limit_reached", link, filename=getattr(_f, "name", ""))
             return JsonResponse({"error": "photo_limit_reached"}, status=403)
 
         upload = request.FILES.get("file")
         if not upload:
+            log_upload_outcome("no_file", link)
             return JsonResponse({"error": "no_file"}, status=400)
 
         max_bytes = settings.PHOTO_UPLOAD_MAX_BYTES
         if upload.size > max_bytes:
+            log_upload_outcome(
+                "file_too_large", link, filename=upload.name or "", size=upload.size or 0
+            )
             return JsonResponse(
                 {"error": "file_too_large", "max_mb": max_bytes // (1024 * 1024)},
                 status=400,
             )
 
         if not is_valid_jpeg(upload):
+            log_upload_outcome(
+                "invalid_format", link, filename=upload.name or "", size=upload.size or 0
+            )
             return JsonResponse(
                 {"error": "invalid_format", "allowed": ["jpg", "jpeg"]},
                 status=400,
@@ -223,6 +252,9 @@ class PhotographerUploadView(View):
             .first()
         )
         if duplicate_id is not None:
+            log_upload_outcome(
+                "duplicate", link, filename=upload.name or "", size=upload.size or 0, failed=False
+            )
             return JsonResponse({"error": "duplicate", "duplicate_of": duplicate_id}, status=409)
 
         photo = Photo.objects.create(
@@ -244,6 +276,7 @@ class PhotographerUploadView(View):
             default_storage().upload(upload, key, content_type="image/jpeg")
         except R2NotConfiguredError:
             photo.delete()
+            log_upload_outcome("storage_not_configured", link, filename=photo.original_filename)
             return JsonResponse(
                 {
                     "error": "storage_not_configured",
@@ -254,6 +287,7 @@ class PhotographerUploadView(View):
         except R2UploadError:
             logger.exception("R2 upload falló (photo=%s)", photo.id)
             photo.delete()
+            log_upload_outcome("r2_upload_failed", link, filename=photo.original_filename)
             return JsonResponse({"error": "upload_failed"}, status=500)
 
         photo.original_key = key
@@ -280,6 +314,9 @@ class PhotographerUploadView(View):
                 "filename": photo.original_filename,
             },
             ip=get_client_ip(request),
+        )
+        log_upload_outcome(
+            "ok", link, filename=photo.original_filename, size=photo.file_size, failed=False
         )
 
         if getattr(request, "htmx", False):
