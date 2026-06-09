@@ -112,41 +112,15 @@
       </div>
     </div>
 
-    {# Política de retención #}
+    {# Disponibilidad de la galería (retención automática) #}
     <div class="rf-card p-6 mb-5">
       <div class="mb-4">
-        <h2 class="font-display font-bold text-[15px]">{% trans "Política de retención (opcional)" %}</h2>
-        <p class="text-[11px] text-text-3 mt-1">{% trans "Si las dejás vacías, se usan los valores por defecto: 90 días de galería pública, 180 de solo búsqueda y 365 de archivo." %}</p>
+        <h2 class="font-display font-bold text-[15px]">{% trans "Disponibilidad de la galería" %}</h2>
+        <p class="text-[11px] text-text-3 mt-1">{% trans "Automático: la galería es pública 90 días, después queda solo para búsqueda por dorsal (180 días) y luego se archiva. No tenés que configurar fechas." %}</p>
       </div>
 
-      <div class="grid sm:grid-cols-3 gap-5">
-        {# public_until #}
-        <div>
-          <label class="rf-label" for="{{ form.public_until.id_for_label }}">{{ form.public_until.label }}</label>
-          {{ form.public_until }}
-          {% if form.public_until.help_text %}<p class="text-[11px] text-text-3 mt-1">{{ form.public_until.help_text }}</p>{% endif %}
-          {% if form.public_until.errors %}<p class="text-danger text-[11px] mt-1">{{ form.public_until.errors.0 }}</p>{% endif %}
-        </div>
-
-        {# searchable_until #}
-        <div>
-          <label class="rf-label" for="{{ form.searchable_until.id_for_label }}">{{ form.searchable_until.label }}</label>
-          {{ form.searchable_until }}
-          {% if form.searchable_until.help_text %}<p class="text-[11px] text-text-3 mt-1">{{ form.searchable_until.help_text }}</p>{% endif %}
-          {% if form.searchable_until.errors %}<p class="text-danger text-[11px] mt-1">{{ form.searchable_until.errors.0 }}</p>{% endif %}
-        </div>
-
-        {# archive_until #}
-        <div>
-          <label class="rf-label" for="{{ form.archive_until.id_for_label }}">{{ form.archive_until.label }}</label>
-          {{ form.archive_until }}
-          {% if form.archive_until.help_text %}<p class="text-[11px] text-text-3 mt-1">{{ form.archive_until.help_text }}</p>{% endif %}
-          {% if form.archive_until.errors %}<p class="text-danger text-[11px] mt-1">{{ form.archive_until.errors.0 }}</p>{% endif %}
-        </div>
-      </div>
-
-      {# permanent_archive (toggle) #}
-      <div class="mt-5 pt-5 border-t border-ink-2">
+      {# permanent_archive (toggle) — único control de retención expuesto #}
+      <div>
         <label class="flex items-center gap-3 cursor-pointer" for="{{ form.permanent_archive.id_for_label }}">
           {{ form.permanent_archive }}
           <span>

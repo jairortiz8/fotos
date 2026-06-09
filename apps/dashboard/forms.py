@@ -23,8 +23,14 @@ class _DashMixin:
 
 
 class EventForm(_DashMixin, forms.ModelForm):
-    """Crear / editar evento. Las fechas de retención son opcionales: si quedan
-    vacías, el `Event.save()` las calcula (90/180/365 días desde la fecha)."""
+    """Crear / editar evento. Las fechas de retención NO se exponen en el form:
+    `Event.save()` las calcula solas (90/180/365 días desde la fecha). El único
+    control de retención es `permanent_archive` (mantener la galería abierta).
+
+    Antes el form exponía `public_until`/`searchable_until`/`archive_until` como
+    inputs `datetime-local`; en mobile (iPad) el selector arranca en "ahora" y un
+    toque dejaba `public_until` en el pasado → la galería se cerraba sola aunque
+    hubiera fotos aprobadas. Se quitaron para que no vuelva a pasar."""
 
     # La portada NO es el ImageField del modelo (que iba a disco efímero): es un
     # campo de subida que la vista procesa → R2 → `event.cover_key`.
@@ -47,31 +53,18 @@ class EventForm(_DashMixin, forms.ModelForm):
             "organizer_instagram",
             "organizer_facebook",
             "visibility",
-            "public_until",
-            "searchable_until",
-            "archive_until",
             "permanent_archive",
         ]
-        # IMPORTANTE: los inputs HTML5 `type=date` / `type=datetime-local` SOLO
-        # entienden el valor en formato ISO (`YYYY-MM-DD` / `YYYY-MM-DDTHH:MM`).
-        # Sin un `format` explícito, Django los renderiza con el formato del locale
-        # `es` (`d/m/Y`) y el navegador, al no poder parsearlo, deja el campo
-        # VACÍO al editar — daba la sensación de que había que re-poner la fecha
-        # cada vez. Forzamos el formato ISO en el render.
+        # IMPORTANTE: el input HTML5 `type=date` SOLO entiende ISO (`YYYY-MM-DD`).
+        # Sin un `format` explícito, Django lo renderiza con el locale `es`
+        # (`d/m/Y`) y el navegador, al no poder parsearlo, deja el campo VACÍO al
+        # editar — daba la sensación de que había que re-poner la fecha cada vez.
+        # Forzamos el formato ISO en el render.
         widgets = {
             "date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
             "description": forms.Textarea(attrs={"rows": 3}),
             "status": forms.Select(),
             "visibility": forms.Select(),
-            "public_until": forms.DateTimeInput(
-                attrs={"type": "datetime-local"}, format="%Y-%m-%dT%H:%M"
-            ),
-            "searchable_until": forms.DateTimeInput(
-                attrs={"type": "datetime-local"}, format="%Y-%m-%dT%H:%M"
-            ),
-            "archive_until": forms.DateTimeInput(
-                attrs={"type": "datetime-local"}, format="%Y-%m-%dT%H:%M"
-            ),
         }
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -103,10 +96,14 @@ class EventForm(_DashMixin, forms.ModelForm):
         # Los inputs HTML5 envían SIEMPRE en ISO; aceptamos ISO sin importar el locale.
         # (mypy no estrecha el tipo a DateField/DateTimeField → ignoramos attr-defined.)
         self.fields["date"].input_formats = ["%Y-%m-%d"]  # type: ignore[attr-defined]
-        for f in ("public_until", "searchable_until", "archive_until"):
-            self.fields[f].required = False
-            self.fields[f].help_text = _("Opcional. Si lo dejás vacío usamos la política estándar.")
-            self.fields[f].input_formats = ["%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"]  # type: ignore[attr-defined]
+        # La retención usa los defaults (90/180/365 días); ya NO exponemos las
+        # fechas a mano (un valor en el pasado cerraba la galería sin querer). Lo
+        # único configurable es "mantener la galería siempre abierta".
+        self.fields["permanent_archive"].label = _("Mantener la galería siempre abierta")
+        self.fields["permanent_archive"].help_text = _(
+            "Ignora la regla de 90 días: la galería pública queda abierta mientras "
+            "el evento esté en 'Galería abierta'."
+        )
         self._style_widgets()
 
     def clean_status(self) -> str:

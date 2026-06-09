@@ -49,6 +49,21 @@ def test_create_event_custom_retention(admin_client: Client) -> None:
 
 
 @pytest.mark.django_db
+def test_event_form_hides_retention_dates() -> None:
+    """Las fechas de retención NO se exponen en el form: en mobile el selector
+    arranca en "ahora" y un toque dejaba public_until en el pasado → la galería
+    se cerraba sola. Quedan en defaults (90/180/365); solo permanent_archive es
+    configurable."""
+    from apps.dashboard.forms import EventForm
+
+    fields = EventForm().fields
+    assert "public_until" not in fields
+    assert "searchable_until" not in fields
+    assert "archive_until" not in fields
+    assert "permanent_archive" in fields
+
+
+@pytest.mark.django_db
 def test_event_detail_renders_all_tabs(admin_client: Client) -> None:
     event = EventFactory(status=EventStatus.LIVE)
     for tab in ("resumen", "fotos", "fotografos", "links", "dorsales"):
