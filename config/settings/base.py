@@ -245,6 +245,22 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = env("TIME_ZONE")
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 60 * 30  # 30 min
+
+# Routing de tasks a colas. El reconocimiento facial es LENTO (~15s/foto con
+# InsightFace) y, en un solo worker, tapa la cola: los `process_photo` (preview/
+# thumbnail, ~2s → deja la foto lista para aprobar) quedan atrás y la foto se ve
+# "procesando" un buen rato. Lo separamos:
+#   - cola `faces`  → SOLO run_face_recognition_on_photo (worker pesado con modelo).
+#   - cola `celery` → todo lo demás (process_photo, OCR, crons), también consumida
+#     por un worker LIVIANO dedicado (PROCESS_TYPE=worker_fast) → las fotos quedan
+#     listas para aprobar en segundos sin esperar a la cara.
+# Backward-compatible: el worker pesado consume `celery,faces`, así que hasta que
+# exista el worker liviano sigue procesando todo (sin gap).
+CELERY_TASK_DEFAULT_QUEUE = "celery"
+CELERY_TASK_ROUTES = {
+    "photos.run_face_recognition_on_photo": {"queue": "faces"},
+}
+
 CELERY_BEAT_SCHEDULE: dict[str, dict] = {
     # Retención escalonada de eventos: avanza estados según fechas (Fase 6).
     "enforce-event-retention": {

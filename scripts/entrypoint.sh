@@ -3,11 +3,12 @@
 # Entrypoint único para los 3 roles del mismo image en Railway.
 #
 # El rol se elige con la env var PROCESS_TYPE (default: web):
-#   web    → migraciones + bootstrap del superadmin + gunicorn
-#   worker → celery worker (procesa fotos: preview/thumbnail + OCR de dorsal)
-#   beat   → celery beat (crons de retención/cleanup/backup de Fase 6)
+#   web         → migraciones + bootstrap del superadmin + gunicorn
+#   worker      → celery worker PESADO: cola `celery,faces` (incl. modelo facial)
+#   worker_fast → celery worker LIVIANO: cola `celery` (preview/thumbnail+OCR+crons)
+#   beat        → celery beat (crons de retención/cleanup/backup de Fase 6)
 #
-# Los 3 servicios de Railway corren ESTA misma imagen; solo cambia PROCESS_TYPE.
+# Los servicios de Railway corren ESTA misma imagen; solo cambia PROCESS_TYPE.
 # Así no hay que mantener un "start command" por servicio en el dashboard.
 # ============================================================================
 set -e
@@ -17,10 +18,21 @@ echo "[entrypoint] arrancando rol: ${ROLE}"
 
 case "$ROLE" in
   worker)
-    # concurrency 1 = una foto a la vez → poca RAM (decisión de costo). En prod
-    # el modelo facial está apagado (FACE_PROCESSING_ENABLED=False), así que el
-    # worker solo hace preview/thumbnail + OCR y se mantiene liviano.
-    exec celery -A config worker --loglevel=info --concurrency="${CELERY_CONCURRENCY:-1}"
+    # Worker PESADO: consume `celery` (todo) + `faces` (reconocimiento facial, que
+    # carga InsightFace ~1GB). concurrency 1 = una foto a la vez → poca RAM.
+    # Consume AMBAS colas para ser backward-compatible: si no existe `worker_fast`,
+    # este worker sigue haciendo TODO sin gap. Cuando existe el liviano, este se
+    # enfoca en la cara (lenta) y el liviano se lleva las tareas rápidas.
+    exec celery -A config worker --loglevel=info -Q celery,faces \
+      --concurrency="${CELERY_CONCURRENCY:-1}"
+    ;;
+  worker_fast)
+    # Worker LIVIANO: SOLO la cola `celery` (process_photo = preview/thumbnail,
+    # OCR, crons). NUNCA consume `faces`, así que no carga el modelo facial → se
+    # mantiene liviano y deja las fotos listas para aprobar en segundos sin
+    # esperar la extracción de caras (que corre en el worker pesado).
+    exec celery -A config worker --loglevel=info -Q celery \
+      --concurrency="${CELERY_FAST_CONCURRENCY:-2}"
     ;;
   beat)
     # --schedule en /tmp: el FS del contenedor es efímero y el schedule estático
