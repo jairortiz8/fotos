@@ -159,3 +159,39 @@ def test_blur_applied_and_original_not_modified(tmp_path) -> None:  # type: igno
             # El archivo original en disco NO se modificó.
             assert source.read_bytes() == original_bytes
         storage_module.reset_default_storage_for_tests()
+
+
+# ---------------------------------------------------------------------------
+# reindex_missing_faces (auto-recuperación)
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_reindex_missing_faces_reenqueues_unindexed(settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    settings.FACE_PROCESSING_ENABLED = True
+    from apps.photos.tasks import reindex_missing_faces
+
+    missing = PhotoFactory(status=PhotoStatus.APPROVED, has_faces_detected=False)
+    indexed = PhotoFactory(status=PhotoStatus.APPROVED, has_faces_detected=True)
+    enqueued: list[int] = []
+    monkeypatch.setattr(
+        "apps.photos.tasks.run_face_recognition_on_photo.delay",
+        lambda pid: enqueued.append(pid),
+    )
+    result = reindex_missing_faces.apply(kwargs={"days": 2, "limit": 100}).get()
+    assert result["reenqueued"] == 1
+    assert missing.id in enqueued
+    assert indexed.id not in enqueued  # ya indexada → no se re-encola
+
+
+@pytest.mark.django_db
+def test_reindex_missing_faces_noop_when_disabled(settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    settings.FACE_PROCESSING_ENABLED = False
+    from apps.photos.tasks import reindex_missing_faces
+
+    PhotoFactory(status=PhotoStatus.APPROVED, has_faces_detected=False)
+    called: list[int] = []
+    monkeypatch.setattr(
+        "apps.photos.tasks.run_face_recognition_on_photo.delay", lambda pid: called.append(pid)
+    )
+    result = reindex_missing_faces.apply(kwargs={}).get()
+    assert result["reenqueued"] == 0
+    assert called == []

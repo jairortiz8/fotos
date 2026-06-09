@@ -285,6 +285,12 @@ CELERY_BEAT_SCHEDULE: dict[str, dict] = {
         "task": "privacy.cleanup_failed_processing",
         "schedule": crontab(minute=0, hour="*/6"),  # cada 6 horas
     },
+    # Re-encola el indexado facial de fotos aprobadas recientes sin caras
+    # (recupera lo perdido por OOM/fallos → la búsqueda por selfie queda completa).
+    "reindex-missing-faces": {
+        "task": "photos.reindex_missing_faces",
+        "schedule": crontab(minute=30, hour="*/3"),  # cada 3 horas
+    },
     # Borra ZIPs expirados de R2 (Fase 3).
     "cleanup-expired-zips": {
         "task": "downloads.cleanup_expired_zips",

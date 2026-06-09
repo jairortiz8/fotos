@@ -8,6 +8,7 @@ genera preview con watermark y thumbnail, los sube a R2, dispara OCR.
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import tempfile
 from collections.abc import Iterator
@@ -17,6 +18,7 @@ from pathlib import Path
 from celery import shared_task
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 
 from apps.photos.imaging import (
     extract_exif_and_dimensions,
@@ -315,3 +317,35 @@ def regenerate_preview_with_minor_blur(self, photo_id: int) -> dict[str, object]
         raise self.retry(exc=exc) from exc
 
     return {"photo_id": photo.id, "blurred_faces": len(minor_faces)}
+
+
+# ---------------------------------------------------------------------------
+# reindex_missing_faces (auto-recuperación del indexado facial)
+# ---------------------------------------------------------------------------
+@shared_task(name="photos.reindex_missing_faces")
+def reindex_missing_faces(days: int = 2, limit: int = 100) -> dict[str, int]:
+    """Re-encola el reconocimiento facial para fotos APROBADAS recientes que
+    quedaron SIN indexar (p. ej. por un OOM del worker o un fallo transitorio),
+    para que la búsqueda por selfie las encuentre.
+
+    Idempotente por diseño: `run_face_recognition_on_photo` saltea las fotos ya
+    indexadas, así que re-encolar es barato y seguro. La ventana `days` evita
+    re-procesar para siempre fotos viejas genuinamente sin caras (paisajes,
+    carteles): pasada la ventana, dejan de re-encolarse.
+    """
+    if not settings.FACE_PROCESSING_ENABLED:
+        return {"reenqueued": 0}
+
+    cutoff = timezone.now() - dt.timedelta(days=days)
+    ids = list(
+        Photo.objects.filter(
+            status=PhotoStatus.APPROVED,
+            has_faces_detected=False,
+            created_at__gte=cutoff,
+        ).values_list("id", flat=True)[:limit]
+    )
+    for photo_id in ids:
+        run_face_recognition_on_photo.delay(photo_id)
+    if ids:
+        logger.info("reindex_missing_faces: re-encoladas %s foto(s)", len(ids))
+    return {"reenqueued": len(ids)}
