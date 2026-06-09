@@ -74,12 +74,20 @@ class EventGalleryView(View):
         if bib_query:
             return self._handle_bib_search(request, event, bib_query)
 
-        # Sin query: si la galería pública está cerrada (public_closed o
-        # searchable_only o public_until pasado), mostramos pantalla de "cerrada".
+        # Sin query: si la galería pública no está abierta mostramos una pantalla
+        # intermedia (con buscador por dorsal). Distinguimos dos casos para no
+        # confundir:
+        #   - UPCOMING ("Próximo"): el evento todavía NO abrió → "próximamente".
+        #   - public_closed / searchable_only / public_until pasado: ya cerró por
+        #     retención → "galería cerrada, buscá por dorsal".
         gallery_open = event.is_public() and event.status in PUBLIC_GALLERY_STATUSES
         if not gallery_open:
             if event.is_searchable():
-                return render(request, "public/event_closed.html", {"event": event})
+                return render(
+                    request,
+                    "public/event_closed.html",
+                    {"event": event, "is_upcoming": event.status == EventStatus.UPCOMING},
+                )
             raise Http404
 
         # Modos de navegación (sólo con galería abierta):

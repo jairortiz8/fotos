@@ -88,6 +88,32 @@ def test_gallery_searchable_only_shows_closed(client: Client) -> None:
 
 
 @pytest.mark.django_db
+def test_gallery_upcoming_shows_coming_soon_not_closed(client: Client) -> None:
+    """Un evento "Próximo" muestra "próximamente", NO el cartel de "cerrada".
+
+    Antes un evento upcoming caía en el mismo template de "galería cerrada al
+    público / ya no se muestra completa", lo que daba a entender que el evento
+    había terminado cuando en realidad todavía no abrió.
+    """
+    event = EventFactory(status=EventStatus.UPCOMING)
+    response = client.get(reverse("events:gallery", args=[event.slug]))
+    assert response.status_code == 200
+    assert response.context["is_upcoming"] is True
+    assert b"se publican pronto" in response.content
+    assert b"ya no se muestra completa" not in response.content
+
+
+@pytest.mark.django_db
+def test_gallery_live_empty_shows_no_photos_message(client: Client) -> None:
+    """Galería abierta sin fotos aprobadas → mensaje claro, no un grid vacío."""
+    event = EventFactory(status=EventStatus.LIVE)
+    response = client.get(reverse("events:gallery", args=[event.slug]))
+    assert response.status_code == 200
+    assert response.context["total_photos"] == 0
+    assert b"no hay fotos publicadas" in response.content
+
+
+@pytest.mark.django_db
 def test_gallery_404_when_slug_missing(client: Client) -> None:
     response = client.get(reverse("events:gallery", args=["no-existe"]))
     assert response.status_code == 404

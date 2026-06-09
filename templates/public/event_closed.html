@@ -15,9 +15,17 @@
   </section>
 
   <div class="px-6 py-14 flex flex-col items-center text-center">
+    {% if is_upcoming %}
+    {# El evento todavía no abrió la galería (estado "Próximo"). #}
+    <span class="rf-pill rf-pill--cyan mb-6">{% trans "Próximamente" %}</span>
+    <h2 class="font-display font-bold text-xl md:text-2xl max-w-lg">{% trans "Las fotos de este evento se publican pronto." %}</h2>
+    <p class="text-text-2 mt-3 max-w-md leading-relaxed text-sm">{% trans "Volvé en un rato. Si ya hay fotos tuyas, buscá por tu número de dorsal." %}</p>
+    {% else %}
+    {# El evento ya cerró la galería por retención (90+ días). #}
     <span class="rf-pill rf-pill--amber mb-6">{% trans "Galería cerrada al público" %}</span>
     <h2 class="font-display font-bold text-xl md:text-2xl max-w-lg">{% trans "Esta galería ya no se muestra completa." %}</h2>
     <p class="text-text-2 mt-3 max-w-md leading-relaxed text-sm">{% trans "Para ver tus fotos, buscá por tu número de dorsal." %}</p>
+    {% endif %}
 
     <form method="get" action="{% url 'events:gallery' slug=event.slug %}" class="flex flex-col sm:flex-row gap-3 mt-7 w-full max-w-md">
       <div class="flex-1 flex items-center gap-2.5 bg-ink-0 border border-border rounded-lg px-3.5 py-3">
