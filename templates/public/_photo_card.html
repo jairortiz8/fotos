@@ -15,12 +15,14 @@ Al tocarla se abre el lightbox, donde se descarga la foto (una a la vez).{% endc
   </a>
 
   {% comment %}Dorsales: TODOS los válidos (no rechazados), resaltando el buscado.
-     Antes mostraba solo |first (el de mayor confianza, incluso rechazados): en
-     fotos con varios corredores los demás "no aparecían" aunque la búsqueda sí
-     los encontrara. OJO: jamás usar {# #} multilínea — se renderiza como texto.{% endcomment %}
-  <div class="absolute bottom-2 left-2 pointer-events-none flex flex-wrap gap-1 max-w-[85%]">
+     Cada chip es un LINK a la búsqueda de ese dorsal (tocar un número = ver
+     todas las fotos de ese corredor). OJO: jamás {# #} multilínea — se
+     renderiza como texto.{% endcomment %}
+  <div class="absolute bottom-2 left-2 flex flex-wrap gap-1 max-w-[85%]">
     {% for bib in photo.bibs.all %}{% if not bib.rejected %}
-      <span class="rf-bib{% if bib_filter and bib.number == bib_filter %} !border-brand !text-brand{% endif %}">#{{ bib.number }}</span>
+      <a href="{% url 'events:gallery' slug=photo.event.slug %}?bib={{ bib.number|urlencode }}"
+         class="rf-bib hover:!border-brand transition{% if bib_filter and bib.number == bib_filter %} !border-brand !text-brand{% endif %}"
+         aria-label="{% blocktrans with n=bib.number %}Ver todas las fotos del dorsal {{ n }}{% endblocktrans %}">#{{ bib.number }}</a>
     {% endif %}{% endfor %}
   </div>
 </div>

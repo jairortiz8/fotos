@@ -44,12 +44,15 @@
 <div class="absolute bottom-0 left-0 right-0 z-20 flex items-center justify-between gap-4 px-5 md:px-8 py-5"
      style="background: linear-gradient(0deg, rgba(0,0,0,0.75), transparent);">
   <div class="flex items-center gap-3 md:gap-4 min-w-0">
-    {% comment %}TODOS los dorsales válidos de la foto (antes |first: en fotos con
-      varios corredores los demás no se veían). El buscado va resaltado.{% endcomment %}
+    {% comment %}TODOS los dorsales válidos de la foto, resaltando el buscado.
+      Cada chip linkea a la búsqueda de ese dorsal: tocar un número en una foto
+      grupal = saltar a todas las fotos de ese corredor.{% endcomment %}
     {% if bibs %}
     <div class="flex flex-wrap gap-1.5 shrink-0 max-w-[40vw]">
       {% for bib in bibs %}
-        <span class="rf-bib rf-bib--lg{% if bib_filter and bib.number == bib_filter %} !border-brand !text-brand{% endif %}">#{{ bib.number }}</span>
+        <a href="{% url 'events:gallery' slug=event.slug %}?bib={{ bib.number|urlencode }}"
+           class="rf-bib rf-bib--lg hover:!border-brand transition{% if bib_filter and bib.number == bib_filter %} !border-brand !text-brand{% endif %}"
+           aria-label="{% blocktrans with n=bib.number %}Ver todas las fotos del dorsal {{ n }}{% endblocktrans %}">#{{ bib.number }}</a>
       {% endfor %}
     </div>
     {% endif %}

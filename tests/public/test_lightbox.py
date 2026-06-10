@@ -115,3 +115,18 @@ def test_gallery_card_shows_all_valid_bibs(client: Client) -> None:
     assert b"#77" in resp.content
     assert b"#88" in resp.content
     assert b"#666" not in resp.content
+
+
+@pytest.mark.django_db
+def test_bib_chips_link_to_bib_search(client: Client) -> None:
+    """Tocar un dorsal en la tarjeta o el visor lleva a la búsqueda de ese
+    dorsal (todas las fotos de ese corredor)."""
+    event = EventFactory(status=EventStatus.LIVE)
+    photo = ApprovedPhotoFactory(event=event)
+    BibFactory(photo=photo, number="415")
+
+    gallery = client.get(reverse("events:gallery", args=[event.slug]))
+    assert b'?bib=415"' in gallery.content  # chip de la tarjeta = link
+
+    lightbox = client.get(reverse("events:lightbox", args=[event.slug, photo.id]))
+    assert b'?bib=415"' in lightbox.content  # chip del visor = link
