@@ -14,12 +14,13 @@ Al tocarla se abre el lightbox, donde se descarga la foto (una a la vez).{% endc
     {% endwith %}
   </a>
 
-  {# Bib badge bottom-left #}
-  {% with first_bib=photo.bibs.all|first %}
-    {% if first_bib %}
-    <div class="absolute bottom-2 left-2 pointer-events-none">
-      <span class="rf-bib">#{{ first_bib.number }}</span>
-    </div>
-    {% endif %}
-  {% endwith %}
+  {# Dorsales: TODOS los válidos (no rechazados), resaltando el buscado.
+     Antes mostraba solo |first (el de mayor confianza, incluso rechazados):
+     en fotos con varios corredores los demás "no aparecían" aunque la
+     búsqueda sí los encontrara. #}
+  <div class="absolute bottom-2 left-2 pointer-events-none flex flex-wrap gap-1 max-w-[85%]">
+    {% for bib in photo.bibs.all %}{% if not bib.rejected %}
+      <span class="rf-bib{% if bib_filter and bib.number == bib_filter %} !border-brand !text-brand{% endif %}">#{{ bib.number }}</span>
+    {% endif %}{% endfor %}
+  </div>
 </div>

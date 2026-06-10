@@ -86,3 +86,32 @@ def test_lightbox_photographer_name_falls_back_to_admin(client: Client) -> None:
     photo = ApprovedPhotoFactory(event=event, photographer_link=None, uploaded_by_admin=True)
     response = client.get(reverse("events:lightbox", args=[event.slug, photo.id]))
     assert response.context["photographer_name"] == "Admin"
+
+
+@pytest.mark.django_db
+def test_lightbox_shows_all_valid_bibs(client: Client) -> None:
+    """Regresión: el visor mostraba solo UN dorsal (|first) — en fotos con
+    varios corredores los demás 'no aparecían' aunque la búsqueda los hallara."""
+    event = EventFactory(status=EventStatus.LIVE)
+    photo = ApprovedPhotoFactory(event=event)
+    BibFactory(photo=photo, number="415")
+    BibFactory(photo=photo, number="222")
+    BibFactory(photo=photo, number="999", rejected=True)  # rechazado: NO se muestra
+    resp = client.get(reverse("events:lightbox", args=[event.slug, photo.id]))
+    assert resp.status_code == 200
+    assert b"#415" in resp.content
+    assert b"#222" in resp.content
+    assert b"#999" not in resp.content
+
+
+@pytest.mark.django_db
+def test_gallery_card_shows_all_valid_bibs(client: Client) -> None:
+    event = EventFactory(status=EventStatus.LIVE)
+    photo = ApprovedPhotoFactory(event=event)
+    BibFactory(photo=photo, number="77")
+    BibFactory(photo=photo, number="88")
+    BibFactory(photo=photo, number="666", rejected=True)
+    resp = client.get(reverse("events:gallery", args=[event.slug]))
+    assert b"#77" in resp.content
+    assert b"#88" in resp.content
+    assert b"#666" not in resp.content
