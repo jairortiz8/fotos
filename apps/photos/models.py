@@ -187,6 +187,7 @@ class Photo(TimeStampedModel):
 class BibSource(models.TextChoices):
     OCR_PADDLE = "ocr_paddle", _("OCR PaddleOCR")
     OCR_EASY = "ocr_easy", _("OCR EasyOCR")
+    OCR_GEMINI = "ocr_gemini", _("OCR Gemini (IA)")
     MANUAL_ADMIN = "manual_admin", _("Corregido por admin")
     MANUAL_USER_REPORT = "manual_user_report", _("Reportado por usuario")
 

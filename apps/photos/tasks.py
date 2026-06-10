@@ -25,7 +25,7 @@ from apps.photos.imaging import (
     generate_preview,
     generate_thumbnail,
 )
-from apps.photos.models import Bib, FaceEmbedding, Photo, PhotoStatus
+from apps.photos.models import Bib, BibSource, FaceEmbedding, Photo, PhotoStatus
 from apps.photos.storage import default_storage
 
 logger = logging.getLogger(__name__)
@@ -132,6 +132,25 @@ def process_photo(self, photo_id: int) -> dict[str, str | int]:
     }
 
 
+def _detect_bibs(source: Path, *, exhaustive: bool, photo_id: int) -> list:
+    """Despacha el OCR al backend configurado (OCR_BACKEND).
+
+    "gemini" → API (mejor lectura, sin engines en RAM). Si la API falla por lo
+    que sea, cae AUTOMÁTICO al OCR local: una foto nunca se queda sin intento
+    de OCR por un problema de red/cuota. "local" → PaddleOCR + EasyOCR.
+    """
+    from apps.ml.ocr import detect_bibs  # import local (libs pesadas, carga lazy)
+
+    if settings.OCR_BACKEND == "gemini":
+        from apps.ml.gemini_ocr import GeminiOCRError, detect_bibs_gemini
+
+        try:
+            return detect_bibs_gemini(source)
+        except GeminiOCRError as exc:
+            logger.warning("Gemini OCR falló (photo=%s): %s — fallback local", photo_id, exc)
+    return detect_bibs(source, exhaustive=exhaustive)
+
+
 # ---------------------------------------------------------------------------
 # run_ocr_on_photo
 # ---------------------------------------------------------------------------
@@ -151,8 +170,6 @@ def run_ocr_on_photo(self, photo_id: int, exhaustive: bool = False) -> dict[str,
     """
     from django.core.cache import cache
 
-    from apps.ml.ocr import detect_bibs  # import local (libs pesadas)
-
     try:
         photo = Photo.objects.get(id=photo_id)
         if photo.status == PhotoStatus.DELETED:
@@ -160,14 +177,19 @@ def run_ocr_on_photo(self, photo_id: int, exhaustive: bool = False) -> dict[str,
 
         bib_sources_created: list[str] = []
         with download_temp_file(photo.original_key) as source:
-            detections = detect_bibs(source, exhaustive=exhaustive)
+            detections = _detect_bibs(source, exhaustive=exhaustive, photo_id=photo_id)
 
         if not detections:
             return {"photo_id": photo.id, "detected": 0, "created": 0}
 
+        engine_to_source = {
+            "paddle": BibSource.OCR_PADDLE,
+            "easy": BibSource.OCR_EASY,
+            "gemini": BibSource.OCR_GEMINI,
+        }
         with transaction.atomic():
             for det in detections:
-                source_value = "ocr_paddle" if det.engine == "paddle" else "ocr_easy"
+                source_value = engine_to_source.get(det.engine, BibSource.OCR_EASY)
                 _bib, created = Bib.objects.get_or_create(
                     photo=photo,
                     number=det.number,

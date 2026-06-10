@@ -153,6 +153,67 @@ def test_process_photo_enqueues_ocr_exhaustive_per_setting(tmp_path: Path, setti
 
 
 @pytest.mark.django_db
+def test_run_ocr_gemini_backend_creates_bibs_with_gemini_source(
+    tmp_path: Path, settings
+) -> None:  # type: ignore[no-untyped-def]
+    """Con OCR_BACKEND=gemini, los dorsales salen de la API y quedan con
+    source=ocr_gemini (sin tocar los engines locales)."""
+    from apps.photos.models import BibSource
+
+    settings.OCR_BACKEND = "gemini"
+    photo = PhotoFactory(original_key="events/x/originals/gm.jpg")
+    det = BibDetection(number="415", confidence=0.9, bbox={}, engine="gemini")
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch("apps.ml.gemini_ocr.detect_bibs_gemini", return_value=[det]) as mock_gemini,
+        patch("apps.ml.ocr.detect_bibs") as mock_local,
+    ):
+        result = run_ocr_on_photo.apply(args=[photo.id]).get()
+    assert mock_gemini.called
+    assert not mock_local.called  # el local NI se toca si la API responde
+    assert result["created"] == 1
+    bib = Bib.objects.get(photo=photo)
+    assert bib.number == "415"
+    assert bib.source == BibSource.OCR_GEMINI
+
+
+@pytest.mark.django_db
+def test_run_ocr_gemini_falls_back_to_local_on_api_error(
+    tmp_path: Path, settings
+) -> None:  # type: ignore[no-untyped-def]
+    """Si la API falla (red/cuota), cae al OCR local — la foto nunca queda sin
+    intento de OCR."""
+    from apps.ml.gemini_ocr import GeminiOCRError
+
+    settings.OCR_BACKEND = "gemini"
+    photo = PhotoFactory(original_key="events/x/originals/gm2.jpg")
+    det = BibDetection(number="77", confidence=0.6, bbox={}, engine="paddle")
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch("apps.ml.gemini_ocr.detect_bibs_gemini", side_effect=GeminiOCRError("cuota")),
+        patch("apps.ml.ocr.detect_bibs", return_value=[det]) as mock_local,
+    ):
+        result = run_ocr_on_photo.apply(args=[photo.id]).get()
+    assert mock_local.called
+    assert result["created"] == 1
+    assert Bib.objects.get(photo=photo).source == "ocr_paddle"
+
+
+@pytest.mark.django_db
+def test_run_ocr_local_backend_ignores_gemini(tmp_path: Path, settings) -> None:  # type: ignore[no-untyped-def]
+    settings.OCR_BACKEND = "local"
+    photo = PhotoFactory(original_key="events/x/originals/lc.jpg")
+    det = BibDetection(number="88", confidence=0.7, bbox={}, engine="easy")
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch("apps.ml.ocr.detect_bibs", return_value=[det]) as mock_local,
+    ):
+        run_ocr_on_photo.apply(args=[photo.id]).get()
+    assert mock_local.called
+    assert Bib.objects.get(photo=photo).source == "ocr_easy"
+
+
+@pytest.mark.django_db
 def test_run_ocr_exhaustive_passes_flag_and_clears_cache(tmp_path: Path) -> None:
     """El modo exhaustivo pasa exhaustive=True a detect_bibs y, al terminar,
     limpia el flag de cache `ocr_rerun:<id>` (corta el "re-detectando…")."""

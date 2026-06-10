@@ -3,13 +3,15 @@
 # Entrypoint único para los 3 roles del mismo image en Railway.
 #
 # El rol se elige con la env var PROCESS_TYPE (default: web):
-#   web         → migraciones + bootstrap del superadmin + gunicorn
-#   worker      → celery worker PESADO: cola `celery,faces` (incl. modelo facial)
-#   worker_fast → celery worker LIVIANO: cola `celery` (preview/thumbnail+OCR+crons)
-#   beat        → celery beat (crons de retención/cleanup/backup de Fase 6)
+#   web    → migraciones + bootstrap del superadmin + gunicorn
+#   worker → celery worker ÚNICO: colas `celery,faces,fast` (con OCR_BACKEND=gemini
+#            no carga engines de OCR; sólo InsightFace para el selfie)
+#   beat   → celery beat (crons de retención/cleanup/backup de Fase 6)
 #
 # Los servicios de Railway corren ESTA misma imagen; solo cambia PROCESS_TYPE.
 # Así no hay que mantener un "start command" por servicio en el dashboard.
+# (El rol worker_fast se eliminó en la consolidación 2026-06-09: con el OCR en
+# Gemini el worker único queda chico y no hace falta separar colas por RAM.)
 # ============================================================================
 set -e
 
@@ -18,19 +20,13 @@ echo "[entrypoint] arrancando rol: ${ROLE}"
 
 case "$ROLE" in
   worker)
-    # Worker PESADO: consume las 3 colas → `celery` (crons + tasks viejas sin ruta),
-    # `faces` (reconocimiento facial, carga InsightFace ~1GB) y `fast` (respaldo de
-    # process_photo/OCR si el worker liviano no está). concurrency 1 = poca RAM.
+    # Worker ÚNICO: `celery` (crons), `faces` (InsightFace ~2GB, selfie) y `fast`
+    # (preview/thumbnail + OCR vía Gemini API — los engines locales sólo cargan
+    # si la API falla y entra el fallback). concurrency 1 = un proceso, una sola
+    # copia de los modelos (2 procesos cargando engines fue el OOM-stall del
+    # incidente del 2026-06-09; no repetir).
     exec celery -A config worker --loglevel=info -Q celery,faces,fast \
       --concurrency="${CELERY_CONCURRENCY:-1}"
-    ;;
-  worker_fast)
-    # Worker LIVIANO: SOLO la cola `fast` (process_photo = preview/thumbnail + OCR).
-    # NUNCA consume `faces` ni `celery`, así que jamás agarra una task de cara y no
-    # carga el modelo facial → se mantiene liviano y deja las fotos listas para
-    # aprobar en segundos sin esperar la extracción de caras (worker pesado).
-    exec celery -A config worker --loglevel=info -Q fast \
-      --concurrency="${CELERY_FAST_CONCURRENCY:-2}"
     ;;
   beat)
     # --schedule en /tmp: el FS del contenedor es efímero y el schedule estático

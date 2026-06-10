@@ -95,7 +95,18 @@ FACE_PROCESSING_ENABLED = env.bool("FACE_PROCESSING_ENABLED", default=FACE_SEARC
 # Más lento por foto (~15-20s vs ~5s) pero el preview va por otra task → las
 # fotos quedan aprobables igual de rápido; sólo el dorsal completo tarda más.
 # Apagable por env si algún día el ruido extra molesta más de lo que aporta.
+# NOTA: sólo aplica al backend "local"; con OCR_BACKEND=gemini se ignora.
 OCR_EXHAUSTIVE_ON_UPLOAD = env.bool("OCR_EXHAUSTIVE_ON_UPLOAD", default=True)
+
+# Backend de OCR de dorsales (decisión de Jair, 2026-06-09, validada en vivo):
+#   "gemini" → Gemini API: lee mejor (encontró dorsales que el local no podía),
+#              cuesta centavos por foto y NO carga engines en RAM (el worker
+#              queda chico). Si la API falla, cae automático al local.
+#   "local"  → PaddleOCR + EasyOCR en el worker (~4 GB RAM al usarse).
+# Default "local" para dev/tests (sin red, sin key); prod setea "gemini".
+OCR_BACKEND = env("OCR_BACKEND", default="local")
+GEMINI_API_KEY = env("GEMINI_API_KEY", default="")
+GEMINI_OCR_MODEL = env("GEMINI_OCR_MODEL", default="gemini-2.5-flash-lite")
 
 # Blur automático de caras de menores en el preview público (parte del paso
 # facial). Decisión de Jair: APAGADO en prod (MINOR_BLUR_ENABLED=false) — quiere
