@@ -87,17 +87,29 @@ def _exif_to_dict(img: Image.Image) -> dict[str, Any]:
     return result
 
 
+def _strip_nulls(text: str) -> str:
+    """Postgres jsonb NO acepta \\u0000 dentro de strings (DataError) — y las
+    cámaras meten bytes nulos en tags EXIF binarios (p.ej. ComponentsConfiguration
+    de Canon). Sin esta limpieza, el save() de process_photo explota y la foto
+    queda clavada en "procesando" (incidente del evento Camino, 2026-06-09)."""
+    return text.replace("\x00", "")
+
+
 def _make_json_safe(value: Any) -> Any:
     if isinstance(value, bytes):
         try:
-            return value.decode("utf-8", errors="ignore")
+            return _strip_nulls(value.decode("utf-8", errors="ignore"))
         except Exception:
             return None
-    if isinstance(value, dict | list | tuple):
-        return [_make_json_safe(v) for v in value] if isinstance(value, list | tuple) else value
-    if isinstance(value, str | int | float | bool) or value is None:
+    if isinstance(value, str):
+        return _strip_nulls(value)
+    if isinstance(value, dict):
+        return {str(k): _make_json_safe(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_make_json_safe(v) for v in value]
+    if isinstance(value, int | float | bool) or value is None:
         return value
-    return str(value)
+    return _strip_nulls(str(value))
 
 
 def _safe_int(value: Any) -> int | None:
