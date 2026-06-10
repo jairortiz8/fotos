@@ -7,7 +7,6 @@ descartó en la vista (síncrono).
 
 from __future__ import annotations
 
-import contextlib
 import datetime as dt
 import logging
 from typing import Any
@@ -270,16 +269,22 @@ def cleanup_old_audit_logs() -> dict[str, int]:
 
 @shared_task(name="privacy.cleanup_failed_processing")
 def cleanup_failed_processing() -> dict[str, int]:
-    """Marca como failed las fotos atascadas en uploading/processing > 1 hora."""
+    """Marca como failed las fotos atascadas en uploading/processing > 1 hora.
+
+    NO borra el original de R2 (cambio post-incidente 2026-06-09): una foto
+    "atascada" puede deberse a una falla TRANSITORIA de los workers — esa noche
+    este cron borró los originales de 133 fotos recuperables y el fotógrafo
+    tuvo que re-subirlas. Marcar como failed alcanza para sacarlas del flujo;
+    los bytes quedan en R2 y un re-proceso (process_photo) las recupera. La
+    limpieza física real la hace la retención del evento
+    (delete_event_photos_permanently) o cleanup_orphaned_r2_objects.
+    """
     cutoff = timezone.now() - dt.timedelta(hours=STUCK_PHOTO_HOURS)
     stuck = Photo.objects.filter(
         status__in=[PhotoStatus.UPLOADING, PhotoStatus.PROCESSING], updated_at__lt=cutoff
     )
     count = 0
     for photo in stuck:
-        if photo.original_key:
-            with contextlib.suppress(R2NotConfiguredError, R2UploadError):
-                default_storage().delete(photo.original_key)
         photo.status = PhotoStatus.PROCESSING_FAILED
         photo.save(update_fields=["status", "updated_at"])
         count += 1

@@ -102,3 +102,24 @@ def test_orphaned_r2_deletes_when_few() -> None:
     assert result["deleted"] is True
     store.delete_many.assert_called_once()
     assert AuditLog.objects.filter(action="r2.orphans_cleaned").exists()
+
+
+@pytest.mark.django_db
+def test_stuck_photos_keep_their_r2_original() -> None:
+    """Regresión del incidente 2026-06-09: el cron marcaba failed Y BORRABA el
+    original de R2 — destruyó 133 fotos recuperables que estaban atascadas por
+    una falla transitoria de los workers. Marcar failed NO debe tocar R2."""
+    from unittest.mock import patch
+
+    photo = PhotoFactory(
+        event=EventFactory(),
+        status=PhotoStatus.PROCESSING,
+        original_key="events/x/originals/keep-me.jpg",
+    )
+    Photo.objects.filter(id=photo.id).update(updated_at=timezone.now() - dt.timedelta(hours=2))
+    with patch("apps.privacy.tasks.default_storage") as mock_storage:
+        result = cleanup_failed_processing()
+    photo.refresh_from_db()
+    assert photo.status == PhotoStatus.PROCESSING_FAILED
+    assert result["marked_failed"] == 1
+    mock_storage.assert_not_called()  # ni delete ni nada: los bytes quedan
