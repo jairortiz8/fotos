@@ -175,3 +175,16 @@ def test_gallery_unknown_photographer_404(client: Client) -> None:
     event = EventFactory(status=EventStatus.LIVE)
     resp = client.get(reverse("events:gallery", args=[event.slug]) + "?fotografo=999999")
     assert resp.status_code == 404
+
+
+@pytest.mark.django_db
+def test_gallery_does_not_render_template_comments(client: Client) -> None:
+    """Regresión del clásico de Django: un comentario {# #} MULTILÍNEA se
+    renderiza como texto (pasó en prod 2026-06-09 con la tarjeta de foto).
+    Siempre {% comment %}. Esto asegura que ningún resto quede visible."""
+    event = EventFactory(status=EventStatus.LIVE)
+    ApprovedPhotoFactory(event=event)
+    resp = client.get(reverse("events:gallery", args=[event.slug]))
+    assert b"{#" not in resp.content
+    assert b"#}" not in resp.content
+    assert b"no aparec" not in resp.content  # texto del comentario del incidente
