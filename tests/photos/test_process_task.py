@@ -153,9 +153,7 @@ def test_process_photo_enqueues_ocr_exhaustive_per_setting(tmp_path: Path, setti
 
 
 @pytest.mark.django_db
-def test_run_ocr_gemini_backend_creates_bibs_with_gemini_source(
-    tmp_path: Path, settings
-) -> None:  # type: ignore[no-untyped-def]
+def test_run_ocr_gemini_backend_creates_bibs_with_gemini_source(tmp_path: Path, settings) -> None:  # type: ignore[no-untyped-def]
     """Con OCR_BACKEND=gemini, los dorsales salen de la API y quedan con
     source=ocr_gemini (sin tocar los engines locales)."""
     from apps.photos.models import BibSource
@@ -178,9 +176,7 @@ def test_run_ocr_gemini_backend_creates_bibs_with_gemini_source(
 
 
 @pytest.mark.django_db
-def test_run_ocr_gemini_falls_back_to_local_on_api_error(
-    tmp_path: Path, settings
-) -> None:  # type: ignore[no-untyped-def]
+def test_run_ocr_gemini_falls_back_to_local_on_api_error(tmp_path: Path, settings) -> None:  # type: ignore[no-untyped-def]
     """Si la API falla (red/cuota), cae al OCR local — la foto nunca queda sin
     intento de OCR."""
     from apps.ml.gemini_ocr import GeminiOCRError
