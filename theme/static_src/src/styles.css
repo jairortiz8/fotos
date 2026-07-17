@@ -329,9 +329,14 @@
     line-height: 1;
     padding: 0.1875rem 0.375rem;
     border-radius: var(--radius-badge);
-    background: rgba(0, 212, 255, 0.12);
+    /* Fondo oscuro SÓLIDO (+blur) para que el dorsal se lea sobre cualquier
+       foto o banner de sponsor (antes era cyan translúcido → invisible sobre
+       fondos claros). El cyan queda en el texto y el borde (identidad de marca). */
+    background: rgba(9, 9, 11, 0.72);
     color: var(--color-data);
-    border: 1px solid rgba(0, 212, 255, 0.25);
+    border: 1px solid rgba(0, 212, 255, 0.55);
+    -webkit-backdrop-filter: blur(3px);
+    backdrop-filter: blur(3px);
   }
   .rf-bib--lg {
     font-size: 0.8125rem;
