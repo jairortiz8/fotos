@@ -70,6 +70,40 @@ def test_lightbox_prev_next_navigation(client: Client) -> None:
 
 
 @pytest.mark.django_db
+def test_lightbox_navigation_stays_within_bib_filter(client: Client) -> None:
+    """Al entrar a una foto DESDE una búsqueda por dorsal, prev/next deben quedarse
+    en las fotos de ESE dorsal — no saltar a la inmediata en el tiempo del evento
+    completo. (Reportado por un usuario: 'me metía a un dorsal y el siguiente no
+    seguía las del dorsal sino la inmediata en el tiempo'.)"""
+    import datetime as dt
+
+    from django.utils import timezone
+
+    event = EventFactory(status=EventStatus.LIVE)
+    now = timezone.now()
+    # Fotos del dorsal 467 en T-30 y T-10.
+    a = ApprovedPhotoFactory(event=event, capture_time=now - dt.timedelta(minutes=30))
+    BibFactory(photo=a, number="467")
+    b = ApprovedPhotoFactory(event=event, capture_time=now - dt.timedelta(minutes=10))
+    BibFactory(photo=b, number="467")
+    # Foto de OTRO dorsal EN EL MEDIO (T-20): es la "inmediata en el tiempo" pero
+    # NO debe ser el next cuando venís filtrando por el 467.
+    mid = ApprovedPhotoFactory(event=event, capture_time=now - dt.timedelta(minutes=20))
+    BibFactory(photo=mid, number="999")
+
+    # Con el filtro de dorsal 467: next = b (la otra del 467), saltándose `mid`.
+    filtered = client.get(reverse("events:lightbox", args=[event.slug, a.id]), {"bib": "467"})
+    assert filtered.context["prev_photo"] is None
+    assert filtered.context["next_photo"] == b
+    # Y las URLs de navegación preservan el ?bib para seguir filtrando.
+    assert b"?bib=467" in filtered.content
+
+    # Sin filtro: next = mid (la inmediata en el tiempo) — comportamiento por defecto.
+    unfiltered = client.get(reverse("events:lightbox", args=[event.slug, a.id]))
+    assert unfiltered.context["next_photo"] == mid
+
+
+@pytest.mark.django_db
 def test_lightbox_htmx_returns_partial(client: Client) -> None:
     event = EventFactory(status=EventStatus.LIVE)
     photo = ApprovedPhotoFactory(event=event)
