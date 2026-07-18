@@ -38,14 +38,14 @@
   </header>
 
   {# ===== Event hero ===== #}
-  <section class="relative overflow-hidden px-6 md:px-10 pt-10 pb-8" style="background:#0a0a0b;">
+  <section class="relative overflow-hidden px-6 md:px-10 pt-12 pb-9 md:pt-16 md:pb-12" style="background:#0a0a0b;">
     {% if event.cover_url %}
-    {# Portada de fondo (opacity-40) + scrim: oscurece izquierda/abajo, foto viva a la derecha. #}
+    {# Portada de fondo + scrim: oscurece izquierda/abajo (texto legible), foto viva a la derecha. #}
     <img src="{{ event.cover_url }}" alt="" aria-hidden="true"
-         class="absolute inset-0 w-full h-full object-cover opacity-40">
-    <div class="absolute inset-0" style="background: linear-gradient(90deg, rgba(10,10,11,0.95) 0%, rgba(10,10,11,0.75) 32%, rgba(10,10,11,0.34) 62%, rgba(10,10,11,0.55) 100%);"></div>
-    <div class="absolute inset-0" style="background: linear-gradient(180deg, rgba(10,10,11,0.25) 0%, transparent 42%, #0a0a0b 100%);"></div>
-    <div class="absolute inset-0 pointer-events-none" style="background: radial-gradient(120% 90% at 92% 8%, rgba(252,82,0,0.20), transparent 55%); mix-blend-mode: soft-light;"></div>
+         class="absolute inset-0 w-full h-full object-cover opacity-[0.55]">
+    <div class="absolute inset-0" style="background: linear-gradient(90deg, rgba(10,10,11,0.97) 0%, rgba(10,10,11,0.82) 28%, rgba(10,10,11,0.34) 60%, rgba(10,10,11,0.12) 82%, rgba(10,10,11,0.5) 100%);"></div>
+    <div class="absolute inset-0" style="background: linear-gradient(180deg, rgba(10,10,11,0.35) 0%, transparent 40%, #0a0a0b 100%);"></div>
+    <div class="absolute inset-0 pointer-events-none" style="background: radial-gradient(120% 90% at 90% 6%, rgba(252,82,0,0.22), transparent 55%); mix-blend-mode: soft-light;"></div>
     {% else %}
     {# Sin portada: fondo de marca (degradé + brillo naranja). #}
     <div class="absolute inset-0" style="background: radial-gradient(120% 130% at 100% -12%, rgba(252,82,0,0.16), transparent 55%), linear-gradient(180deg, #1a1418 0%, #0a0a0b 100%);"></div>
@@ -61,10 +61,10 @@
       </div>
       <h1 class="font-display font-black uppercase tracking-tight leading-[0.9]"
           style="font-size: clamp(2.25rem, 9vw, 4rem);">{{ event.name }}</h1>
-      <div class="flex items-center gap-4 mt-4 text-text-2 font-mono text-xs">
-        <span><span class="text-text-1">{{ event.photo_count }}</span> {% trans "fotos" %}</span>
+      <div class="flex items-center gap-4 mt-5 text-text-2 font-mono text-[13px]">
+        <span><span class="text-data font-semibold">{{ event.photo_count }}</span> {% trans "fotos" %}</span>
         <span class="w-1 h-1 rounded-full bg-text-3"></span>
-        <span><span class="text-text-1">{{ photographer_count|default:event.photographer_count }}</span> {% trans "fotógrafos" %}</span>
+        <span><span class="text-data font-semibold">{{ photographer_count|default:event.photographer_count }}</span> {% trans "fotógrafos" %}</span>
       </div>
       {% if event.has_organizer %}
       <div class="flex items-center gap-3 mt-4 text-xs text-text-2">
