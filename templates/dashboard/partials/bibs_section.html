@@ -24,8 +24,7 @@
 </form>
 
 {% if ocr_rerunning %}
-  {# Re-detectando: el poller re-pide esta sección cada 2s hasta que el worker
-     limpia el flag de cache → el próximo render trae el botón (no el poller). #}
+  {# Re-detectando: el poller re-pide esta sección cada 2s hasta que el worker limpia el flag de cache. #}
   <div class="flex items-center gap-2 text-[12px] text-text-2 rf-card px-3 py-2"
        hx-get="{% url 'dashboard:bibs_section' pk=photo.id %}"
        hx-trigger="every 2s" hx-target="#bibs-section" hx-swap="innerHTML">
@@ -33,8 +32,7 @@
     {% trans "Re-detectando dorsales… puede tardar unos segundos." %}
   </div>
 {% else %}
-  {# OCR exhaustivo bajo demanda: corre ambos engines sobre el original + una
-     copia agrandada. Útil cuando el OCR automático perdió o leyó mal el dorsal. #}
+  {# OCR exhaustivo bajo demanda: ambos engines + copia agrandada. Útil si el OCR automático falló. #}
   <button type="button" class="rf-ghost w-full !justify-center text-xs gap-1.5"
           hx-post="{% url 'dashboard:rerun_ocr' pk=photo.id %}"
           hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
