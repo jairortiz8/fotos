@@ -50,9 +50,16 @@
     {% if bibs %}
     <div class="flex flex-wrap gap-1.5 shrink-0 max-w-[40vw]">
       {% for bib in bibs %}
+        {% if bib_filter and bib.number == bib_filter %}
+        {# Dorsal buscado (resaltado): click = QUITAR el filtro → galería completa. #}
+        <a href="{% url 'events:gallery' slug=event.slug %}"
+           class="rf-bib rf-bib--lg !border-brand !text-brand hover:opacity-80 transition"
+           aria-label="{% blocktrans with n=bib.number %}Quitar el filtro del dorsal {{ n }}{% endblocktrans %}">#{{ bib.number }}</a>
+        {% else %}
         <a href="{% url 'events:gallery' slug=event.slug %}?bib={{ bib.number|urlencode }}"
-           class="rf-bib rf-bib--lg hover:!border-brand transition{% if bib_filter and bib.number == bib_filter %} !border-brand !text-brand{% endif %}"
+           class="rf-bib rf-bib--lg hover:!border-brand transition"
            aria-label="{% blocktrans with n=bib.number %}Ver todas las fotos del dorsal {{ n }}{% endblocktrans %}">#{{ bib.number }}</a>
+        {% endif %}
       {% endfor %}
     </div>
     {% endif %}

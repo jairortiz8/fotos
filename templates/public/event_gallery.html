@@ -126,8 +126,15 @@
 
   {# ===== Filters strip (solo en resultados de búsqueda) ===== #}
   {% if is_search_result %}
-  <div class="flex items-center justify-between px-6 md:px-10 py-3.5 border-b border-border">
-    <span class="rf-pill rf-pill--orange">{% blocktrans count n=result_count %}Dorsal #{{ bib_query }} · {{ n }} foto{% plural %}Dorsal #{{ bib_query }} · {{ n }} fotos{% endblocktrans %}</span>
+  <div class="flex items-center justify-between gap-3 px-6 md:px-10 py-3.5 border-b border-border">
+    {# El pill del filtro es un botón para QUITARLO: click → galería completa. #}
+    <a href="{% url 'events:gallery' slug=event.slug %}"
+       class="rf-pill rf-pill--orange hover:opacity-80 transition"
+       aria-label="{% trans 'Quitar el filtro de dorsal y ver todas las fotos' %}">
+      {% blocktrans count n=result_count %}Dorsal #{{ bib_query }} · {{ n }} foto{% plural %}Dorsal #{{ bib_query }} · {{ n }} fotos{% endblocktrans %}
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </a>
+    <a href="{% url 'events:gallery' slug=event.slug %}" class="text-[12px] text-text-2 hover:text-text-1 transition shrink-0">{% trans "Ver todas" %}</a>
   </div>
   {% endif %}
 

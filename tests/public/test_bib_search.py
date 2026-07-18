@@ -39,6 +39,22 @@ def test_search_returns_matching_photos(client: Client) -> None:
 
 
 @pytest.mark.django_db
+def test_active_bib_chip_and_strip_clear_the_filter(client: Client) -> None:
+    """Con un dorsal buscado, el chip resaltado y el pill del filtro linkean a
+    QUITAR el filtro (galería sin ?bib), no a re-buscar el mismo dorsal."""
+    event, _photo = _event_with_bib("1042")
+    content = client.get(
+        reverse("events:gallery", args=[event.slug]), {"bib": "1042"}
+    ).content.decode()
+    # El pill del filtro es un botón de "quitar" + hay un "Ver todas".
+    assert "Quitar el filtro de dorsal y ver todas las fotos" in content
+    assert "Ver todas" in content
+    # El chip del dorsal buscado pasa a "quitar", ya no "ver todas las del 1042".
+    assert "Quitar el filtro del dorsal 1042" in content
+    assert "Ver todas las fotos del dorsal 1042" not in content
+
+
+@pytest.mark.django_db
 def test_search_normalizes_query_uppercase(client: Client) -> None:
     event, photo = _event_with_bib("A123")
     response = client.get(reverse("events:gallery", args=[event.slug]), {"bib": "a123"})
