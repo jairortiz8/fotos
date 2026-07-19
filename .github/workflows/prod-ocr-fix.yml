@@ -1,0 +1,143 @@
+name: prod-ocr-fix (one-off)
+
+# Unifica el OCR en Gemini:
+#  - worker_fast: OCR_BACKEND=gemini + GEMINI_API_KEY (hoy no los tenía).
+#  - worker: WORKER_QUEUES=celery,faces (deja de tomar la cola `fast`), así el
+#    OCR corre SOLO en worker_fast (Gemini) → determinístico.
+# Redeploya, verifica la config y PRUEBA en vivo: reprocesa una foto real que
+# hoy tiene dorsales pero ninguno de Gemini; si aparece uno de Gemini, probado.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-ocrfix"]
+
+jobs:
+  ocrfix:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      SHA: 24378e0c5e949fcfcab3eb5d1c7d07aff85c4dc1
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" "celery[redis]==5.6.3"
+      - name: aplicar + verificar
+        run: |
+          set -uo pipefail
+          SHORT="${SHA:0:7}"
+          gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          upsert() { # svc name value
+            gql '{"query":"mutation($p:String!,$e:String!,$s:String!,$n:String!,$v:String!){ variableUpsert(input:{projectId:$p,environmentId:$e,serviceId:$s,name:$n,value:$v}) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'","n":"'"$2"'","v":'"$3"'}}' | jq -c '.data // .errors'
+          }
+          deploy() { gql '{"query":"mutation($s:String!,$e:String!,$c:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e, commitSha:$c) }","variables":{"s":"'"$1"'","e":"'"$ENV_ID"'","c":"'"$SHA"'"}}' | jq -c '.data // .errors'; }
+
+          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
+          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          RID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Redis")|.id')
+          FID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="fotos")|.id')
+          WID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="worker")|.id')
+          WFID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="worker_fast")|.id')
+
+          echo "==================== 1) LEER GEMINI KEY DEL WORKER ===================="
+          WV=$(vars_of "$WID")
+          GKEY=$(echo "$WV" | jq -r '.GEMINI_API_KEY // ""')
+          GMODEL=$(echo "$WV" | jq -r '.GEMINI_OCR_MODEL // ""')
+          if [ -z "$GKEY" ]; then echo "!! worker no tiene GEMINI_API_KEY — abortando"; exit 1; fi
+          echo "GEMINI_API_KEY del worker: set (${#GKEY} chars); GEMINI_OCR_MODEL='${GMODEL}'"
+
+          echo "==================== 2) SETEAR VARS ===================="
+          echo "worker_fast OCR_BACKEND=gemini -> $(upsert "$WFID" OCR_BACKEND '"gemini"')"
+          echo "worker_fast GEMINI_API_KEY -> $(upsert "$WFID" GEMINI_API_KEY "$(printf '%s' "$GKEY" | jq -Rs '.')")"
+          [ -n "$GMODEL" ] && echo "worker_fast GEMINI_OCR_MODEL -> $(upsert "$WFID" GEMINI_OCR_MODEL "$(printf '%s' "$GMODEL" | jq -Rs '.')")"
+          echo "worker WORKER_QUEUES=celery,faces -> $(upsert "$WID" WORKER_QUEUES '"celery,faces"')"
+
+          echo "==================== 3) REDEPLOY worker + worker_fast ===================="
+          echo "worker -> $(deploy "$WID")"
+          echo "worker_fast -> $(deploy "$WFID")"
+
+          echo "==================== 4) ESPERAR SUCCESS en $SHORT ===================="
+          for i in $(seq 1 30); do
+            ST=$(gql '{"query":"query($p:String!,$e:String!){ deployments(first:120, input:{projectId:$p, environmentId:$e}){ edges { node { status createdAt meta service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}' \
+              | jq -r --arg f "$SHORT" '[.data.deployments.edges[].node] | map(select(.service.name=="worker" or .service.name=="worker_fast"))
+                  | group_by(.service.name) | map(sort_by(.createdAt)|last)
+                  | map({svc:.service.name,status:.status,commit:((.meta.commitHash//"?")|tostring[0:7])})')
+            echo "intento $i: $(echo "$ST" | jq -c '.')"
+            OK=$(echo "$ST" | jq -r --arg f "$SHORT" '([.[]|select(.status=="SUCCESS" and .commit==$f)]|length) as $g | if (length>=2 and $g>=2) then "yes" else "no" end')
+            [ "$OK" = "yes" ] && { echo ">> worker + worker_fast SUCCESS en $SHORT"; break; }
+            sleep 30
+          done
+
+          echo "==================== 5) VERIFICAR CONFIG APLICADA ===================="
+          vars_of "$WFID" | jq -r '"worker_fast: OCR_BACKEND=\(.OCR_BACKEND // "null")  GEMINI_API_KEY=\(if (.GEMINI_API_KEY//"")!="" then "set" else "EMPTY" end)"'
+          vars_of "$WID"  | jq -r '"worker:      WORKER_QUEUES=\(.WORKER_QUEUES // "null")  OCR_BACKEND=\(.OCR_BACKEND // "null")"'
+          echo
+
+          # ---- credenciales DB / Redis ----
+          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          RDPUB=$(vars_of "$RID" | jq -r '.REDIS_PUBLIC_URL // empty')
+          CBURL=$(echo "$WV" | jq -r '.CELERY_BROKER_URL // empty')
+          SCHEME="${RDPUB%%://*}"; REST="${RDPUB#*://}"; AUTH="${REST%%/*}"
+          DBIDX=$(printf '%s' "$CBURL" | sed -nE 's#.*/([0-9]+)(\?.*)?$#\1#p'); [ -z "$DBIDX" ] && DBIDX=0
+          export BROKER="${SCHEME}://${AUTH}/${DBIDX}"
+
+          echo "==================== 6) PRUEBA EN VIVO: OCR con Gemini ===================="
+          python3 - <<'PY'
+          import os, time
+          import psycopg
+          from celery import Celery
+          from kombu import Exchange, Queue
+
+          def conn():
+              return psycopg.connect(os.environ["DBURL"], connect_timeout=20, autocommit=True,
+                                     keepalives=1, keepalives_idle=15, keepalives_interval=5, keepalives_count=5)
+          def q1(sql,a=()):
+              for _ in range(4):
+                  try:
+                      with conn() as c,c.cursor() as cur: cur.execute(sql,a); r=cur.fetchone(); return r[0] if r else None
+                  except psycopg.OperationalError: time.sleep(2)
+              raise RuntimeError("db")
+          def run(sql,a=()):
+              for _ in range(4):
+                  try:
+                      with conn() as c,c.cursor() as cur: cur.execute(sql,a); return
+                  except psycopg.OperationalError: time.sleep(2)
+              raise RuntimeError("db")
+
+          eid=q1("select id from events_event where slug='prueba'")
+          # foto aprobada con dorsales pero SIN ninguno de Gemini
+          pid=q1("""select p.id from photos_photo p
+                    where p.event_id=%s and p.status='approved'
+                    and exists (select 1 from photos_bib b where b.photo_id=p.id)
+                    and not exists (select 1 from photos_bib b where b.photo_id=p.id and b.source ilike '%%gemini%%')
+                    order by p.id limit 1""",(eid,))
+          if not pid:
+              print("  (no encontré una foto con dorsales sin Gemini; el OCR igual quedó configurado en Gemini)")
+          else:
+              before=q1("select count(*) from photos_bib where photo_id=%s and source ilike '%%gemini%%'",(pid,))
+              allb=q1("select string_agg(distinct source, ',') from photos_bib where photo_id=%s",(pid,))
+              print(f"  foto id={pid}  dorsales-Gemini ANTES={before}  (fuentes actuales: {allb})")
+              run("update photos_photo set has_bibs_detected=false where id=%s",(pid,))
+              app=Celery(broker=os.environ["BROKER"]); app.conf.task_default_queue="celery"
+              app.conf.task_queues=(Queue("fast",Exchange("fast","direct"),routing_key="fast"),)
+              app.send_task("photos.process_photo",args=[pid],queue="fast")
+              print("  reprocesando (OCR ahora corre SOLO en worker_fast = Gemini)...")
+              after=before
+              for _ in range(45):
+                  time.sleep(6)
+                  hb=q1("select has_bibs_detected from photos_photo where id=%s",(pid,))
+                  after=q1("select count(*) from photos_bib where photo_id=%s and source ilike '%%gemini%%'",(pid,))
+                  if hb and after>before: break
+              allb2=q1("select string_agg(distinct source, ',') from photos_bib where photo_id=%s",(pid,))
+              print(f"  dorsales-Gemini DESPUÉS={after}  (fuentes: {allb2})")
+              run("update photos_photo set status='approved' where id=%s and preview_key<>'' and thumbnail_key<>''",(pid,))
+              if after>before:
+                  print("  RESULTADO: ✓ Gemini OCR corre en worker_fast (aparecieron dorsales de Gemini).")
+              else:
+                  print("  RESULTADO: ⚠ no aparecieron dorsales nuevos de Gemini en ESTA foto (puede que Gemini no leyera un número nuevo). La config quedó aplicada; probar con otra foto si hace falta.")
+          PY
+          echo "==================== FIN ===================="
