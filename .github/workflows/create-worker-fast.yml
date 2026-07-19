@@ -1,17 +1,7 @@
 name: create-worker-fast (one-off)
 
-# Crea el servicio `worker_fast` en Railway desde el runner de GitHub
-# (internet abierto). Requiere el secret RAILWAY_TOKEN (Settings → Secrets and
-# variables → Actions). Se dispara pusheando la rama `run-worker-fast` (o a mano
-# con workflow_dispatch). Borrar el archivo + la rama después de usarlo.
-
 on:
   workflow_dispatch:
-    inputs:
-      fast_concurrency:
-        description: "CELERY_FAST_CONCURRENCY del nuevo servicio"
-        required: false
-        default: "3"
   push:
     branches: ["run-worker-fast"]
 
@@ -21,54 +11,64 @@ jobs:
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
-      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
       WORKER_ID: 1846c52a-57c3-4a8b-b4ec-1cc200a8e652
       NEW_NAME: worker_fast
-      FAST_CONCURRENCY: ${{ github.event.inputs.fast_concurrency }}
     steps:
       - name: Crear worker_fast en Railway
         run: |
-          set -euo pipefail
+          set -uo pipefail
           if [ -z "${RAILWAY_TOKEN:-}" ]; then
-            echo "::error::Falta el secret RAILWAY_TOKEN. Agregalo en Settings → Secrets → Actions."
-            exit 1
+            echo "::error::Falta el secret RAILWAY_TOKEN."; exit 1
           fi
 
           gql() {  # $1=query  $2=variables(json)
             curl -sS "$API" \
               -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
               -H "Content-Type: application/json" \
-              --data "$(jq -n --arg q "$1" --argjson v "$2" '{query:$q, variables:$v}')"
+              --data "$(jq -n --arg q "$1" --argjson v "${2:-{\}}" '{query:$q, variables:$v}')"
           }
 
-          echo "==> 1/5 projectId"
-          RESP=$(gql 'query($e:String!){ environment(id:$e){ projectId } }' "$(jq -n --arg e "$ENV_ID" '{e:$e}')")
-          echo "$RESP" | jq .
-          PROJECT_ID=$(echo "$RESP" | jq -er '.data.environment.projectId')
+          echo "==> 0/6 diagnóstico: ¿qué ve el token?"
+          RESP=$(gql 'query { me { email } projects { edges { node { id name environments { edges { node { id name } } } services { edges { node { id name } } } } } } }' '{}')
+          echo "$RESP" | jq '{me:.data.me, errors:.errors, projects: [.data.projects.edges[]?.node | {id,name, envs:[.environments.edges[].node.name], svcs:[.services.edges[].node.name]}]}' || echo "$RESP"
 
-          echo "==> 2/5 vars del worker"
+          echo "==> 1/6 ubicar el proyecto/env que contiene el worker ($WORKER_ID)"
+          PROJECT_ID=$(echo "$RESP" | jq -r --arg w "$WORKER_ID" 'first(.data.projects.edges[]?.node | select(any(.services.edges[]?; .node.id==$w)) | .id) // empty')
+          ENV_ID=$(echo "$RESP" | jq -r --arg w "$WORKER_ID" 'first(.data.projects.edges[]?.node | select(any(.services.edges[]?; .node.id==$w)) | (first(.environments.edges[]?|select(.node.name=="production")|.node.id) // .environments.edges[0].node.id)) // empty')
+          echo "PROJECT_ID=$PROJECT_ID  ENV_ID=$ENV_ID"
+          if [ -z "$PROJECT_ID" ] || [ -z "$ENV_ID" ]; then
+            echo "::error::El token no puede ver el proyecto del worker. Probablemente es un token de PROYECTO; hace falta un token de CUENTA (Railway → Account Settings → Tokens)."
+            exit 1
+          fi
+
+          echo "==> 2/6 vars del worker"
           RESP=$(gql 'query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }' \
             "$(jq -n --arg p "$PROJECT_ID" --arg e "$ENV_ID" --arg s "$WORKER_ID" '{p:$p,e:$e,s:$s}')")
           WORKER_VARS=$(echo "$RESP" | jq '.data.variables')
-          if [ "$WORKER_VARS" = "null" ]; then echo "$RESP" | jq .; echo "::error::no pude leer las vars del worker"; exit 1; fi
-          NEW_VARS=$(echo "$WORKER_VARS" | jq --arg role worker_fast --arg fc "${FAST_CONCURRENCY:-3}" \
-            'with_entries(select(.key|startswith("RAILWAY_")|not)) + {PROCESS_TYPE:$role, CELERY_FAST_CONCURRENCY:$fc}')
-          echo "vars a copiar: $(echo "$NEW_VARS" | jq 'keys')"
+          if [ "$WORKER_VARS" = "null" ] || [ -z "$WORKER_VARS" ]; then echo "$RESP" | jq .; echo "::error::no pude leer vars del worker"; exit 1; fi
+          NEW_VARS=$(echo "$WORKER_VARS" | jq --arg role worker_fast \
+            'with_entries(select(.key|startswith("RAILWAY_")|not)) + {PROCESS_TYPE:$role, CELERY_FAST_CONCURRENCY:"3"}')
+          echo "vars a copiar: $(echo "$NEW_VARS" | jq -c 'keys')"
 
-          echo "==> 3/5 crear servicio"
+          echo "==> 3/6 crear servicio"
           RESP=$(gql 'mutation($i:ServiceCreateInput!){ serviceCreate(input:$i){ id } }' \
             "$(jq -n --arg p "$PROJECT_ID" --arg n "$NEW_NAME" '{i:{projectId:$p,name:$n,branch:"main",source:{repo:"jairortiz8/fotos"}}}')")
           echo "$RESP" | jq .
-          NEW_ID=$(echo "$RESP" | jq -er '.data.serviceCreate.id')
+          NEW_ID=$(echo "$RESP" | jq -r '.data.serviceCreate.id // empty')
+          if [ -z "$NEW_ID" ]; then echo "::error::serviceCreate falló (ver arriba)"; exit 1; fi
           echo "nuevo serviceId=$NEW_ID"
 
-          echo "==> 4/5 setear vars"
+          echo "==> 4/6 setear vars"
           gql 'mutation($i:VariableCollectionUpsertInput!){ variableCollectionUpsert(input:$i) }' \
             "$(jq -n --arg p "$PROJECT_ID" --arg e "$ENV_ID" --arg s "$NEW_ID" --argjson v "$NEW_VARS" \
                '{i:{projectId:$p,environmentId:$e,serviceId:$s,variables:$v}}')" | jq .
 
-          echo "==> 5/5 deploy"
+          echo "==> 5/6 conectar a la rama main"
+          gql 'mutation($i:ServiceConnectInput!,$id:String!){ serviceConnect(id:$id, input:$i){ id } }' \
+            "$(jq -n --arg id "$NEW_ID" '{id:$id, i:{repo:"jairortiz8/fotos", branch:"main"}}')" | jq . || echo "(serviceConnect opcional falló; el source ya se seteó en create)"
+
+          echo "==> 6/6 deploy"
           gql 'mutation($s:String!,$e:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e) }' \
             "$(jq -n --arg s "$NEW_ID" --arg e "$ENV_ID" '{s:$s,e:$e}')" | jq .
 
-          echo "LISTO. Servicio worker_fast creado ($NEW_ID). Revisá sus logs en Railway."
+          echo "LISTO. worker_fast creado ($NEW_ID)."
