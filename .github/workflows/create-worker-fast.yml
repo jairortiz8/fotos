@@ -2,7 +2,8 @@ name: create-worker-fast (one-off)
 
 # Crea el servicio `worker_fast` en Railway desde el runner de GitHub
 # (internet abierto). Requiere el secret RAILWAY_TOKEN (Settings → Secrets and
-# variables → Actions). Disparar a mano. Borrar el archivo después de usarlo.
+# variables → Actions). Se dispara pusheando la rama `run-worker-fast` (o a mano
+# con workflow_dispatch). Borrar el archivo + la rama después de usarlo.
 
 on:
   workflow_dispatch:
@@ -11,6 +12,8 @@ on:
         description: "CELERY_FAST_CONCURRENCY del nuevo servicio"
         required: false
         default: "3"
+  push:
+    branches: ["run-worker-fast"]
 
 jobs:
   create:
