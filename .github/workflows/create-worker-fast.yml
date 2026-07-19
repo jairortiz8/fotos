@@ -1,0 +1,71 @@
+name: create-worker-fast (one-off)
+
+# Crea el servicio `worker_fast` en Railway desde el runner de GitHub
+# (internet abierto). Requiere el secret RAILWAY_TOKEN (Settings → Secrets and
+# variables → Actions). Disparar a mano. Borrar el archivo después de usarlo.
+
+on:
+  workflow_dispatch:
+    inputs:
+      fast_concurrency:
+        description: "CELERY_FAST_CONCURRENCY del nuevo servicio"
+        required: false
+        default: "3"
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      WORKER_ID: 1846c52a-57c3-4a8b-b4ec-1cc200a8e652
+      NEW_NAME: worker_fast
+      FAST_CONCURRENCY: ${{ github.event.inputs.fast_concurrency }}
+    steps:
+      - name: Crear worker_fast en Railway
+        run: |
+          set -euo pipefail
+          if [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "::error::Falta el secret RAILWAY_TOKEN. Agregalo en Settings → Secrets → Actions."
+            exit 1
+          fi
+
+          gql() {  # $1=query  $2=variables(json)
+            curl -sS "$API" \
+              -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "$(jq -n --arg q "$1" --argjson v "$2" '{query:$q, variables:$v}')"
+          }
+
+          echo "==> 1/5 projectId"
+          RESP=$(gql 'query($e:String!){ environment(id:$e){ projectId } }' "$(jq -n --arg e "$ENV_ID" '{e:$e}')")
+          echo "$RESP" | jq .
+          PROJECT_ID=$(echo "$RESP" | jq -er '.data.environment.projectId')
+
+          echo "==> 2/5 vars del worker"
+          RESP=$(gql 'query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }' \
+            "$(jq -n --arg p "$PROJECT_ID" --arg e "$ENV_ID" --arg s "$WORKER_ID" '{p:$p,e:$e,s:$s}')")
+          WORKER_VARS=$(echo "$RESP" | jq '.data.variables')
+          if [ "$WORKER_VARS" = "null" ]; then echo "$RESP" | jq .; echo "::error::no pude leer las vars del worker"; exit 1; fi
+          NEW_VARS=$(echo "$WORKER_VARS" | jq --arg role worker_fast --arg fc "${FAST_CONCURRENCY:-3}" \
+            'with_entries(select(.key|startswith("RAILWAY_")|not)) + {PROCESS_TYPE:$role, CELERY_FAST_CONCURRENCY:$fc}')
+          echo "vars a copiar: $(echo "$NEW_VARS" | jq 'keys')"
+
+          echo "==> 3/5 crear servicio"
+          RESP=$(gql 'mutation($i:ServiceCreateInput!){ serviceCreate(input:$i){ id } }' \
+            "$(jq -n --arg p "$PROJECT_ID" --arg n "$NEW_NAME" '{i:{projectId:$p,name:$n,branch:"main",source:{repo:"jairortiz8/fotos"}}}')")
+          echo "$RESP" | jq .
+          NEW_ID=$(echo "$RESP" | jq -er '.data.serviceCreate.id')
+          echo "nuevo serviceId=$NEW_ID"
+
+          echo "==> 4/5 setear vars"
+          gql 'mutation($i:VariableCollectionUpsertInput!){ variableCollectionUpsert(input:$i) }' \
+            "$(jq -n --arg p "$PROJECT_ID" --arg e "$ENV_ID" --arg s "$NEW_ID" --argjson v "$NEW_VARS" \
+               '{i:{projectId:$p,environmentId:$e,serviceId:$s,variables:$v}}')" | jq .
+
+          echo "==> 5/5 deploy"
+          gql 'mutation($s:String!,$e:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e) }' \
+            "$(jq -n --arg s "$NEW_ID" --arg e "$ENV_ID" '{s:$s,e:$e}')" | jq .
+
+          echo "LISTO. Servicio worker_fast creado ($NEW_ID). Revisá sus logs en Railway."
