@@ -1,0 +1,56 @@
+name: prod-status (one-off)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-status"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      SITE: https://findyourfoto.com
+    steps:
+      - name: Chequeo de prod
+        run: |
+          set -uo pipefail
+
+          echo "==================== 1) HEALTHZ (app + workers) ===================="
+          echo "GET $SITE/healthz"
+          code=$(curl -sS -m 25 -o /tmp/hz.json -w "%{http_code}" "$SITE/healthz" || echo 000)
+          echo "HTTP $code"
+          echo "--- body ---"; cat /tmp/hz.json 2>/dev/null | jq . 2>/dev/null || cat /tmp/hz.json 2>/dev/null || echo "(sin body)"
+          echo
+
+          echo "==================== 2) SITIO PÚBLICO ===================="
+          for path in "/" "/healthz/lite"; do
+            c=$(curl -sS -m 25 -o /dev/null -w "%{http_code}" "$SITE$path" || echo 000)
+            echo "$path -> HTTP $c"
+          done
+          echo
+
+          echo "==================== 3) DEPLOYS EN RAILWAY ===================="
+          if [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "(sin RAILWAY_TOKEN: salteo el estado de servicios en Railway)"
+          else
+            RESP=$(curl -sS "$API" \
+              -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+              -H "Project-Access-Token: ${RAILWAY_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "$(jq -n --arg p "$PROJECT_ID" --arg e "$ENV_ID" \
+                '{query:"query($p:String!,$e:String!){ deployments(first:30, input:{projectId:$p, environmentId:$e}){ edges { node { status createdAt staticUrl service { name } } } } }", variables:{p:$p,e:$e}}')")
+            echo "$RESP" | jq -r '
+              if .errors then ("ERROR: " + (.errors|tostring))
+              else (
+                [.data.deployments.edges[].node]
+                | group_by(.service.name)
+                | map({service: .[0].service.name, ultimo: (sort_by(.createdAt)|last|.status)})
+                | .[] | "\(.service): \(.ultimo)"
+              ) end'
+          fi
+          echo
+          echo "==================== FIN ===================="
