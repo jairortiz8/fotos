@@ -1,0 +1,78 @@
+name: diag-worker (one-off)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-diag"]
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+    steps:
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" "celery[redis]==5.6.3"
+      - name: Commit desplegado + logs de ejecución
+        run: |
+          set -uo pipefail
+          gql() {
+            curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+              -H "Project-Access-Token: ${RAILWAY_TOKEN}" \
+              -H "Content-Type: application/json" --data "$1"
+          }
+          vars_of() {
+            local q='{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}'
+            gql "$q" | jq '.data.variables // {}'
+          }
+          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
+          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          RID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Redis")|.id')
+          FID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="fotos")|.id')
+          WID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="worker")|.id')
+          WFID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="worker_fast")|.id')
+
+          echo "==================== COMMIT DESPLEGADO POR SERVICIO ===================="
+          DALL=$(gql '{"query":"query($p:String!,$e:String!){ deployments(first:100, input:{projectId:$p, environmentId:$e}){ edges { node { id status createdAt meta service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}')
+          echo "$DALL" | jq -r '[.data.deployments.edges[].node] | group_by(.service.name) | map(sort_by(.createdAt)|last) | .[] | "\(.service.name)\t\(.status)\t\(.createdAt)\tcommit=\(.meta.commitHash // .meta.snapshotId // "?" | tostring[0:8])"'
+          echo "(main HEAD del feature = 190f4a7)"
+          echo
+
+          DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          RDPUB=$(vars_of "$RID" | jq -r '.REDIS_PUBLIC_URL // empty')
+          CBURL=$(vars_of "$FID" | jq -r '.CELERY_BROKER_URL // empty')
+          SCHEME="${RDPUB%%://*}"; REST="${RDPUB#*://}"; AUTH="${REST%%/*}"
+          DBIDX=$(printf '%s' "$CBURL" | sed -nE 's#.*/([0-9]+)(\?.*)?$#\1#p'); [ -z "$DBIDX" ] && DBIDX=0
+          BROKER="${SCHEME}://${AUTH}/${DBIDX}"
+
+          echo "==================== REPROCESO 1 FOTO ===================="
+          BROKER="$BROKER" DBURL="$DBURL" python3 - <<'PY'
+          import os
+          import psycopg
+          from celery import Celery
+          from kombu import Exchange, Queue
+          conn=psycopg.connect(os.environ["DBURL"],connect_timeout=20);cur=conn.cursor()
+          cur.execute("select id from photos_photo where event_id=(select id from events_event where slug='surf-city-prueba-logos') and preview_key<>'' order by id limit 1")
+          pid=cur.fetchone()[0]
+          app=Celery(broker=os.environ["BROKER"])
+          app.conf.task_default_queue="celery"
+          app.conf.task_queues=(Queue("fast",Exchange("fast","direct"),routing_key="fast"),)
+          r=app.send_task("photos.process_photo",args=[pid],queue="fast")
+          print(f"reencolada process_photo({pid}) task={r.id}")
+          PY
+
+          echo "esperando 45s a que ejecute + flushee logs..."
+          sleep 45
+          echo
+          for pair in "worker:$WID" "worker_fast:$WFID"; do
+            NAME="${pair%%:*}"; SID2="${pair#*:}"
+            DID=$(echo "$DALL" | jq -r --arg s "$NAME" '[.data.deployments.edges[].node|select(.service.name==$s)]|sort_by(.createdAt)|last|.id // empty')
+            echo "==================== LOGS $NAME ===================="
+            LQ='{"query":"query($d:String!){ deploymentLogs(deploymentId:$d, limit:250){ message } }","variables":{"d":"'"$DID"'"}}'
+            gql "$LQ" | jq -r '.data.deploymentLogs[]?.message' | tail -45
+            echo
+          done
+          echo "==================== FIN ===================="
