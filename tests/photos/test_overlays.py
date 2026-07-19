@@ -67,6 +67,23 @@ def test_apply_brand_overlay_works_portrait_and_landscape() -> None:
         assert _has_bright(out, 0, w // 3, h * 3 // 4, h)
 
 
+def _bright_count(img: Image.Image) -> int:
+    """Cuenta píxeles ~blancos (proxy del área que ocupan los logos)."""
+    return sum(1 for r, g, b in img.getdata() if r > 180 and g > 180 and b > 180)
+
+
+def test_landscape_logos_smaller_than_portrait_same_width() -> None:
+    """En Surf City los logos van ~20% más chicos en HORIZONTAL; en vertical
+    quedan como están. Con el mismo ANCHO, la horizontal debe tener claramente
+    menos área de logo que la vertical."""
+    land = overlays.apply_brand_overlay(_solid(1600, 1000, (0, 0, 0)), "surf_city")  # W>=H
+    port = overlays.apply_brand_overlay(_solid(1600, 1700, (0, 0, 0)), "surf_city")  # W<H
+    land_area = _bright_count(land)
+    port_area = _bright_count(port)
+    # 0.8 de escala lineal → ~0.64 de área. Chequeamos que sea sensiblemente menor.
+    assert land_area < port_area * 0.8
+
+
 def test_invalid_template_returns_unchanged() -> None:
     out = overlays.apply_brand_overlay(_solid(500, 500, (10, 20, 30)), "bogus")
     assert out.mode == "RGB"

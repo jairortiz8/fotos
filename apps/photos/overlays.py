@@ -26,13 +26,19 @@ OVERLAY_DIR = Path(settings.BASE_DIR) / "apps" / "photos" / "brand_overlays"
 @dataclass(frozen=True)
 class OverlayTemplate:
     """Config de un template de logos. Los `*_w_pct`/`margin_pct` son fracción
-    del ANCHO de la foto (no px) → proporcionado en horizontal y vertical."""
+    del ANCHO de la foto (no px) → proporcionado en horizontal y vertical.
+
+    `landscape_scale`: en fotos HORIZONTALES (ancho ≥ alto) los logos se
+    multiplican por este factor. Una horizontal es mucho más ancha, así que al
+    escalar por el ancho los logos salían más grandes que en una vertical; con
+    <1.0 se achican sólo en horizontal (las verticales quedan igual)."""
 
     left: str  # archivo del logo abajo-izquierda
     right: str  # archivo del logo abajo-derecha
     left_w_pct: float
     right_w_pct: float
     margin_pct: float
+    landscape_scale: float = 1.0
 
 
 TEMPLATES: dict[str, OverlayTemplate] = {
@@ -42,6 +48,7 @@ TEMPLATES: dict[str, OverlayTemplate] = {
         left_w_pct=0.22,
         right_w_pct=0.24,
         margin_pct=0.032,
+        landscape_scale=0.8,  # en horizontal, logos 20% más chicos (verticales igual)
     ),
 }
 
@@ -76,9 +83,12 @@ def apply_brand_overlay(img: Image.Image, template: str) -> Image.Image:
     w, h = base.size
     margin = round(w * cfg.margin_pct)
     blur = max(2, round(w * 0.004))
+    # En horizontal (ancho ≥ alto) achicamos los logos por `landscape_scale`;
+    # en vertical se quedan como están (factor 1.0).
+    scale = cfg.landscape_scale if w >= h else 1.0
 
     def _scaled(logo: Image.Image, w_pct: float) -> Image.Image:
-        target_w = max(1, round(w * w_pct))
+        target_w = max(1, round(w * w_pct * scale))
         target_h = max(1, round(target_w * logo.height / logo.width))
         return logo.resize((target_w, target_h), Image.Resampling.LANCZOS)
 
