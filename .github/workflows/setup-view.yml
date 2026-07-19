@@ -1,0 +1,90 @@
+name: setup-view (one-off)
+
+# Deja el evento de prueba VISIBLE por URL (unlisted) y aprueba las fotos ya
+# procesadas, para que Jair vea la galería pública con los logos. Idempotente.
+# Reporta cuántas fotos hay y en qué estado.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-view"]
+
+jobs:
+  view:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      SITE: https://findyourfoto.com
+    steps:
+      - name: Instalar psycopg
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
+
+      - name: Unlisted + aprobar + reportar
+        run: |
+          set -uo pipefail
+          gql() {
+            curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+              -H "Project-Access-Token: ${RAILWAY_TOKEN}" \
+              -H "Content-Type: application/json" --data "$1"
+          }
+          SID=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}' | jq -r '.data.project.services.edges[].node | select(.name=="Postgres") | .id')
+          VQ='{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$SID"'"}}'
+          DBURL=$(gql "$VQ" | jq -r '.data.variables.DATABASE_PUBLIC_URL // empty')
+          [ -z "$DBURL" ] && { echo "sin DATABASE_PUBLIC_URL"; exit 1; }
+
+          DBURL="$DBURL" SITE="$SITE" python3 - <<'PY'
+          import os, datetime as dt
+          import psycopg
+          site = os.environ["SITE"].rstrip("/")
+          slug = "surf-city-prueba-logos"
+          now = dt.datetime.now(dt.UTC)
+          conn = psycopg.connect(os.environ["DBURL"], connect_timeout=20)
+          cur = conn.cursor()
+
+          cur.execute("select id from events_event where slug=%s", (slug,))
+          row = cur.fetchone()
+          if not row:
+              print("No existe el evento de prueba (¿se corrió provision?)."); raise SystemExit(1)
+          event_id = row[0]
+
+          # Estado ANTES
+          cur.execute("select status, count(*), count(*) filter (where preview_key<>'' and thumbnail_key<>'') "
+                      "from photos_photo where event_id=%s group by status order by 2 desc", (event_id,))
+          rows = cur.fetchall()
+          print("Fotos del evento (estado | total | procesadas):")
+          total = 0
+          for st, n, proc in rows:
+              print(f"  {st} | {n} | {proc}"); total += n
+          if total == 0:
+              print(">> Todavía NO hay fotos subidas a este evento. Subí por el link /u/... y volvé a correr esto.")
+
+          # Aprobar las procesadas que están pendientes
+          cur.execute("update photos_photo set status='approved', updated_at=%s "
+                      "where event_id=%s and status='pending_review' and preview_key<>'' and thumbnail_key<>''",
+                      (now, event_id))
+          approved_now = cur.rowcount
+
+          # Unlisted (accesible por URL, no en la home) + recalcular counters
+          cur.execute("update events_event set visibility='unlisted', updated_at=%s where id=%s", (now, event_id))
+          cur.execute("""update events_event set
+              photo_count=(select count(*) from photos_photo where event_id=%s and status<>'deleted'),
+              pending_count=(select count(*) from photos_photo where event_id=%s and status='pending_review')
+              where id=%s""", (event_id, event_id, event_id))
+          conn.commit()
+
+          cur.execute("select count(*) from photos_photo where event_id=%s and status='approved'", (event_id,))
+          approved_total = cur.fetchone()[0]
+
+          print(f"\nAprobadas ahora: {approved_now}. Aprobadas en total: {approved_total}.")
+          print("Evento → unlisted (accesible por URL, NO listado en la home).")
+          print("")
+          print("==================== LINK PARA VER LAS FOTOS ====================")
+          print(f"{site}/eventos/{slug}/")
+          print("================================================================")
+          if approved_total == 0:
+              print("(La galería estará vacía hasta que haya fotos aprobadas/procesadas. "
+                    "Si acabás de subir, esperá ~1 min a que el worker procese y volvé a correr esto.)")
+          PY
