@@ -17,57 +17,50 @@ jobs:
       - name: Crear worker_fast en Railway
         run: |
           set -uo pipefail
-          if [ -z "${RAILWAY_TOKEN:-}" ]; then
-            echo "::error::Falta el secret RAILWAY_TOKEN."; exit 1
-          fi
+          [ -z "${RAILWAY_TOKEN:-}" ] && { echo "::error::Falta RAILWAY_TOKEN"; exit 1; }
 
+          # Mandamos AMBOS headers: si es token de cuenta usa Bearer, si es de
+          # proyecto usa Project-Access-Token. Railway toma el que corresponda.
           gql() {  # $1=query  $2=variables(json)
             curl -sS "$API" \
               -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+              -H "Project-Access-Token: ${RAILWAY_TOKEN}" \
               -H "Content-Type: application/json" \
               --data "$(jq -n --arg q "$1" --argjson v "${2:-{\}}" '{query:$q, variables:$v}')"
           }
 
-          echo "==> 0/6 diagnóstico: ¿qué ve el token?"
-          RESP=$(gql 'query { me { email } projects { edges { node { id name environments { edges { node { id name } } } services { edges { node { id name } } } } } } }' '{}')
-          echo "$RESP" | jq '{me:.data.me, errors:.errors, projects: [.data.projects.edges[]?.node | {id,name, envs:[.environments.edges[].node.name], svcs:[.services.edges[].node.name]}]}' || echo "$RESP"
-
-          echo "==> 1/6 ubicar el proyecto/env que contiene el worker ($WORKER_ID)"
-          PROJECT_ID=$(echo "$RESP" | jq -r --arg w "$WORKER_ID" 'first(.data.projects.edges[]?.node | select(any(.services.edges[]?; .node.id==$w)) | .id) // empty')
-          ENV_ID=$(echo "$RESP" | jq -r --arg w "$WORKER_ID" 'first(.data.projects.edges[]?.node | select(any(.services.edges[]?; .node.id==$w)) | (first(.environments.edges[]?|select(.node.name=="production")|.node.id) // .environments.edges[0].node.id)) // empty')
+          echo "==> 0 scope del token (projectToken)"
+          RESP=$(gql 'query { projectToken { projectId environmentId } }' '{}')
+          echo "$RESP" | jq .
+          PROJECT_ID=$(echo "$RESP" | jq -r '.data.projectToken.projectId // empty')
+          ENV_ID=$(echo "$RESP" | jq -r '.data.projectToken.environmentId // empty')
+          # Fallback a los IDs conocidos si el token no expone su scope.
+          [ -z "$PROJECT_ID" ] && PROJECT_ID="13f846c9-6400-44dc-995f-02a7da9c45b4"
+          [ -z "$ENV_ID" ] && ENV_ID="b48c37f0-dab0-4627-b95c-a20db2862579"
           echo "PROJECT_ID=$PROJECT_ID  ENV_ID=$ENV_ID"
-          if [ -z "$PROJECT_ID" ] || [ -z "$ENV_ID" ]; then
-            echo "::error::El token no puede ver el proyecto del worker. Probablemente es un token de PROYECTO; hace falta un token de CUENTA (Railway → Account Settings → Tokens)."
-            exit 1
-          fi
 
-          echo "==> 2/6 vars del worker"
+          echo "==> 1 vars del worker"
           RESP=$(gql 'query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }' \
             "$(jq -n --arg p "$PROJECT_ID" --arg e "$ENV_ID" --arg s "$WORKER_ID" '{p:$p,e:$e,s:$s}')")
           WORKER_VARS=$(echo "$RESP" | jq '.data.variables')
-          if [ "$WORKER_VARS" = "null" ] || [ -z "$WORKER_VARS" ]; then echo "$RESP" | jq .; echo "::error::no pude leer vars del worker"; exit 1; fi
-          NEW_VARS=$(echo "$WORKER_VARS" | jq --arg role worker_fast \
-            'with_entries(select(.key|startswith("RAILWAY_")|not)) + {PROCESS_TYPE:$role, CELERY_FAST_CONCURRENCY:"3"}')
-          echo "vars a copiar: $(echo "$NEW_VARS" | jq -c 'keys')"
+          if [ "$WORKER_VARS" = "null" ] || [ -z "$WORKER_VARS" ]; then echo "$RESP" | jq .; echo "::error::no pude leer vars del worker (¿el token es de este proyecto?)"; exit 1; fi
+          NEW_VARS=$(echo "$WORKER_VARS" | jq 'with_entries(select(.key|startswith("RAILWAY_")|not)) + {PROCESS_TYPE:"worker_fast", CELERY_FAST_CONCURRENCY:"3"}')
+          echo "vars: $(echo "$NEW_VARS" | jq -c 'keys')"
 
-          echo "==> 3/6 crear servicio"
+          echo "==> 2 crear servicio"
           RESP=$(gql 'mutation($i:ServiceCreateInput!){ serviceCreate(input:$i){ id } }' \
             "$(jq -n --arg p "$PROJECT_ID" --arg n "$NEW_NAME" '{i:{projectId:$p,name:$n,branch:"main",source:{repo:"jairortiz8/fotos"}}}')")
           echo "$RESP" | jq .
           NEW_ID=$(echo "$RESP" | jq -r '.data.serviceCreate.id // empty')
-          if [ -z "$NEW_ID" ]; then echo "::error::serviceCreate falló (ver arriba)"; exit 1; fi
+          [ -z "$NEW_ID" ] && { echo "::error::serviceCreate falló. Si dice Not Authorized, el token de PROYECTO no puede crear servicios → hace falta un token de CUENTA (Account Settings → Tokens)."; exit 1; }
           echo "nuevo serviceId=$NEW_ID"
 
-          echo "==> 4/6 setear vars"
+          echo "==> 3 setear vars"
           gql 'mutation($i:VariableCollectionUpsertInput!){ variableCollectionUpsert(input:$i) }' \
             "$(jq -n --arg p "$PROJECT_ID" --arg e "$ENV_ID" --arg s "$NEW_ID" --argjson v "$NEW_VARS" \
                '{i:{projectId:$p,environmentId:$e,serviceId:$s,variables:$v}}')" | jq .
 
-          echo "==> 5/6 conectar a la rama main"
-          gql 'mutation($i:ServiceConnectInput!,$id:String!){ serviceConnect(id:$id, input:$i){ id } }' \
-            "$(jq -n --arg id "$NEW_ID" '{id:$id, i:{repo:"jairortiz8/fotos", branch:"main"}}')" | jq . || echo "(serviceConnect opcional falló; el source ya se seteó en create)"
-
-          echo "==> 6/6 deploy"
+          echo "==> 4 deploy"
           gql 'mutation($s:String!,$e:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e) }' \
             "$(jq -n --arg s "$NEW_ID" --arg e "$ENV_ID" '{s:$s,e:$e}')" | jq .
 
