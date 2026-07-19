@@ -1,0 +1,178 @@
+name: prod-readiness (one-off)
+
+# Verificación INTEGRAL de prod para Surf City: workers correctos + flags
+# (selfie/OCR/blur) + healthz + estado de datos + prueba EN VIVO del pipeline
+# (OCR + reconocimiento facial + branding) + endpoint de selfie habilitado.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-readiness"]
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      SITE: https://findyourfoto.com
+      EXPECTED_SHA: 24378e0c5e949fcfcab3eb5d1c7d07aff85c4dc1
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" "celery[redis]==5.6.3" "boto3==1.35.36" "pillow==11.0.0"
+
+      - name: verificacion integral
+        run: |
+          set -uo pipefail
+          SHORT="${EXPECTED_SHA:0:7}"
+          gql() {
+            curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+              -H "Project-Access-Token: ${RAILWAY_TOKEN}" \
+              -H "Content-Type: application/json" --data "$1"
+          }
+          vars_of() {
+            local q='{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}'
+            gql "$q" | jq '.data.variables // {}'
+          }
+
+          echo "############### 1) SERVICIOS EN RAILWAY (deploy + commit) ###############"
+          gql '{"query":"query($p:String!,$e:String!){ deployments(first:120, input:{projectId:$p, environmentId:$e}){ edges { node { status createdAt meta service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}' \
+            | jq -r --arg f "$SHORT" '[.data.deployments.edges[].node]
+                | group_by(.service.name) | map(sort_by(.createdAt)|last)
+                | .[] | "\(.service.name)\t\(.status)\tcommit=\((.meta.commitHash//"?")|tostring[0:7])\t\(if ((.meta.commitHash//"?")|tostring[0:7])==$f and .status=="SUCCESS" then "OK" else "REVISAR" end)"'
+          echo "(esperado: SUCCESS en $SHORT para fotos + worker + worker_fast; beat SUCCESS en cualquier commit reciente)"
+          echo
+
+          echo "############### 2) SERVICIOS (IDs) ###############"
+          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
+          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          RID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Redis")|.id')
+          FID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="fotos")|.id')
+          WID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="worker")|.id')
+          WFID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="worker_fast" or .name=="worker-fast")|.id' | head -1)
+
+          echo "############### 3) FLAGS por servicio ###############"
+          show_flags() {
+            local name="$1" sid="$2"
+            local V; V=$(vars_of "$sid")
+            echo "--- $name ---"
+            echo "$V" | jq -r '{
+              FACE_SEARCH_ENABLED, FACE_PROCESSING_ENABLED, MINOR_BLUR_ENABLED,
+              OCR_BACKEND, OCR_EXHAUSTIVE_ON_UPLOAD, GEMINI_OCR_MODEL,
+              PHOTO_UPLOAD_MAX_MB, WORKER_QUEUES, PROCESS_TYPE,
+              GEMINI_API_KEY: (if (.GEMINI_API_KEY // "")|length>0 then "set("+((.GEMINI_API_KEY|length)|tostring)+" chars)" else "EMPTY" end),
+              R2: (if (.R2_ACCESS_KEY_ID // "")|length>0 and (.R2_BUCKET_NAME//""|length>0) then "set" else "EMPTY" end),
+              REDIS: (if (.CELERY_BROKER_URL // "")|length>0 then "set" else "EMPTY" end)
+            } | to_entries | map("  \(.key)=\(.value)") | .[]'
+          }
+          show_flags "fotos (web)" "$FID"
+          show_flags "worker (faces/InsightFace)" "$WID"
+          [ -n "$WFID" ] && show_flags "worker_fast (previews/OCR)" "$WFID" || echo "--- worker_fast: NO ENCONTRADO ---"
+          echo
+
+          echo "############### 4) HEALTHZ (deep) ###############"
+          curl -sS -m 30 "$SITE/healthz" | jq . 2>/dev/null || echo "(healthz sin JSON)"
+          echo
+
+          echo "############### 5) ENDPOINT DE SELFIE (habilitado?) ###############"
+          for slug in surf-city-prueba-logos prueba; do
+            code=$(curl -sS -m 25 -o /dev/null -w "%{http_code}" "$SITE/eventos/$slug/buscar-selfie/" || echo 000)
+            echo "  /eventos/$slug/buscar-selfie/ -> HTTP $code  ($([ "$code" = "200" ] && echo 'selfie ON' || ([ "$code" = "503" ] && echo 'selfie APAGADO' || echo 'ver')))"
+          done
+          echo
+
+          # ------- Credenciales para DB / Redis / R2 -------
+          DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          RDPUB=$(vars_of "$RID" | jq -r '.REDIS_PUBLIC_URL // empty')
+          FV=$(vars_of "$FID")
+          CBURL=$(echo "$FV" | jq -r '.CELERY_BROKER_URL // empty')
+          SCHEME="${RDPUB%%://*}"; REST="${RDPUB#*://}"; AUTH="${REST%%/*}"
+          DBIDX=$(printf '%s' "$CBURL" | sed -nE 's#.*/([0-9]+)(\?.*)?$#\1#p'); [ -z "$DBIDX" ] && DBIDX=0
+          export BROKER="${SCHEME}://${AUTH}/${DBIDX}"
+          export DBURL
+
+          echo "############### 6) ESTADO DE DATOS + PRUEBA EN VIVO DEL PIPELINE ###############"
+          python3 - <<'PY'
+          import os, time
+          import psycopg
+          from celery import Celery
+          from kombu import Exchange, Queue
+
+          conn=psycopg.connect(os.environ["DBURL"], connect_timeout=20); conn.autocommit=True; cur=conn.cursor()
+
+          def one(q, a=()):
+              cur.execute(q, a); r=cur.fetchone(); return r[0] if r else None
+
+          print("== Eventos con logos de marca (brand_overlay) ==")
+          cur.execute("select slug, name, status, visibility, brand_overlay from events_event where brand_overlay<>'' order by slug")
+          for slug,name,st,vis,bo in cur.fetchall():
+              print(f"  - {slug}  [{st}/{vis}]  overlay={bo}  ({name})")
+          print()
+
+          def event_report(slug):
+              eid=one("select id from events_event where slug=%s",(slug,))
+              if not eid:
+                  print(f"== {slug}: NO EXISTE =="); return None
+              tot=one("select count(*) from photos_photo where event_id=%s and status<>'deleted'",(eid,))
+              appr=one("select count(*) from photos_photo where event_id=%s and status='approved'",(eid,))
+              wprev=one("select count(*) from photos_photo where event_id=%s and preview_key<>''",(eid,))
+              wthumb=one("select count(*) from photos_photo where event_id=%s and thumbnail_key<>''",(eid,))
+              wbrand=one("select count(*) from photos_photo where event_id=%s and branded_key<>''",(eid,))
+              bibs=one("select count(*) from photos_bib b join photos_photo p on p.id=b.photo_id where p.event_id=%s",(eid,))
+              embs=one("select count(*) from photos_faceembedding f join photos_photo p on p.id=f.photo_id where p.event_id=%s",(eid,))
+              minors=one("select count(*) from photos_faceembedding f join photos_photo p on p.id=f.photo_id where p.event_id=%s and f.is_minor",(eid,))
+              print(f"== {slug} (id={eid}) ==")
+              print(f"  fotos={tot} aprobadas={appr} | preview={wprev} thumb={wthumb} branded={wbrand}")
+              print(f"  dorsales(OCR)={bibs} | embeddings(caras)={embs} (menores={minors})")
+              return eid
+
+          sc_eid = event_report("surf-city-prueba-logos")
+          event_report("prueba")
+          print()
+
+          # ---- PRUEBA EN VIVO: reset de UNA foto del evento de prueba + reproceso ----
+          print("== Prueba en vivo del pipeline (reset + reproceso de 1 foto) ==")
+          if sc_eid:
+              cur.execute("""select p.id from photos_photo p
+                             where p.event_id=%s and p.status<>'deleted' and p.original_key<>''
+                             order by (select count(*) from photos_faceembedding f where f.photo_id=p.id) desc, p.id
+                             limit 1""",(sc_eid,))
+              row=cur.fetchone()
+              if not row:
+                  print("  (sin fotos para probar)")
+              else:
+                  pid=row[0]
+                  print(f"  foto elegida id={pid} (la que más caras tenía)")
+                  # limpiar salidas para forzar regeneración real
+                  cur.execute("delete from photos_faceembedding where photo_id=%s",(pid,))
+                  cur.execute("delete from photos_bib where photo_id=%s",(pid,))
+                  cur.execute("update photos_photo set branded_key='', has_faces_detected=false, has_bibs_detected=false, preview_key='', thumbnail_key='' where id=%s",(pid,))
+                  ua0=one("select extract(epoch from updated_at)::bigint from photos_photo where id=%s",(pid,))
+                  app=Celery(broker=os.environ["BROKER"]); app.conf.task_default_queue="celery"
+                  app.conf.task_queues=(Queue("fast",Exchange("fast","direct"),routing_key="fast"),)
+                  app.send_task("photos.process_photo",args=[pid],queue="fast")
+                  print("  encolado process_photo → esperando pipeline (preview/thumb/branded + OCR + caras)...")
+                  ok_keys=ok_faces=ok_bibs=False
+                  for _ in range(50):  # ~5 min máx
+                      time.sleep(6)
+                      cur.execute("select preview_key<>'', thumbnail_key<>'', branded_key<>'', has_faces_detected, has_bibs_detected from photos_photo where id=%s",(pid,))
+                      pk,tk,bk,hf,hb=cur.fetchone()
+                      nemb=one("select count(*) from photos_faceembedding where photo_id=%s",(pid,))
+                      nbib=one("select count(*) from photos_bib where photo_id=%s",(pid,))
+                      if pk and tk and bk: ok_keys=True
+                      if nemb>0: ok_faces=True
+                      if nbib>0: ok_bibs=True
+                      if ok_keys and hf:  # keys + intento de caras terminado
+                          print(f"  preview={pk} thumb={tk} branded={bk} | caras={nemb} dorsales={nbib}")
+                          break
+                  print(f"  RESULTADO: branding(keys)={'OK' if ok_keys else 'FALTA'}  caras/selfie={'OK ('+str(nemb)+')' if ok_faces else 'sin caras'}  OCR={'OK ('+str(nbib)+' dorsales)' if ok_bibs else 'sin dorsales en esta foto'}")
+                  # re-aprobar la foto de prueba
+                  cur.execute("update photos_photo set status='approved' where id=%s and preview_key<>'' and thumbnail_key<>''",(pid,))
+          print()
+          print("(Nota: OCR es best-effort; 'sin dorsales' sólo significa que ESA foto no tenía un número legible, no que el OCR esté roto — ver el conteo del evento 'prueba' arriba.)")
+          PY
+          echo
+          echo "############### FIN ###############"
