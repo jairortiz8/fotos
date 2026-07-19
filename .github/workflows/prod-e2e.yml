@@ -1,0 +1,111 @@
+name: prod-e2e (one-off)
+
+# Prueba E2E segura contra PROD, contra una foto que YA está en R2:
+#  1) Snapshot de salud del pipeline (distribución de estados, fotos atascadas).
+#  2) Encola `regenerate_thumbnail` a la cola `fast` para una foto APROBADA
+#     (regenera SOLO el thumb, NO cambia el status → no degrada nada en vivo).
+#  3) Verifica por DB que el `updated_at` de esa foto cambió → worker_fast la
+#     procesó. Prueba el round-trip completo: broker → worker → R2 read/write → DB.
+#
+# NUNCA imprime las URLs de conexión (traen credenciales). Solo imprime KEYS y
+# resultados agregados.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-e2e"]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
+    steps:
+      - name: Instalar cliente celery
+        run: python3 -m pip install --quiet "celery[redis]==5.6.3"
+
+      - name: E2E del pipeline
+        run: |
+          set -uo pipefail
+          gql() {
+            curl -sS "$API" \
+              -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+              -H "Project-Access-Token: ${RAILWAY_TOKEN}" \
+              -H "Content-Type: application/json" --data "$1"
+          }
+
+          echo "==================== 1) VARIABLES DEL WEB (solo keys) ===================="
+          VQ='{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$WEB_ID"'"}}'
+          gql "$VQ" | jq '.data.variables' > /tmp/vars.json
+          if ! jq -e . /tmp/vars.json >/dev/null 2>&1; then
+            echo "ERROR: no pude leer variables"; gql "$VQ" | jq '.errors'; exit 1
+          fi
+          jq -r 'keys[]' /tmp/vars.json | sort | tr '\n' ' '; echo
+
+          DBURL=$(jq -r '.DATABASE_PUBLIC_URL // .DATABASE_URL // empty' /tmp/vars.json)
+          RDURL=$(jq -r '.REDIS_PUBLIC_URL // .REDIS_URL // empty' /tmp/vars.json)
+          # Si solo hay la interna (*.railway.internal) el runner no la alcanza.
+          case "$DBURL" in *railway.internal*) echo "OJO: DB solo interna, sin proxy público"; DBURL="";; esac
+          case "$RDURL" in *railway.internal*) echo "OJO: Redis solo interno, sin proxy público"; RDURL="";; esac
+          [ -n "$DBURL" ] && echo "DB pública: OK (oculta)" || echo "DB pública: NO disponible"
+          [ -n "$RDURL" ] && echo "Redis público: OK (oculto)" || echo "Redis público: NO disponible"
+          echo
+
+          if [ -z "$DBURL" ]; then
+            echo "Sin DB pública no puedo verificar. Fin."; exit 0
+          fi
+          export PGCONNECT_TIMEOUT=15
+
+          echo "==================== 2) SNAPSHOT DE ESTADOS ===================="
+          psql "$DBURL" -tAF $'\t' -c \
+            "select status, count(*) from photos_photo group by status order by 2 desc;" \
+            || { echo "ERROR conectando a la DB"; exit 1; }
+          echo
+          echo "-- Atascadas en processing/uploading > 15 min (deberían ser 0 si hay worker) --"
+          psql "$DBURL" -tAc \
+            "select count(*) from photos_photo where status in ('processing','uploading') and updated_at < now() - interval '15 minutes';"
+          echo
+          echo "-- Últimas 8 fotos (id | status | creada | preview? | thumb?) --"
+          psql "$DBURL" -tAF ' | ' -c \
+            "select id, status, to_char(created_at,'MM-DD HH24:MI'), (preview_key<>''), (thumbnail_key<>'') from photos_photo where status<>'deleted' order by created_at desc limit 8;"
+          echo
+
+          if [ -z "$RDURL" ]; then
+            echo "Sin Redis público no puedo encolar la prueba de round-trip. Snapshot OK. Fin."; exit 0
+          fi
+
+          echo "==================== 3) ROUND-TRIP: regenerate_thumbnail -> fast ===================="
+          PID=$(psql "$DBURL" -tAc \
+            "select id from photos_photo where original_key<>'' and thumbnail_key<>'' and status='approved' order by created_at desc limit 1;")
+          if [ -z "$PID" ]; then echo "No hay foto aprobada con original+thumb para probar. Fin."; exit 0; fi
+          echo "Foto de prueba: id=$PID"
+          BEFORE=$(psql "$DBURL" -tAc "select extract(epoch from updated_at)::bigint from photos_photo where id=$PID;")
+          echo "updated_at (antes) epoch=$BEFORE"
+
+          PID="$PID" RDURL="$RDURL" python3 - <<'PY'
+          import os
+          from celery import Celery
+          app = Celery(broker=os.environ["RDURL"])
+          r = app.send_task("photos.regenerate_thumbnail", args=[int(os.environ["PID"])],
+                            kwargs={"include_preview": False}, queue="fast")
+          print(f"Encolada a 'fast'. task_id={r.id}")
+          PY
+
+          echo "Esperando que worker_fast la procese (updated_at debe cambiar)..."
+          OK=0
+          for i in $(seq 1 20); do
+            sleep 6
+            NOW=$(psql "$DBURL" -tAc "select extract(epoch from updated_at)::bigint from photos_photo where id=$PID;")
+            if [ -n "$NOW" ] && [ "$NOW" != "$BEFORE" ]; then
+              echo "PASS: updated_at cambió ($BEFORE -> $NOW) tras $((i*6))s. worker_fast PROCESA la cola 'fast'."
+              OK=1; break
+            fi
+            echo "  ...intento $i: sin cambio todavía"
+          done
+          [ "$OK" = 1 ] || echo "FAIL: updated_at NO cambió en ~120s. Revisar worker_fast / cola fast."
+          echo
+          echo "==================== FIN ===================="
