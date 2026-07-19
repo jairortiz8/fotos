@@ -51,18 +51,32 @@ jobs:
           echo
 
           echo "==================== 2) BUSCAR URLs PÚBLICAS ===================="
-          DBURL=""; RDURL=""
+          DBURL=""; RDPUB=""; CBURL=""
           while IFS=$'\t' read -r NAME SID; do
             [ -z "$SID" ] && continue
             V=$(vars_of "$SID")
             KEYS=$(echo "$V" | jq -r 'keys[]?' | tr '\n' ' ')
             echo "  - $NAME: $KEYS"
             [ -z "$DBURL" ] && DBURL=$(echo "$V" | jq -r '.DATABASE_PUBLIC_URL // empty')
-            [ -z "$RDURL" ] && RDURL=$(echo "$V" | jq -r '.REDIS_PUBLIC_URL // empty')
+            [ -z "$RDPUB" ] && RDPUB=$(echo "$V" | jq -r '.REDIS_PUBLIC_URL // empty')
+            # El broker REAL que usan los workers (con su índice de DB). Lo saco del
+            # servicio web (fotos). Solo uso su ÍNDICE de DB, no su host interno.
+            CB=$(echo "$V" | jq -r '.CELERY_BROKER_URL // empty')
+            [ -n "$CB" ] && CBURL="$CB"
           done < <(jq -r '.data.project.services.edges[].node | "\(.name)\t\(.id)"' /tmp/svcs.json)
           echo
           [ -n "$DBURL" ] && echo "DB pública: OK (oculta)" || echo "DB pública: NO disponible"
-          [ -n "$RDURL" ] && echo "Redis público: OK (oculto)" || echo "Redis público: NO disponible"
+          [ -n "$RDPUB" ] && echo "Redis público: OK (oculto)" || echo "Redis público: NO disponible"
+
+          # Reconstruir el broker PÚBLICO = authority(proxy público) + índice de DB
+          # del CELERY_BROKER_URL real (los workers escuchan en esa DB, p.ej. /1).
+          RDURL=""
+          if [ -n "$RDPUB" ]; then
+            SCHEME="${RDPUB%%://*}"; REST="${RDPUB#*://}"; AUTH="${REST%%/*}"
+            DBIDX=$(printf '%s' "$CBURL" | sed -nE 's#.*/([0-9]+)(\?.*)?$#\1#p'); [ -z "$DBIDX" ] && DBIDX=0
+            RDURL="${SCHEME}://${AUTH}/${DBIDX}"
+            echo "Broker público reconstruido en DB /${DBIDX} (host oculto)"
+          fi
           echo
 
           if [ -z "$DBURL" ]; then
