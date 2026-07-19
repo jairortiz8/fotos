@@ -32,8 +32,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 PREVIEW_LONG_EDGE = 1200
 PREVIEW_QUALITY = 80
-THUMB_LONG_EDGE = 400
-THUMB_QUALITY = 75
+# Thumb del grid: 640px (era 400). En desktop/retina cada celda del contact
+# sheet se ve a ~600-800px reales; con 400px el thumb se agrandaba y salía
+# borroso. WebP q78 mantiene el archivo chico (~40-60KB) → sigue rápido con
+# lazy-load + paginación de 60/página.
+THUMB_LONG_EDGE = 640
+THUMB_QUALITY = 78
 
 WATERMARK_OPACITY = 38  # 0-255 (~15%)
 WATERMARK_ANGLE = -30

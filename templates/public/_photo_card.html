@@ -6,7 +6,7 @@ Al tocarla se abre el lightbox, donde se descarga la foto (una a la vez).{% endc
      class="block w-full h-full">
     {% with thumb=photo.get_thumbnail_url %}
       {% if thumb %}
-        <img src="{{ thumb }}" alt="{% trans 'Foto' %} #{{ photo.id }}" loading="lazy"
+        <img src="{{ thumb }}" alt="{% trans 'Foto' %} #{{ photo.id }}" loading="lazy" decoding="async"
              class="w-full h-full object-cover">
       {% else %}
         <div class="w-full h-full" style="background: linear-gradient(135deg, #1f1f23, #0e0e10);"></div>
