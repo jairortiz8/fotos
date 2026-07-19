@@ -102,7 +102,7 @@ jobs:
             echo "Sin Redis público no puedo encolar el round-trip. Snapshot OK. Fin."; exit 0
           fi
 
-          echo "==================== 4) ROUND-TRIP: regenerate_thumbnail -> fast ===================="
+          echo "==================== 4) INSPECT: en qué DB/colas están los workers ===================="
           PID=$(psql "$DBURL" -tAc \
             "select id from photos_photo where original_key<>'' and thumbnail_key<>'' and status='approved' order by created_at desc limit 1;")
           if [ -z "$PID" ]; then echo "No hay foto aprobada con original+thumb para probar. Fin."; exit 0; fi
@@ -110,13 +110,36 @@ jobs:
           BEFORE=$(psql "$DBURL" -tAc "select extract(epoch from updated_at)::bigint from photos_photo where id=$PID;")
           echo "updated_at (antes) epoch=$BEFORE"
 
-          PID="$PID" RDURL="$RDURL" python3 - <<'PY'
+          # Probamos DB 0/1/2 con inspect().active_queues() → nos dice exactamente en
+          # qué DB están los workers y qué colas consumen. Encola a la DB correcta.
+          AUTH="$AUTH" SCHEME="$SCHEME" PID="$PID" python3 - <<'PY'
           import os
           from celery import Celery
-          app = Celery(broker=os.environ["RDURL"])
-          r = app.send_task("photos.regenerate_thumbnail", args=[int(os.environ["PID"])],
-                            kwargs={"include_preview": False}, queue="fast")
-          print(f"Encolada a 'fast'. task_id={r.id}")
+          auth = os.environ["AUTH"]; scheme = os.environ["SCHEME"]; pid = int(os.environ["PID"])
+          chosen = None
+          for db in (0, 1, 2):
+              url = f"{scheme}://{auth}/{db}"
+              try:
+                  aq = Celery(broker=url).control.inspect(timeout=4).active_queues()
+              except Exception as exc:
+                  aq = None
+                  print(f"DB /{db}: error inspect: {exc}")
+                  continue
+              if aq:
+                  resumen = {w: [q.get("name") for q in qs] for w, qs in aq.items()}
+                  print(f"DB /{db}: WORKERS -> {resumen}")
+                  if chosen is None:
+                      chosen = (db, url)
+              else:
+                  print(f"DB /{db}: sin respuesta de workers")
+          if chosen is None:
+              print("RESULTADO: ningún worker respondió por inspect en 0/1/2.")
+          else:
+              db, url = chosen
+              r = Celery(broker=url).send_task(
+                  "photos.regenerate_thumbnail", args=[pid],
+                  kwargs={"include_preview": False}, queue="fast")
+              print(f"Encolada a 'fast' en DB /{db}. task_id={r.id}")
           PY
 
           echo "Esperando que worker_fast la procese (updated_at debe cambiar)..."
