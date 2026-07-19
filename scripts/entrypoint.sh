@@ -3,15 +3,18 @@
 # Entrypoint único para los 3 roles del mismo image en Railway.
 #
 # El rol se elige con la env var PROCESS_TYPE (default: web):
-#   web    → migraciones + bootstrap del superadmin + gunicorn
-#   worker → celery worker ÚNICO: colas `celery,faces,fast` (con OCR_BACKEND=gemini
-#            no carga engines de OCR; sólo InsightFace para el selfie)
-#   beat   → celery beat (crons de retención/cleanup/backup de Fase 6)
+#   web         → migraciones + bootstrap del superadmin + gunicorn
+#   worker      → celery worker: colas `celery,faces,fast` (InsightFace ~2GB para
+#                 el selfie; con OCR_BACKEND=gemini no carga engines de OCR)
+#   worker_fast → celery worker SÓLO cola `fast` (preview/thumbnail + OCR), SIN
+#                 InsightFace. OPCIONAL: para eventos grandes, corré este servicio
+#                 aparte → los previews salen al instante sin quedar detrás de las
+#                 tareas de cara (~15s) del worker pesado. El indexado de selfie
+#                 se pone al día en segundo plano en `worker`.
+#   beat        → celery beat (crons de retención/cleanup/backup de Fase 6)
 #
 # Los servicios de Railway corren ESTA misma imagen; solo cambia PROCESS_TYPE.
 # Así no hay que mantener un "start command" por servicio en el dashboard.
-# (El rol worker_fast se eliminó en la consolidación 2026-06-09: con el OCR en
-# Gemini el worker único queda chico y no hace falta separar colas por RAM.)
 # ============================================================================
 set -e
 
@@ -25,8 +28,23 @@ case "$ROLE" in
     # si la API falla y entra el fallback). concurrency 1 = un proceso, una sola
     # copia de los modelos (2 procesos cargando engines fue el OOM-stall del
     # incidente del 2026-06-09; no repetir).
-    exec celery -A config worker --loglevel=info -Q celery,faces,fast \
+    # Colas parametrizables: si corrés un `worker_fast` aparte, podés setear
+    # WORKER_QUEUES=celery,faces en ESTE servicio para dedicarlo a las caras
+    # (default: las 3, así funciona igual sin el worker_fast).
+    exec celery -A config worker --loglevel=info -Q "${WORKER_QUEUES:-celery,faces,fast}" \
       --concurrency="${CELERY_CONCURRENCY:-1}"
+    ;;
+  worker_fast)
+    # Worker LIVIANO dedicado SÓLO a la cola `fast` (preview/thumbnail + OCR vía
+    # Gemini). NO consume `faces` → NUNCA carga InsightFace → RAM baja y los
+    # previews salen al instante, sin quedar detrás de las tareas de cara del
+    # worker pesado. Para eventos grandes: garantiza que las fotos no se vean
+    # "muertas" mientras el indexado de selfie se pone al día en `worker`.
+    # Concurrency 2 por default (tareas de I/O livianas, sin modelo en RAM).
+    # (Si Gemini cayera en masa, el fallback de OCR local carga engines pesados
+    #  → subí la RAM del servicio o bajá CELERY_FAST_CONCURRENCY a 1.)
+    exec celery -A config worker --loglevel=info -Q fast \
+      --concurrency="${CELERY_FAST_CONCURRENCY:-2}"
     ;;
   beat)
     # --schedule en /tmp: el FS del contenedor es efímero y el schedule estático
