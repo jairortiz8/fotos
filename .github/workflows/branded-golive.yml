@@ -1,0 +1,176 @@
+name: branded-golive (one-off)
+
+# Va en vivo la DESCARGA con logos para eventos brandeados (Surf City):
+#  1) asegura la columna branded_key en prod (idempotente),
+#  2) deploya worker + worker_fast + web al commit nuevo (commitSha),
+#  3) espera a que estén SUCCESS,
+#  4) reprocesa las fotos del evento de prueba (genera branded_key + objeto R2),
+#  5) VERIFICA end-to-end: el endpoint /descargas/foto/<id>/ devuelve el archivo
+#     CON logos (== objeto branded_key en R2, y con logos en las esquinas).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-branded"]
+
+jobs:
+  golive:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      WORKER_ID: 1846c52a-57c3-4a8b-b4ec-1cc200a8e652
+      WORKER_FAST_ID: e4289c40-a254-436a-be02-35ec0e935363
+      FOTOS_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
+      SITE: https://findyourfoto.com
+      NEW_SHA: 24378e0c5e949fcfcab3eb5d1c7d07aff85c4dc1
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" "celery[redis]==5.6.3" "boto3==1.35.36" "pillow==11.0.0"
+
+      - name: golive + verify
+        run: |
+          set -uo pipefail
+          SHORT="${NEW_SHA:0:7}"
+          gql() {
+            curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+              -H "Project-Access-Token: ${RAILWAY_TOKEN}" \
+              -H "Content-Type: application/json" --data "$1"
+          }
+          vars_of() {
+            local q='{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}'
+            gql "$q" | jq '.data.variables // {}'
+          }
+
+          echo "==================== CREDENCIALES ===================="
+          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
+          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          RID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Redis")|.id')
+          DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          RDPUB=$(vars_of "$RID" | jq -r '.REDIS_PUBLIC_URL // empty')
+          FV=$(vars_of "$FOTOS_ID")
+          CBURL=$(echo "$FV" | jq -r '.CELERY_BROKER_URL // empty')
+          SCHEME="${RDPUB%%://*}"; REST="${RDPUB#*://}"; AUTH="${REST%%/*}"
+          DBIDX=$(printf '%s' "$CBURL" | sed -nE 's#.*/([0-9]+)(\?.*)?$#\1#p'); [ -z "$DBIDX" ] && DBIDX=0
+          export BROKER="${SCHEME}://${AUTH}/${DBIDX}"
+          export DBURL
+          export R2_ENDPOINT_URL=$(echo "$FV" | jq -r '.R2_ENDPOINT_URL // empty')
+          export R2_KEY=$(echo "$FV" | jq -r '.R2_ACCESS_KEY_ID // empty')
+          export R2_SECRET=$(echo "$FV" | jq -r '.R2_SECRET_ACCESS_KEY // empty')
+          export R2_BUCKET=$(echo "$FV" | jq -r '.R2_BUCKET_NAME // empty')
+          export SITE
+
+          echo "==================== 1) COLUMNA branded_key (idempotente) ===================="
+          python3 - <<'PY'
+          import os, psycopg
+          conn=psycopg.connect(os.environ["DBURL"],connect_timeout=20); conn.autocommit=True; cur=conn.cursor()
+          cur.execute("ALTER TABLE photos_photo ADD COLUMN IF NOT EXISTS branded_key varchar(500) NOT NULL DEFAULT ''")
+          cur.execute("""INSERT INTO django_migrations (app, name, applied)
+                         SELECT 'photos','0005_photo_branded_key', now()
+                         WHERE NOT EXISTS (SELECT 1 FROM django_migrations WHERE app='photos' AND name='0005_photo_branded_key')""")
+          print("columna branded_key OK + migration marcada aplicada")
+          PY
+
+          echo "==================== 2) DEPLOY worker/worker_fast/web al commit nuevo ===================="
+          for pair in "web:$FOTOS_ID" "worker:$WORKER_ID" "worker_fast:$WORKER_FAST_ID"; do
+            NAME="${pair%%:*}"; SID="${pair#*:}"
+            Q='{"query":"mutation($s:String!,$e:String!,$c:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e, commitSha:$c) }","variables":{"s":"'"$SID"'","e":"'"$ENV_ID"'","c":"'"$NEW_SHA"'"}}'
+            R=$(gql "$Q"); echo "$NAME -> $(echo "$R" | jq -c '.data.serviceInstanceDeployV2 // .errors')"
+          done
+          echo
+
+          echo "==================== 3) ESPERAR SUCCESS en $SHORT (web+worker+worker_fast) ===================="
+          READY=0
+          for i in $(seq 1 30); do
+            ST=$(gql '{"query":"query($p:String!,$e:String!){ deployments(first:100, input:{projectId:$p, environmentId:$e}){ edges { node { status createdAt meta service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}' \
+              | jq -r --arg f "$SHORT" '[.data.deployments.edges[].node]
+                  | map(select(.service.name|test("^(worker|fotos)")))
+                  | group_by(.service.name) | map(sort_by(.createdAt)|last)
+                  | map({svc:.service.name,status:.status,commit:((.meta.commitHash//"?")|tostring[0:7])})')
+            echo "intento $i:"; echo "$ST" | jq -c '.[]'
+            OK=$(echo "$ST" | jq -r --arg f "$SHORT" '([.[]|select(.status=="SUCCESS" and .commit==$f)]|length) as $g | (length) as $t | if ($t>=3 and $g>=3) then "yes" else "no" end')
+            if [ "$OK" = "yes" ]; then READY=1; echo ">> web+worker+worker_fast SUCCESS en $SHORT"; break; fi
+            sleep 30
+          done
+          if [ "$READY" != "1" ]; then echo ">> Aún no listos. Re-corré en unos minutos."; exit 0; fi
+          echo
+
+          echo "==================== 4) REPROCESO + 5) VERIFICACION END-TO-END ===================="
+          python3 - <<'PY'
+          import os, io, time, urllib.request
+          import psycopg, boto3
+          from celery import Celery
+          from kombu import Exchange, Queue
+          from PIL import Image
+
+          SITE=os.environ["SITE"]
+          conn=psycopg.connect(os.environ["DBURL"],connect_timeout=20); cur=conn.cursor()
+          cur.execute("select id from events_event where slug='surf-city-prueba-logos'")
+          eid=cur.fetchone()[0]
+          cur.execute("select id, extract(epoch from updated_at)::bigint from photos_photo where event_id=%s and status<>'deleted' order by id",(eid,))
+          rows=cur.fetchall(); before={r[0]:r[1] for r in rows}
+          print("Reprocesando:", list(before))
+          app=Celery(broker=os.environ["BROKER"]); app.conf.task_default_queue="celery"
+          app.conf.task_queues=(Queue("fast",Exchange("fast","direct"),routing_key="fast"),)
+          for pid in before: app.send_task("photos.process_photo",args=[pid],queue="fast")
+          done=set()
+          for _ in range(40):
+              time.sleep(6)
+              cur.execute("select id, extract(epoch from updated_at)::bigint from photos_photo where id=any(%s)",(list(before),))
+              for pid,ua in cur.fetchall():
+                  if pid not in done and ua!=before[pid]: done.add(pid)
+              if len(done)==len(before): break
+          print(f"Reprocesadas: {len(done)}/{len(before)}")
+          cur.execute("update photos_photo set status='approved' where event_id=%s and status='pending_review' and preview_key<>'' and thumbnail_key<>''",(eid,))
+          conn.commit(); time.sleep(4)
+
+          s3=boto3.client("s3",endpoint_url=os.environ["R2_ENDPOINT_URL"],aws_access_key_id=os.environ["R2_KEY"],aws_secret_access_key=os.environ["R2_SECRET"])
+          bkt=os.environ["R2_BUCKET"]
+          def dl(k):
+              b=io.BytesIO(); s3.download_fileobj(bkt,k,b); b.seek(0); return b
+          def graydiff(a,b,box):
+              ca=list(a.crop(box).convert("L").getdata()); cb=list(b.crop(box).convert("L").getdata())
+              n=min(len(ca),len(cb));
+              return sum(abs(ca[i]-cb[i]) for i in range(n))/max(1,n)
+
+          cur.execute("select id, original_key, branded_key from photos_photo where event_id=%s and status='approved' order by id",(eid,))
+          fotos=cur.fetchall()
+          print(f"\nVerificando descarga de {len(fotos)} fotos:\n")
+          all_ok=True
+          for pid,okey,bkey in fotos:
+              if not bkey:
+                  print(f"  ✗ id={pid}: branded_key VACIO (el worker no generó la versión con logos)"); all_ok=False; continue
+              # a) el endpoint devuelve EXACTAMENTE el objeto branded_key
+              url=f"{SITE}/descargas/foto/{pid}/"
+              try:
+                  req=urllib.request.Request(url, headers={"User-Agent":"golive-verify"})
+                  with urllib.request.urlopen(req, timeout=60) as r:
+                      disp=r.headers.get("Content-Disposition",""); endpoint_bytes=r.read()
+              except Exception as e:
+                  print(f"  ✗ id={pid}: el endpoint falló ({e})"); all_ok=False; continue
+              branded_bytes=dl(bkey).read()
+              same = endpoint_bytes==branded_bytes
+              # b) el archivo bajado TIENE logos: esquinas != original limpio, centro ~igual
+              try:
+                  down=Image.open(io.BytesIO(endpoint_bytes)).convert("RGB")
+                  orig=Image.open(dl(okey)).convert("RGB")
+                  if orig.size!=down.size: orig=orig.resize(down.size, Image.LANCZOS)
+                  W,H=down.size
+                  d_bl=graydiff(down,orig,(0,int(H*0.80),int(W*0.30),H))
+                  d_br=graydiff(down,orig,(int(W*0.70),int(H*0.80),W,H))
+                  d_ce=graydiff(down,orig,(int(W*0.35),int(H*0.30),int(W*0.65),int(H*0.60)))
+              except Exception as e:
+                  print(f"  ✗ id={pid}: no pude comparar imágenes ({e})"); all_ok=False; continue
+              logos = max(d_bl,d_br) > d_ce+8
+              orient="horizontal" if W>=H else "vertical"
+              ok = same and logos and disp.startswith("attachment")
+              all_ok = all_ok and ok
+              print(f"  {'✓' if ok else '✗'} id={pid} {orient} {W}x{H}  endpoint==branded:{same}  attachment:{disp.startswith('attachment')}  esq_izq={d_bl:.1f} esq_der={d_br:.1f} centro={d_ce:.1f}")
+
+          print()
+          print("VEREDICTO: ✓ la DESCARGA lleva los logos." if all_ok else "VEREDICTO: ✗ la descarga NO está lista.")
+          PY
+          echo "==================== FIN ===================="
