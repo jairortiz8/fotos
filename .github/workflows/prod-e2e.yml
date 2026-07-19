@@ -99,9 +99,18 @@ jobs:
           if chosen is None:
               print("VEREDICTO: ningún worker respondió por inspect. Broker sin consumidor."); raise SystemExit(0)
 
+          from kombu import Exchange, Queue
           broker = f"{scheme}://{auth}/{chosen}"
           backend = f"{scheme}://{auth}/{rdb}"
           app = Celery(broker=broker, backend=backend)
+          # Declarar las colas EXACTAMENTE como el worker (exchange=nombre, direct, key=nombre)
+          # para que el mensaje caiga en la lista Redis correcta y no se descarte.
+          app.conf.task_default_queue = "celery"
+          app.conf.task_queues = (
+              Queue("celery", Exchange("celery", "direct"), routing_key="celery"),
+              Queue("fast", Exchange("fast", "direct"), routing_key="fast"),
+              Queue("faces", Exchange("faces", "direct"), routing_key="faces"),
+          )
           r = app.send_task("photos.regenerate_thumbnail", args=[pid],
                             kwargs={"include_preview": False}, queue="fast")
           print(f"Encolada a 'fast' (DB /{chosen}). task_id={r.id}. Esperando ejecución...")
