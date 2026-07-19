@@ -16,6 +16,7 @@ from PIL import ExifTags, Image, ImageDraw, ImageFont, ImageOps
 from apps.photos.storage import (
     R2Storage,
     default_storage,
+    key_for_branded,
     key_for_event_cover,
     key_for_photographer_cover,
     key_for_preview,
@@ -264,6 +265,58 @@ def generate_thumbnail(
 
 
 # ---------------------------------------------------------------------------
+# Original con logos de marca (lo que se DESCARGA en eventos brandeados)
+# ---------------------------------------------------------------------------
+BRANDED_QUALITY = 92
+
+
+def generate_branded_original(
+    photo: Photo,
+    source_path: Path | None = None,
+    *,
+    img_object: Image.Image | None = None,
+    storage: R2Storage | None = None,
+) -> str | None:
+    """Genera el ORIGINAL full-res CON los logos de marca y lo sube a R2.
+
+    Sólo aplica si el evento tiene `brand_overlay` con un template válido; en ese
+    caso devuelve el key de la versión brandeada (lo que se DESCARGA en ese
+    evento). Devuelve None si el evento no tiene overlay o si algo falla — NUNCA
+    propaga excepción, así un problema con los logos no rompe el procesamiento de
+    la foto (la descarga simplemente cae al original limpio).
+
+    Es consistente con el preview: usa el MISMO motor de overlay y la misma
+    orientación (no re-orienta por EXIF), sólo que a resolución completa y en
+    JPEG. El JPEG se guarda SIN EXIF (sin tag de orientación) → el visor lo muestra
+    tal cual, con los logos en las esquinas de abajo, en horizontal y vertical.
+    """
+    template = getattr(photo.event, "brand_overlay", "") or ""
+    if not template:
+        return None
+    try:
+        from apps.photos.overlays import apply_brand_overlay, is_valid_template
+
+        if not is_valid_template(template):
+            return None
+        img = img_object.copy() if img_object is not None else Image.open(source_path)  # type: ignore[arg-type]
+        branded = apply_brand_overlay(img, template)  # full-res, mismos % que el preview
+
+        buf = BytesIO()
+        branded.save(buf, format="JPEG", quality=BRANDED_QUALITY, optimize=True)
+        buf.seek(0)
+
+        key = key_for_branded(photo.event.slug, _photo_uid(photo))
+        (storage or default_storage()).upload(buf, key, content_type="image/jpeg")
+        return key
+    except Exception:
+        logger.exception(
+            "generate_branded_original falló (event=%s) — la descarga usará el original limpio",
+            getattr(photo.event, "slug", "?"),
+        )
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Portadas (evento + carpeta de fotógrafo)
 # ---------------------------------------------------------------------------
 COVER_LONG_EDGE = 1400
@@ -311,11 +364,15 @@ def blur_minor_faces_and_regenerate(
     minor_faces: list[Any],
     *,
     storage: R2Storage | None = None,
-) -> tuple[str, str]:
-    """Aplica blur gaussiano a las caras de menores y regenera preview+thumb.
+) -> tuple[str, str, str | None]:
+    """Aplica blur gaussiano a las caras de menores y regenera preview+thumb (y,
+    en eventos brandeados, el original con logos).
 
     El ORIGINAL no se toca: trabajamos sobre una copia en memoria. Devuelve
-    `(preview_key, thumbnail_key)`.
+    `(preview_key, thumbnail_key, branded_key)` — `branded_key` es None si el
+    evento no tiene `brand_overlay`. Importante: el original con logos también se
+    regenera desde la copia BLUREADA, así la descarga nunca muestra un menor sin
+    blur si el blur está activado.
     """
     from PIL import ImageFilter
 
@@ -346,7 +403,8 @@ def blur_minor_faces_and_regenerate(
 
     preview_key = generate_preview(photo, img_object=img, storage=storage)
     thumb_key = generate_thumbnail(photo, img_object=img, storage=storage)
-    return preview_key, thumb_key
+    branded_key = generate_branded_original(photo, img_object=img, storage=storage)
+    return preview_key, thumb_key, branded_key
 
 
 def _photo_uid(photo: Photo) -> str:

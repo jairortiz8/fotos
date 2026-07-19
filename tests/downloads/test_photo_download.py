@@ -106,3 +106,67 @@ def test_download_404_for_private_event(r2) -> None:  # type: ignore[no-untyped-
     photo = ApprovedPhotoFactory(event=event)
     resp = Client().get(reverse("downloads:photo", kwargs={"photo_id": photo.id}))
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Descarga con logos (eventos brandeados, ej. Surf City)
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_download_serves_branded_when_event_branded(r2) -> None:  # type: ignore[no-untyped-def]
+    """En un evento con `brand_overlay`, la descarga sirve el original CON logos
+    (branded_key), NO el original limpio — para que el archivo bajado los lleve."""
+    event = EventFactory(
+        status=EventStatus.LIVE, visibility=EventVisibility.PUBLIC, brand_overlay="surf_city"
+    )
+    okey = "events/e/originals/foto.jpg"
+    bkey = "events/e/branded/foto.jpg"
+    original = synthetic_jpeg_bytes("111")
+    branded = synthetic_jpeg_bytes("999")  # bytes distintos → distinguible del limpio
+    r2.put_object(Bucket=BUCKET, Key=okey, Body=original)
+    r2.put_object(Bucket=BUCKET, Key=bkey, Body=branded)
+    photo = ApprovedPhotoFactory(
+        event=event, original_key=okey, branded_key=bkey, original_filename="DSC_1.jpg"
+    )
+
+    resp = Client().get(reverse("downloads:photo", kwargs={"photo_id": photo.id}))
+
+    assert resp.status_code == 200
+    assert resp["Content-Disposition"].startswith("attachment")
+    assert resp["Content-Type"] == "image/jpeg"
+    assert _body(resp) == branded  # el con logos, no el limpio
+
+
+@pytest.mark.django_db
+def test_download_falls_back_to_original_when_branded_missing(r2) -> None:  # type: ignore[no-untyped-def]
+    """Evento brandeado pero foto aún sin `branded_key` (vieja / no reprocesada):
+    la descarga NO rompe — cae al original limpio."""
+    event = EventFactory(
+        status=EventStatus.LIVE, visibility=EventVisibility.PUBLIC, brand_overlay="surf_city"
+    )
+    okey = "events/e/originals/foto.jpg"
+    original = synthetic_jpeg_bytes("111")
+    r2.put_object(Bucket=BUCKET, Key=okey, Body=original)
+    photo = ApprovedPhotoFactory(event=event, original_key=okey, branded_key="")
+
+    resp = Client().get(reverse("downloads:photo", kwargs={"photo_id": photo.id}))
+    assert resp.status_code == 200
+    assert _body(resp) == original
+
+
+@pytest.mark.django_db
+def test_download_ignores_branded_key_when_event_not_branded(r2) -> None:  # type: ignore[no-untyped-def]
+    """Sin `brand_overlay` en el evento, se sirve el original limpio aunque la
+    foto tenga un branded_key colgado (defensa: no filtrar logos por accidente)."""
+    event = EventFactory(
+        status=EventStatus.LIVE, visibility=EventVisibility.PUBLIC, brand_overlay=""
+    )
+    okey = "events/e/originals/foto.jpg"
+    bkey = "events/e/branded/foto.jpg"
+    original = synthetic_jpeg_bytes("111")
+    r2.put_object(Bucket=BUCKET, Key=okey, Body=original)
+    r2.put_object(Bucket=BUCKET, Key=bkey, Body=synthetic_jpeg_bytes("999"))
+    photo = ApprovedPhotoFactory(event=event, original_key=okey, branded_key=bkey)
+
+    resp = Client().get(reverse("downloads:photo", kwargs={"photo_id": photo.id}))
+    assert resp.status_code == 200
+    assert _body(resp) == original

@@ -61,6 +61,14 @@ class Photo(TimeStampedModel):
     original_key = models.CharField(_("key del original"), max_length=500, unique=True)
     preview_key = models.CharField(_("key del preview"), max_length=500, blank=True)
     thumbnail_key = models.CharField(_("key del thumbnail"), max_length=500, blank=True)
+    # Original FULL-RES con los logos de marca pegados (JPEG). Sólo se genera para
+    # eventos con `brand_overlay` (ej. Surf City). Es lo que se DESCARGA en esos
+    # eventos, para que el archivo bajado lleve los logos igual que el preview. El
+    # `original_key` (limpio, sin logos) se mantiene intacto. "" = sin versión con
+    # logos (evento normal, o foto vieja aún sin reprocesar → se baja el original).
+    branded_key = models.CharField(
+        _("key del original con logos"), max_length=500, blank=True, default=""
+    )
 
     # --- Metadata de imagen ---
     original_filename = models.CharField(_("nombre original"), max_length=255)
@@ -144,6 +152,18 @@ class Photo(TimeStampedModel):
     def get_original_url(self, expires_in_seconds: int = PRESIGNED_URL_DEFAULT_TTL) -> str:
         """URL firmada al original (acceso restringido — solo descargas)."""
         return self._presign(self.original_key, expires_in_seconds)
+
+    def download_key(self) -> str:
+        """Key del archivo que se DESCARGA: el original CON logos si el evento tiene
+        `brand_overlay` y ya se generó esa versión; si no, el original limpio.
+
+        Así, en un evento brandeado (Surf City), la descarga lleva los mismos logos
+        que el preview. Si `branded_key` todavía no está (foto vieja sin reprocesar
+        o generación fallida), cae al original limpio en vez de romper la descarga.
+        """
+        if self.branded_key and getattr(self.event, "brand_overlay", ""):
+            return self.branded_key
+        return self.original_key
 
     def get_thumbnail_url(self, expires_in_seconds: int = PRESIGNED_URL_DEFAULT_TTL) -> str:
         return self._presign(self.thumbnail_key, expires_in_seconds)

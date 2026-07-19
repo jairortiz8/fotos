@@ -22,6 +22,7 @@ from django.utils import timezone
 
 from apps.photos.imaging import (
     extract_exif_and_dimensions,
+    generate_branded_original,
     generate_preview,
     generate_thumbnail,
 )
@@ -87,6 +88,9 @@ def process_photo(self, photo_id: int) -> dict[str, str | int]:
             extract_exif_and_dimensions(photo, source)
             photo.preview_key = generate_preview(photo, source)
             photo.thumbnail_key = generate_thumbnail(photo, source)
+            # Sólo eventos con `brand_overlay` (ej. Surf City): original full-res
+            # con los logos, que es lo que se descarga. None → evento normal.
+            photo.branded_key = generate_branded_original(photo, source) or ""
     except Exception:
         logger.exception("Falló process_photo(%s)", photo_id)
         photo.refresh_from_db()
@@ -110,6 +114,7 @@ def process_photo(self, photo_id: int) -> dict[str, str | int]:
             "exif_raw",
             "preview_key",
             "thumbnail_key",
+            "branded_key",
             "status",
             "updated_at",
         ]
@@ -322,17 +327,34 @@ def regenerate_preview_with_minor_blur(self, photo_id: int) -> dict[str, object]
     """
     from apps.photos.imaging import blur_minor_faces_and_regenerate
 
-    photo = Photo.objects.prefetch_related("face_embeddings").get(id=photo_id)
+    photo = (
+        Photo.objects.select_related("event").prefetch_related("face_embeddings").get(id=photo_id)
+    )
     minor_faces = list(photo.face_embeddings.filter(is_minor=True))
     if not minor_faces:
         return {"photo_id": photo_id, "skipped": "no_minors"}
 
     try:
         with download_temp_file(photo.original_key) as source:
-            preview_key, thumb_key = blur_minor_faces_and_regenerate(photo, source, minor_faces)
+            preview_key, thumb_key, branded_key = blur_minor_faces_and_regenerate(
+                photo, source, minor_faces
+            )
+        # Privacidad: en un evento brandeado la descarga (branded) DEBE quedar
+        # blureada. Si volvió None acá NO es "evento sin overlay" (eso ya lo
+        # sabemos) sino que la regeneración FALLÓ → fallar fuerte (no dejar la
+        # versión pre-blur, que muestra al menor) para que la foto no se apruebe.
+        from apps.photos.overlays import is_valid_template
+
+        event_template = getattr(photo.event, "brand_overlay", "") or ""
+        if branded_key is None and is_valid_template(event_template):
+            raise RuntimeError(f"branded regen falló en blur de menores (photo={photo_id})")
         photo.preview_key = preview_key
         photo.thumbnail_key = thumb_key
-        photo.save(update_fields=["preview_key", "thumbnail_key", "updated_at"])
+        fields = ["preview_key", "thumbnail_key", "updated_at"]
+        if branded_key is not None:
+            photo.branded_key = branded_key
+            fields.insert(2, "branded_key")
+        photo.save(update_fields=fields)
     except Exception as exc:
         logger.exception("Blur de menores falló (photo=%s)", photo_id)
         # Regla: si no se puede blurear, la foto NO debe quedar visible.
@@ -375,6 +397,16 @@ def regenerate_thumbnail(
         if include_preview:
             photo.preview_key = generate_preview(photo, source)
             fields.insert(1, "preview_key")
+            # El branded (lo que se DESCARGA) sigue al preview: se regenera SÓLO
+            # cuando se regenera el preview y desde la misma fuente. Así nunca
+            # queda des-sincronizado (si se regenera el branded desde el original
+            # limpio pero el preview quedó blureado, la descarga mostraría al
+            # menor sin blur). En un refresh de sólo-thumbnail, branded no se toca.
+            # None → evento sin overlay.
+            branded = generate_branded_original(photo, source)
+            if branded is not None:
+                photo.branded_key = branded
+                fields.insert(1, "branded_key")
         photo.save(update_fields=fields)
 
     return {"photo_id": photo.id, "thumbnail_key": photo.thumbnail_key, "preview": include_preview}

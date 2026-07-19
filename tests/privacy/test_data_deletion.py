@@ -92,6 +92,28 @@ def test_deletion_removes_photos_embeddings_bibs_and_r2(r2) -> None:  # type: ig
 
 
 @pytest.mark.django_db
+def test_deletion_removes_branded_key_from_r2(r2) -> None:  # type: ignore[no-untyped-def]
+    """La copia full-res con logos (branded_key) también se borra al pedir
+    'borrar mis datos' — no debe sobrevivir al borrado (privacidad)."""
+    from botocore.exceptions import ClientError
+
+    event = EventFactory(slug="del-branded")
+    photo = ApprovedPhotoFactory(
+        event=event,
+        original_key="events/del-branded/originals/p.jpg",
+        branded_key="events/del-branded/branded/p.jpg",
+    )
+    for key in (photo.original_key, photo.branded_key):
+        r2.put_object(Bucket=BUCKET, Key=key, Body=b"data")
+
+    deletion = DataDeletionRequest.objects.create(requester_ip_hash="x", matched_photo_count=1)
+    delete_photos_for_request.apply(args=[deletion.id, [photo.id]]).get()
+
+    with pytest.raises(ClientError):
+        r2.head_object(Bucket=BUCKET, Key="events/del-branded/branded/p.jpg")
+
+
+@pytest.mark.django_db
 def test_deletion_creates_audit_log(r2) -> None:  # type: ignore[no-untyped-def]
     event = EventFactory()
     photo = ApprovedPhotoFactory(event=event, original_key="events/x/originals/p.jpg")

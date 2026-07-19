@@ -105,6 +105,25 @@ def test_orphaned_r2_deletes_when_few() -> None:
 
 
 @pytest.mark.django_db
+def test_orphaned_r2_does_not_delete_branded_key() -> None:
+    """El branded_key (original con logos, lo que se descarga) está registrado en
+    DB → NO es huérfano y el cron NO lo borra. Sin esto, cada limpieza borraría
+    las versiones descargables de los eventos brandeados (pérdida de datos)."""
+    photo = PhotoFactory(
+        original_key="events/x/originals/a.jpg",
+        branded_key="events/x/branded/a.jpg",
+    )
+    with patch("apps.privacy.tasks.default_storage") as factory:
+        store = MagicMock()
+        store.list_keys.return_value = [photo.branded_key, "events/x/originals/ghost.jpg"]
+        factory.return_value = store
+        cleanup_orphaned_r2_objects()
+    deleted = [k for call in store.delete_many.call_args_list for k in call.args[0]]
+    assert "events/x/branded/a.jpg" not in deleted
+    assert "events/x/originals/ghost.jpg" in deleted
+
+
+@pytest.mark.django_db
 def test_stuck_photos_keep_their_r2_original() -> None:
     """Regresión del incidente 2026-06-09: el cron marcaba failed Y BORRABA el
     original de R2 — destruyó 133 fotos recuperables que estaban atascadas por

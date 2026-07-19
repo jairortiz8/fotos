@@ -51,11 +51,19 @@ def delete_photos_for_request(self, deletion_id: int, photo_ids: list[int]) -> d
         # 1. Contar embeddings antes de borrar (para el registro).
         emb_count = FaceEmbedding.objects.filter(photo_id__in=photo_ids).count()
 
-        # 2. Recolectar keys de R2 a borrar.
+        # 2. Recolectar keys de R2 a borrar (incl. branded_key: la copia full-res
+        #    con logos del usuario NO debe sobrevivir a un pedido de borrado).
         keys: list[str] = []
         for photo in Photo.objects.filter(id__in=photo_ids):
             keys.extend(
-                k for k in (photo.original_key, photo.preview_key, photo.thumbnail_key) if k
+                k
+                for k in (
+                    photo.original_key,
+                    photo.preview_key,
+                    photo.thumbnail_key,
+                    photo.branded_key,
+                )
+                if k
             )
 
         # 3. Borrar de R2 (best-effort: si R2 no está, seguimos con la DB).
@@ -212,7 +220,16 @@ def delete_event_photos_permanently(self, event_id: int) -> dict[str, int]:
     photos = Photo.objects.filter(event=event)
     keys: list[str] = []
     for photo in photos.iterator(chunk_size=500):
-        keys.extend(k for k in (photo.original_key, photo.preview_key, photo.thumbnail_key) if k)
+        keys.extend(
+            k
+            for k in (
+                photo.original_key,
+                photo.preview_key,
+                photo.thumbnail_key,
+                photo.branded_key,
+            )
+            if k
+        )
 
     if keys:
         try:
@@ -303,7 +320,16 @@ def cleanup_orphaned_r2_objects() -> dict[str, int | bool]:
 
     db_keys: set[str] = set()
     for photo in Photo.objects.iterator(chunk_size=1000):
-        db_keys.update(k for k in (photo.original_key, photo.preview_key, photo.thumbnail_key) if k)
+        db_keys.update(
+            k
+            for k in (
+                photo.original_key,
+                photo.preview_key,
+                photo.thumbnail_key,
+                photo.branded_key,
+            )
+            if k
+        )
 
     orphaned = all_keys - db_keys
     if len(orphaned) > ORPHAN_ALERT_THRESHOLD:

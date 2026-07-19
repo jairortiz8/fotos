@@ -56,6 +56,61 @@ def test_process_photo_runs_full_pipeline(tmp_path: Path) -> None:
 
 
 @pytest.mark.django_db
+def test_process_photo_persists_branded_key_for_branded_event(tmp_path: Path) -> None:
+    """En un evento brandeado, process_photo genera el branded original y lo
+    PERSISTE (branded_key debe estar en update_fields). Sin persistirlo, la
+    descarga con logos nunca se serviría."""
+    event = EventFactory(slug="test-branded", brand_overlay="surf_city")
+    photo = PhotoFactory(
+        event=event,
+        original_key="events/test-branded/originals/abc.jpg",
+        status=PhotoStatus.UPLOADING,
+        preview_key="",
+        thumbnail_key="",
+        branded_key="",
+    )
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch("apps.photos.tasks.generate_preview", return_value="events/x/previews/abc.webp"),
+        patch("apps.photos.tasks.generate_thumbnail", return_value="events/x/thumbs/abc.webp"),
+        patch(
+            "apps.photos.tasks.generate_branded_original",
+            return_value="events/test-branded/branded/abc.jpg",
+        ),
+        patch("apps.photos.tasks.run_ocr_on_photo.delay"),
+    ):
+        process_photo.apply(args=[photo.id]).get()
+
+    photo.refresh_from_db()
+    assert photo.branded_key == "events/test-branded/branded/abc.jpg"
+
+
+@pytest.mark.django_db
+def test_process_photo_no_branded_key_for_plain_event(tmp_path: Path) -> None:
+    """Evento normal → branded_key vacío (no hay descarga con logos). Usa el
+    generate_branded_original REAL, que devuelve None sin overlay (sin tocar R2)."""
+    event = EventFactory(slug="test-plain", brand_overlay="")
+    photo = PhotoFactory(
+        event=event,
+        original_key="events/test-plain/originals/abc.jpg",
+        status=PhotoStatus.UPLOADING,
+        preview_key="",
+        thumbnail_key="",
+        branded_key="",
+    )
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch("apps.photos.tasks.generate_preview", return_value="p"),
+        patch("apps.photos.tasks.generate_thumbnail", return_value="t"),
+        patch("apps.photos.tasks.run_ocr_on_photo.delay"),
+    ):
+        process_photo.apply(args=[photo.id]).get()
+
+    photo.refresh_from_db()
+    assert photo.branded_key == ""
+
+
+@pytest.mark.django_db
 def test_process_photo_skips_deleted(tmp_path: Path) -> None:
     photo = PhotoFactory(status=PhotoStatus.DELETED)
     with patch("apps.photos.tasks.download_temp_file") as mock_dl:

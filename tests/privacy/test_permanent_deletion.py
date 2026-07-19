@@ -45,6 +45,21 @@ def test_delete_event_removes_photos_from_r2(mock_storage: MagicMock) -> None:
 
 
 @pytest.mark.django_db
+def test_delete_event_removes_branded_key_from_r2(mock_storage: MagicMock) -> None:
+    """La versión con logos (branded_key) también se borra de R2 al borrar el
+    evento — si no, quedan copias full-res huérfanas."""
+    event = EventFactory(status=EventStatus.PENDING_DELETION)
+    PhotoFactory(
+        event=event,
+        original_key="events/e/originals/a.jpg",
+        branded_key="events/e/branded/a.jpg",
+    )
+    _run(event.id)
+    sent = [k for call in mock_storage.delete_many.call_args_list for k in call.args[0]]
+    assert "events/e/branded/a.jpg" in sent
+
+
+@pytest.mark.django_db
 def test_delete_event_removes_embeddings_and_bibs(mock_storage: MagicMock) -> None:
     event = EventFactory(status=EventStatus.PENDING_DELETION)
     photo = PhotoFactory(event=event, original_key="k/a.jpg")

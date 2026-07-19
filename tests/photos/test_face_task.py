@@ -152,12 +152,58 @@ def test_blur_applied_and_original_not_modified(tmp_path) -> None:  # type: igno
             from types import SimpleNamespace
 
             minor = SimpleNamespace(bbox={"x1": 100, "y1": 100, "x2": 400, "y2": 400})
-            preview_key, thumb_key = blur_minor_faces_and_regenerate(photo, source, [minor])
+            preview_key, thumb_key, branded_key = blur_minor_faces_and_regenerate(
+                photo, source, [minor]
+            )
 
             assert preview_key.endswith(".webp")
             assert thumb_key.endswith(".webp")
+            # Evento sin brand_overlay → no se genera versión con logos.
+            assert branded_key is None
             # El archivo original en disco NO se modificó.
             assert source.read_bytes() == original_bytes
+        storage_module.reset_default_storage_for_tests()
+
+
+@pytest.mark.django_db
+def test_blur_regenerates_branded_from_blurred_image(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """En un evento BRANDEADO, el blur de menores también regenera el original con
+    logos (branded) desde la copia BLUREADA → la descarga nunca muestra al menor
+    sin blur. blur_minor_faces_and_regenerate devuelve un branded_key .jpg."""
+    import boto3
+    from django.test import override_settings
+    from moto import mock_aws
+
+    from apps.photos import storage as storage_module
+    from apps.photos.imaging import blur_minor_faces_and_regenerate
+    from tests.factories import EventFactory
+
+    with override_settings(
+        R2_ENDPOINT_URL="",
+        R2_ACCESS_KEY_ID="AKIA-TEST",
+        R2_SECRET_ACCESS_KEY="SECRET-TEST",
+        R2_BUCKET_NAME="test-bucket",
+    ):
+        storage_module.reset_default_storage_for_tests()
+        with mock_aws():
+            boto3.client(
+                "s3",
+                aws_access_key_id="AKIA-TEST",
+                aws_secret_access_key="SECRET-TEST",
+                region_name="us-east-1",
+            ).create_bucket(Bucket="test-bucket")
+
+            event = EventFactory(slug="blur-branded", brand_overlay="surf_city")
+            photo = PhotoFactory(event=event, original_key="events/blur-branded/originals/m.jpg")
+            source = write_synthetic_jpeg("1", target=tmp_path / "orig.jpg")
+
+            from types import SimpleNamespace
+
+            minor = SimpleNamespace(bbox={"x1": 100, "y1": 100, "x2": 400, "y2": 400})
+            _preview, _thumb, branded_key = blur_minor_faces_and_regenerate(photo, source, [minor])
+
+            assert branded_key is not None
+            assert branded_key.endswith(".jpg")
         storage_module.reset_default_storage_for_tests()
 
 

@@ -37,8 +37,8 @@ class OverlayTemplate:
 
 TEMPLATES: dict[str, OverlayTemplate] = {
     "surf_city": OverlayTemplate(
-        left="surf_city_left.png",       # Surf City Half Marathon
-        right="elsalvador_right.png",    # elsalvador.travel + redes
+        left="surf_city_left.png",  # Surf City Half Marathon
+        right="elsalvador_right.png",  # elsalvador.travel + redes
         left_w_pct=0.22,
         right_w_pct=0.24,
         margin_pct=0.032,
@@ -86,8 +86,8 @@ def apply_brand_overlay(img: Image.Image, template: str) -> Image.Image:
     right = _scaled(_load_logo(cfg.right), cfg.right_w_pct)
 
     placements = (
-        (left, margin),                      # abajo-izquierda
-        (right, w - right.width - margin),   # abajo-derecha
+        (left, margin),  # abajo-izquierda
+        (right, w - right.width - margin),  # abajo-derecha
     )
     for logo, x in placements:
         y = h - logo.height - margin

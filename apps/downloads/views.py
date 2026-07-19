@@ -120,7 +120,11 @@ class PhotoDownloadView(View):
         event = photo.event
         if event.visibility == EventVisibility.PRIVATE or not event.is_searchable():
             raise Http404
-        if not photo.original_key:
+        # En eventos brandeados (ej. Surf City) se baja el original CON logos;
+        # en el resto, el original limpio. `download_key()` elige y cae al limpio
+        # si la versión con logos todavía no se generó.
+        download_key = photo.download_key()
+        if not download_key:
             raise Http404
         if not check_photo_download_rate_limit(request):
             return JsonResponse({"error": "rate_limited"}, status=429)
@@ -131,7 +135,7 @@ class PhotoDownloadView(View):
 
         buf = BytesIO()
         try:
-            default_storage().download_fileobj(photo.original_key, buf)
+            default_storage().download_fileobj(download_key, buf)
         except (R2NotConfiguredError, R2UploadError) as exc:
             raise Http404 from exc
         buf.seek(0)

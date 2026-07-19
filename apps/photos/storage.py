@@ -194,6 +194,12 @@ def key_for_thumbnail(event_slug: str, photo_uuid: str) -> str:
     return f"events/{event_slug}/thumbnails/{photo_uuid}.webp"
 
 
+def key_for_branded(event_slug: str, photo_uuid: str) -> str:
+    """Original full-res CON los logos de marca (JPEG). Sólo para eventos con
+    `brand_overlay`. Es lo que se descarga en esos eventos."""
+    return f"events/{event_slug}/branded/{photo_uuid}.jpg"
+
+
 def key_for_zip(event_slug: str, *, zip_uuid: str | None = None) -> str:
     uid = zip_uuid or uuid.uuid4().hex
     return f"events/{event_slug}/zips/{uid}.zip"
