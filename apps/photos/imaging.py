@@ -180,7 +180,31 @@ def _format_shutter(value: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Preview con watermark
+# Branding: logos de marca por evento (reemplaza el watermark) o watermark normal
+# ---------------------------------------------------------------------------
+def _try_brand_overlay(img: Image.Image, photo: Photo) -> Image.Image | None:
+    """Si el evento tiene `brand_overlay` con un template válido, devuelve la
+    imagen RGB con los logos pegados. Devuelve None si no aplica o si falla, para
+    que el llamador caiga al comportamiento normal (watermark). NUNCA propaga
+    excepciones → un logo faltante no puede romper el procesamiento de la foto."""
+    template = getattr(photo.event, "brand_overlay", "") or ""
+    if not template:
+        return None
+    try:
+        from apps.photos.overlays import apply_brand_overlay, is_valid_template
+
+        if is_valid_template(template):
+            return apply_brand_overlay(img, template)
+    except Exception:
+        logger.exception(
+            "brand overlay falló (event=%s) — fallback a watermark",
+            getattr(photo.event, "slug", "?"),
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Preview con watermark (o logos de marca)
 # ---------------------------------------------------------------------------
 def generate_preview(
     photo: Photo,
@@ -189,18 +213,23 @@ def generate_preview(
     img_object: Image.Image | None = None,
     storage: R2Storage | None = None,
 ) -> str:
-    """Genera preview con watermark diagonal y lo sube a R2. Devuelve el key.
+    """Genera preview y lo sube a R2. Devuelve el key.
 
+    Por defecto lleva watermark diagonal. Si el evento tiene `brand_overlay`, en
+    su lugar se pegan los logos de marca en las esquinas (ej. Surf City).
     Acepta `source_path` (lee de disco) o `img_object` (imagen ya cargada,
     p.ej. con blur de menores aplicado).
     """
     img = img_object.copy() if img_object is not None else Image.open(source_path)  # type: ignore[arg-type]
     img.thumbnail((PREVIEW_LONG_EDGE, PREVIEW_LONG_EDGE), Image.Resampling.LANCZOS)
-    watermark_text = f"{settings.SITE_NAME.upper()} · {photo.event.name.upper()}"
-    watermarked = apply_diagonal_watermark(img, watermark_text)
+
+    final = _try_brand_overlay(img, photo)
+    if final is None:
+        watermark_text = f"{settings.SITE_NAME.upper()} · {photo.event.name.upper()}"
+        final = apply_diagonal_watermark(img, watermark_text)
 
     buf = BytesIO()
-    watermarked.save(buf, format="WEBP", quality=PREVIEW_QUALITY, method=6)
+    final.save(buf, format="WEBP", quality=PREVIEW_QUALITY, method=6)
     buf.seek(0)
 
     key = key_for_preview(photo.event.slug, _photo_uid(photo))
@@ -215,12 +244,18 @@ def generate_thumbnail(
     img_object: Image.Image | None = None,
     storage: R2Storage | None = None,
 ) -> str:
-    """Thumb sin watermark (es pequeño, no vale la pena)."""
+    """Thumb sin watermark (es pequeño). Si el evento tiene `brand_overlay`, sí
+    lleva los logos de marca (para que la galería se vea brandeada)."""
     img = img_object.copy() if img_object is not None else Image.open(source_path)  # type: ignore[arg-type]
     img.thumbnail((THUMB_LONG_EDGE, THUMB_LONG_EDGE), Image.Resampling.LANCZOS)
 
+    rgb = img.convert("RGB")
+    branded = _try_brand_overlay(rgb, photo)
+    if branded is not None:
+        rgb = branded
+
     buf = BytesIO()
-    img.convert("RGB").save(buf, format="WEBP", quality=THUMB_QUALITY, method=6)
+    rgb.save(buf, format="WEBP", quality=THUMB_QUALITY, method=6)
     buf.seek(0)
 
     key = key_for_thumbnail(photo.event.slug, _photo_uid(photo))

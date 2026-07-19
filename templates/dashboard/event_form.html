@@ -109,6 +109,14 @@
           {% if form.visibility.errors %}<p class="text-danger text-[11px] mt-1">{{ form.visibility.errors.0 }}</p>{% endif %}
         </div>
 
+        {# brand_overlay — logos de marca en las fotos (ej. Surf City) #}
+        <div>
+          <label class="rf-label" for="{{ form.brand_overlay.id_for_label }}">{{ form.brand_overlay.label }}</label>
+          {{ form.brand_overlay }}
+          {% if form.brand_overlay.help_text %}<p class="text-[11px] text-text-3 mt-1">{{ form.brand_overlay.help_text }}</p>{% endif %}
+          {% if form.brand_overlay.errors %}<p class="text-danger text-[11px] mt-1">{{ form.brand_overlay.errors.0 }}</p>{% endif %}
+        </div>
+
       </div>
     </div>
 

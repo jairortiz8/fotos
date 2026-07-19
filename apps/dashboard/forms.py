@@ -53,6 +53,7 @@ class EventForm(_DashMixin, forms.ModelForm):
             "organizer_instagram",
             "organizer_facebook",
             "visibility",
+            "brand_overlay",
             "permanent_archive",
         ]
         # IMPORTANTE: el input HTML5 `type=date` SOLO entiende ISO (`YYYY-MM-DD`).
@@ -65,6 +66,7 @@ class EventForm(_DashMixin, forms.ModelForm):
             "description": forms.Textarea(attrs={"rows": 3}),
             "status": forms.Select(),
             "visibility": forms.Select(),
+            "brand_overlay": forms.Select(),
         }
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -103,6 +105,12 @@ class EventForm(_DashMixin, forms.ModelForm):
         self.fields["permanent_archive"].help_text = _(
             "Ignora la regla de 90 días: la galería pública queda abierta mientras "
             "el evento esté en 'Galería abierta'."
+        )
+        self.fields["brand_overlay"].required = False
+        self.fields["brand_overlay"].label = _("Logos en las fotos")
+        self.fields["brand_overlay"].help_text = _(
+            "Pega los logos del evento en las esquinas de abajo de cada foto "
+            "(reemplaza la marca de agua). Solo para este evento."
         )
         self._style_widgets()
 

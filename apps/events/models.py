@@ -41,6 +41,17 @@ class EventVisibility(models.TextChoices):
     PRIVATE = "private", _("Privado — solo admin")
 
 
+class BrandOverlay(models.TextChoices):
+    """Template de logos de marca a pegar en las fotos del evento.
+
+    El valor apunta a un template definido en `apps.photos.overlays.TEMPLATES`.
+    Vacío = sin logos (comportamiento normal con watermark diagonal).
+    """
+
+    NONE = "", _("Ninguno (watermark normal)")
+    SURF_CITY = "surf_city", _("Surf City (logos en las esquinas)")
+
+
 # Defaults de retención (configurables por evento).
 DEFAULT_PUBLIC_DAYS = 90
 DEFAULT_SEARCHABLE_DAYS = 180
@@ -96,6 +107,17 @@ class Event(TimeStampedModel):
         max_length=16,
         choices=EventVisibility.choices,
         default=EventVisibility.PUBLIC,
+    )
+    brand_overlay = models.CharField(
+        _("logos de marca en las fotos"),
+        max_length=32,
+        choices=BrandOverlay.choices,
+        blank=True,
+        default="",
+        help_text=_(
+            "Pega los logos del evento en las esquinas de abajo de cada foto. "
+            "Se aplica SOLO a este evento."
+        ),
     )
 
     # --- Política de retención (configurable por evento, defaults en save()) ---
