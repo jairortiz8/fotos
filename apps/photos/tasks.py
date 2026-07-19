@@ -344,6 +344,43 @@ def regenerate_preview_with_minor_blur(self, photo_id: int) -> dict[str, object]
 
 
 # ---------------------------------------------------------------------------
+# regenerate_thumbnail — sube la calidad de los thumbs YA generados
+#
+# Regenera SOLO el thumbnail (y opcionalmente el preview) desde el original,
+# con la calidad actual de settings. NO cambia el status ni re-corre OCR/caras,
+# así se puede mejorar la nitidez de un evento ya aprobado sin re-aprobar nada.
+# El key del thumb es estable (deriva del original_key) → sobrescribe en R2, sin
+# huérfanos y sin cambiar la URL.
+# ---------------------------------------------------------------------------
+@shared_task(
+    name="photos.regenerate_thumbnail",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=60,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+)
+def regenerate_thumbnail(
+    self, photo_id: int, *, include_preview: bool = False
+) -> dict[str, object]:
+    photo = Photo.objects.select_related("event").get(id=photo_id)
+    if photo.status == PhotoStatus.DELETED or not photo.original_key:
+        return {"photo_id": photo_id, "skipped": True}
+
+    with download_temp_file(photo.original_key) as source:
+        photo.thumbnail_key = generate_thumbnail(photo, source)
+        fields = ["thumbnail_key", "updated_at"]
+        # OJO: regenerar el preview PIERDE el blur de menores (si lo hubiera).
+        # En prod el blur está apagado; igual queda opt-in por las dudas.
+        if include_preview:
+            photo.preview_key = generate_preview(photo, source)
+            fields.insert(1, "preview_key")
+        photo.save(update_fields=fields)
+
+    return {"photo_id": photo.id, "thumbnail_key": photo.thumbnail_key, "preview": include_preview}
+
+
+# ---------------------------------------------------------------------------
 # reindex_missing_faces (auto-recuperación del indexado facial)
 # ---------------------------------------------------------------------------
 @shared_task(name="photos.reindex_missing_faces")

@@ -231,3 +231,57 @@ def test_run_ocr_exhaustive_passes_flag_and_clears_cache(tmp_path: Path) -> None
 
     assert captured["exhaustive"] is True
     assert cache.get(f"ocr_rerun:{photo.id}") is None  # flag limpiado
+
+
+# ---------------------------------------------------------------------------
+# regenerate_thumbnail
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_regenerate_thumbnail_updates_key_without_reapproving(tmp_path: Path) -> None:
+    """Regenera el thumbnail y actualiza su key SIN cambiar el status: sirve
+    para subir la nitidez de un evento ya aprobado sin re-aprobarlo."""
+    from apps.photos.tasks import regenerate_thumbnail
+
+    event = EventFactory(slug="test-regen")
+    photo = PhotoFactory(
+        event=event,
+        original_key="events/test-regen/originals/abc123.jpg",
+        status=PhotoStatus.APPROVED,
+        thumbnail_key="events/test-regen/thumbnails/abc123.webp",
+        preview_key="events/test-regen/previews/abc123.webp",
+    )
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch(
+            "apps.photos.tasks.generate_thumbnail", return_value="events/x/thumbs/new.webp"
+        ) as m_t,
+        patch("apps.photos.tasks.generate_preview") as m_p,
+    ):
+        regenerate_thumbnail.apply(args=[photo.id]).get()
+
+    photo.refresh_from_db()
+    assert photo.thumbnail_key == "events/x/thumbs/new.webp"
+    assert photo.status == PhotoStatus.APPROVED  # NO se re-aprueba
+    assert m_t.called
+    assert not m_p.called  # sin include_preview no toca el preview
+
+
+@pytest.mark.django_db
+def test_regenerate_thumbnail_with_preview_opt_in(tmp_path: Path) -> None:
+    from apps.photos.tasks import regenerate_thumbnail
+
+    photo = PhotoFactory(
+        event=EventFactory(slug="test-regen-prev"),
+        original_key="events/test-regen-prev/originals/abc.jpg",
+        status=PhotoStatus.APPROVED,
+    )
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch("apps.photos.tasks.generate_thumbnail", return_value="t.webp"),
+        patch("apps.photos.tasks.generate_preview", return_value="p.webp") as m_p,
+    ):
+        regenerate_thumbnail.apply(args=[photo.id], kwargs={"include_preview": True}).get()
+
+    photo.refresh_from_db()
+    assert photo.preview_key == "p.webp"
+    assert m_p.called
