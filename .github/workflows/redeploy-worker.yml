@@ -14,8 +14,9 @@ jobs:
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
       WORKER_ID: 1846c52a-57c3-4a8b-b4ec-1cc200a8e652
+      WORKER_FAST_ID: e4289c40-a254-436a-be02-35ec0e935363
     steps:
-      - name: Redeploy del worker pesado (faces + crons)
+      - name: Redeploy de worker (faces+crons) y worker_fast (previews)
         run: |
           set -uo pipefail
           gql() {
@@ -34,9 +35,12 @@ jobs:
           gql "$Q" | jq -r 'if .errors then ("ERR: "+(.errors|tostring)) else ([.data.deployments.edges[].node] | group_by(.service.name) | map(sort_by(.createdAt)|last) | .[] | "\(.service.name)\t\(.status)") end'
           echo
 
-          echo "==================== REDEPLOY worker ($WORKER_ID) ===================="
-          DQ='{"query":"mutation($s:String!,$e:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e) }","variables":{"s":"'"$WORKER_ID"'","e":"'"$ENV_ID"'"}}'
-          gql "$DQ" | jq '.'
-          echo
+          for pair in "worker:$WORKER_ID" "worker_fast:$WORKER_FAST_ID"; do
+            NAME="${pair%%:*}"; SID="${pair#*:}"
+            echo "==================== REDEPLOY $NAME ($SID) ===================="
+            DQ='{"query":"mutation($s:String!,$e:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e) }","variables":{"s":"'"$SID"'","e":"'"$ENV_ID"'"}}'
+            gql "$DQ" | jq '.'
+            echo
+          done
 
           echo "==================== FIN (el build tarda unos minutos) ===================="
