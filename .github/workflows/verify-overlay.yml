@@ -1,0 +1,111 @@
+name: verify-overlay (one-off)
+
+# Verificación DEFINITIVA de si las previews de prod tienen los logos:
+# baja de R2 la preview + el original, renderiza localmente la versión CON logos
+# (mismo código/asset del repo) y compara las esquinas (logos) vs el centro.
+# Veredicto programático: BRANDED o SIN LOGOS.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-verify"]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" "boto3==1.35.36" "pillow==11.0.0"
+
+      - name: Verificar overlay en la preview de prod
+        run: |
+          set -uo pipefail
+          gql() {
+            curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+              -H "Project-Access-Token: ${RAILWAY_TOKEN}" \
+              -H "Content-Type: application/json" --data "$1"
+          }
+          vars_of() {
+            local q='{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}'
+            gql "$q" | jq '.data.variables // {}'
+          }
+          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
+          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          FID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="fotos")|.id')
+          DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          FV=$(vars_of "$FID")
+          export R2_ENDPOINT_URL=$(echo "$FV" | jq -r '.R2_ENDPOINT_URL // empty')
+          export R2_KEY=$(echo "$FV" | jq -r '.R2_ACCESS_KEY_ID // empty')
+          export R2_SECRET=$(echo "$FV" | jq -r '.R2_SECRET_ACCESS_KEY // empty')
+          export R2_BUCKET=$(echo "$FV" | jq -r '.R2_BUCKET_NAME // empty')
+
+          DBURL="$DBURL" python3 - <<'PY'
+          import os, io
+          import psycopg, boto3
+          from PIL import Image, ImageFilter
+
+          # ---- overlay (réplica exacta de apps/photos/overlays.apply_brand_overlay) ----
+          OV = "apps/photos/brand_overlays"
+          def load(fn): return Image.open(f"{OV}/{fn}").convert("RGBA")
+          def shadow(logo, blur, a=150):
+              al = logo.split()[3]; sh = Image.new("RGBA", logo.size, (0,0,0,0))
+              sh.paste(Image.new("RGBA", logo.size, (0,0,0,a)), (0,0), al)
+              return sh.filter(ImageFilter.GaussianBlur(blur))
+          def brand(img):
+              base = img.convert("RGBA"); w,h = base.size
+              m = round(w*0.032); blur = max(2, round(w*0.004))
+              def sc(l,p):
+                  tw=max(1,round(w*p)); th=max(1,round(tw*l.height/l.width)); return l.resize((tw,th), Image.LANCZOS)
+              L=sc(load("surf_city_left.png"),0.22); R=sc(load("elsalvador_right.png"),0.24)
+              for lo,x in ((L,m),(R,w-R.width-m)):
+                  y=h-lo.height-m; base.alpha_composite(shadow(lo,blur),(x,y)); base.alpha_composite(lo,(x,y))
+              return base.convert("RGB")
+
+          conn = psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=conn.cursor()
+          cur.execute("select id, original_key, preview_key from photos_photo "
+                      "where event_id=(select id from events_event where slug='surf-city-prueba-logos') "
+                      "and preview_key<>'' order by id limit 1")
+          pid, okey, pkey = cur.fetchone()
+          print(f"Foto de prueba: id={pid}")
+
+          s3 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
+                            aws_access_key_id=os.environ["R2_KEY"], aws_secret_access_key=os.environ["R2_SECRET"])
+          bkt = os.environ["R2_BUCKET"]
+          def dl(k):
+              b=io.BytesIO(); s3.download_fileobj(bkt, k, b); b.seek(0); return b
+          prod = Image.open(dl(pkey)).convert("RGB")
+          orig = Image.open(dl(okey)).convert("RGB")
+          print(f"preview prod: {prod.size} | original: {orig.size}")
+
+          # render local branded (resize original a 1200 lado largo, igual que generate_preview)
+          ref = orig.copy(); ref.thumbnail((1200,1200), Image.LANCZOS); ref = brand(ref)
+          if ref.size != prod.size:
+              ref = ref.resize(prod.size, Image.LANCZOS)
+
+          import statistics
+          def region_diff(a, b, box):
+              ca=a.crop(box).convert("L"); cb=b.crop(box).convert("L")
+              pa=list(ca.getdata()); pb=list(cb.getdata())
+              return sum(abs(x-y) for x,y in zip(pa,pb))/len(pa)
+          W,H = prod.size
+          bl = (0, int(H*0.80), int(W*0.30), H)          # abajo-izquierda (logo)
+          br = (int(W*0.70), int(H*0.80), W, H)          # abajo-derecha (logo)
+          ce = (int(W*0.35), int(H*0.30), int(W*0.65), int(H*0.60))  # centro (baseline)
+          d_bl = region_diff(prod, ref, bl)
+          d_br = region_diff(prod, ref, br)
+          d_ce = region_diff(prod, ref, ce)
+          print(f"diff vs render-CON-logos:  esquina-izq={d_bl:.1f}  esquina-der={d_br:.1f}  centro={d_ce:.1f}")
+          print("(Si las esquinas ≈ centro → la preview de prod TIENE los logos. "
+                "Si las esquinas >> centro → la preview NO tiene logos.)")
+          corner = max(d_bl, d_br)
+          if corner <= d_ce*2 + 6:
+              print("VEREDICTO: la preview de prod SÍ tiene los logos (coincide con el render branded).")
+          else:
+              print("VEREDICTO: la preview de prod NO tiene los logos (esquinas no coinciden con el branded).")
+          PY
