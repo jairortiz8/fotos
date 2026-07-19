@@ -1,0 +1,52 @@
+name: deploy-commit (one-off)
+
+# Los servicios worker están fijados a un commit VIEJO (no siguen main HEAD).
+# Los deployamos al commit del feature (190f4a7) explícitamente. Prueba primero
+# latestCommit:true (HEAD de main); si la API no lo acepta, usa commitSha.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-deploycommit"]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      WORKER_ID: 1846c52a-57c3-4a8b-b4ec-1cc200a8e652
+      WORKER_FAST_ID: e4289c40-a254-436a-be02-35ec0e935363
+      SHA: 190f4a75b75ceb86b6fec01e3e1007537ee77679
+    steps:
+      - name: Deploy workers al commit del feature
+        run: |
+          set -uo pipefail
+          gql() {
+            curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+              -H "Project-Access-Token: ${RAILWAY_TOKEN}" \
+              -H "Content-Type: application/json" --data "$1"
+          }
+          for pair in "worker:$WORKER_ID" "worker_fast:$WORKER_FAST_ID"; do
+            NAME="${pair%%:*}"; SID="${pair#*:}"
+            echo "==================== $NAME ($SID) ===================="
+
+            echo "-- intento A: latestCommit:true (HEAD de main) --"
+            QA='{"query":"mutation($s:String!,$e:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e, latestCommit:true) }","variables":{"s":"'"$SID"'","e":"'"$ENV_ID"'"}}'
+            RA=$(gql "$QA")
+            echo "$RA" | jq -c '.'
+            if echo "$RA" | jq -e '.data.serviceInstanceDeployV2' >/dev/null 2>&1; then
+              echo ">> OK con latestCommit"; echo; continue
+            fi
+
+            echo "-- intento B: commitSha=$SHA --"
+            QB='{"query":"mutation($s:String!,$e:String!,$c:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e, commitSha:$c) }","variables":{"s":"'"$SID"'","e":"'"$ENV_ID"'","c":"'"$SHA"'"}}'
+            RB=$(gql "$QB")
+            echo "$RB" | jq -c '.'
+            if echo "$RB" | jq -e '.data.serviceInstanceDeployV2' >/dev/null 2>&1; then
+              echo ">> OK con commitSha"; echo; continue
+            fi
+            echo ">> AMBOS fallaron para $NAME (ver errores arriba)"; echo
+          done
+          echo "==================== FIN (el build tarda unos minutos) ===================="
