@@ -1,14 +1,14 @@
 name: prod-e2e (one-off)
 
 # Prueba E2E segura contra PROD, contra una foto que YA está en R2:
-#  1) Snapshot de salud del pipeline (distribución de estados, fotos atascadas).
-#  2) Encola `regenerate_thumbnail` a la cola `fast` para una foto APROBADA
+#  1) Descubre los servicios plugin (Postgres/Redis) y sus URLs PÚBLICAS.
+#  2) Snapshot de salud del pipeline (distribución de estados, fotos atascadas).
+#  3) Encola `regenerate_thumbnail` a la cola `fast` para una foto APROBADA
 #     (regenera SOLO el thumb, NO cambia el status → no degrada nada en vivo).
-#  3) Verifica por DB que el `updated_at` de esa foto cambió → worker_fast la
+#  4) Verifica por DB que el `updated_at` de esa foto cambió → worker_fast la
 #     procesó. Prueba el round-trip completo: broker → worker → R2 read/write → DB.
 #
-# NUNCA imprime las URLs de conexión (traen credenciales). Solo imprime KEYS y
-# resultados agregados.
+# NUNCA imprime las URLs de conexión (traen credenciales). Solo KEYS y resultados.
 
 on:
   workflow_dispatch:
@@ -23,7 +23,6 @@ jobs:
       API: https://backboard.railway.app/graphql/v2
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
-      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
     steps:
       - name: Instalar cliente celery
         run: python3 -m pip install --quiet "celery[redis]==5.6.3"
@@ -37,35 +36,46 @@ jobs:
               -H "Project-Access-Token: ${RAILWAY_TOKEN}" \
               -H "Content-Type: application/json" --data "$1"
           }
+          vars_of() {  # $1 = serviceId -> imprime el JSON de variables
+            local q='{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}'
+            gql "$q" | jq '.data.variables // {}'
+          }
 
-          echo "==================== 1) VARIABLES DEL WEB (solo keys) ===================="
-          VQ='{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$WEB_ID"'"}}'
-          gql "$VQ" | jq '.data.variables' > /tmp/vars.json
-          if ! jq -e . /tmp/vars.json >/dev/null 2>&1; then
-            echo "ERROR: no pude leer variables"; gql "$VQ" | jq '.errors'; exit 1
+          echo "==================== 1) SERVICIOS DEL PROYECTO ===================="
+          SQ='{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}'
+          gql "$SQ" > /tmp/svcs.json
+          if ! jq -e '.data.project.services' /tmp/svcs.json >/dev/null 2>&1; then
+            echo "ERROR listando servicios"; jq '.errors' /tmp/svcs.json; exit 1
           fi
-          jq -r 'keys[]' /tmp/vars.json | sort | tr '\n' ' '; echo
+          jq -r '.data.project.services.edges[].node | "\(.name)\t\(.id)"' /tmp/svcs.json
+          echo
 
-          DBURL=$(jq -r '.DATABASE_PUBLIC_URL // .DATABASE_URL // empty' /tmp/vars.json)
-          RDURL=$(jq -r '.REDIS_PUBLIC_URL // .REDIS_URL // empty' /tmp/vars.json)
-          # Si solo hay la interna (*.railway.internal) el runner no la alcanza.
-          case "$DBURL" in *railway.internal*) echo "OJO: DB solo interna, sin proxy público"; DBURL="";; esac
-          case "$RDURL" in *railway.internal*) echo "OJO: Redis solo interno, sin proxy público"; RDURL="";; esac
+          echo "==================== 2) BUSCAR URLs PÚBLICAS ===================="
+          DBURL=""; RDURL=""
+          while IFS=$'\t' read -r NAME SID; do
+            [ -z "$SID" ] && continue
+            V=$(vars_of "$SID")
+            KEYS=$(echo "$V" | jq -r 'keys[]?' | tr '\n' ' ')
+            echo "  - $NAME: $KEYS"
+            [ -z "$DBURL" ] && DBURL=$(echo "$V" | jq -r '.DATABASE_PUBLIC_URL // empty')
+            [ -z "$RDURL" ] && RDURL=$(echo "$V" | jq -r '.REDIS_PUBLIC_URL // empty')
+          done < <(jq -r '.data.project.services.edges[].node | "\(.name)\t\(.id)"' /tmp/svcs.json)
+          echo
           [ -n "$DBURL" ] && echo "DB pública: OK (oculta)" || echo "DB pública: NO disponible"
           [ -n "$RDURL" ] && echo "Redis público: OK (oculto)" || echo "Redis público: NO disponible"
           echo
 
           if [ -z "$DBURL" ]; then
-            echo "Sin DB pública no puedo verificar. Fin."; exit 0
+            echo "Sin DB pública no puedo hacer la verificación por DB. Fin."; exit 0
           fi
           export PGCONNECT_TIMEOUT=15
 
-          echo "==================== 2) SNAPSHOT DE ESTADOS ===================="
-          psql "$DBURL" -tAF $'\t' -c \
+          echo "==================== 3) SNAPSHOT DE ESTADOS ===================="
+          psql "$DBURL" -tAF ' | ' -c \
             "select status, count(*) from photos_photo group by status order by 2 desc;" \
             || { echo "ERROR conectando a la DB"; exit 1; }
           echo
-          echo "-- Atascadas en processing/uploading > 15 min (deberían ser 0 si hay worker) --"
+          echo "-- Atascadas en processing/uploading > 15 min (deberían ser 0 con worker vivo) --"
           psql "$DBURL" -tAc \
             "select count(*) from photos_photo where status in ('processing','uploading') and updated_at < now() - interval '15 minutes';"
           echo
@@ -75,10 +85,10 @@ jobs:
           echo
 
           if [ -z "$RDURL" ]; then
-            echo "Sin Redis público no puedo encolar la prueba de round-trip. Snapshot OK. Fin."; exit 0
+            echo "Sin Redis público no puedo encolar el round-trip. Snapshot OK. Fin."; exit 0
           fi
 
-          echo "==================== 3) ROUND-TRIP: regenerate_thumbnail -> fast ===================="
+          echo "==================== 4) ROUND-TRIP: regenerate_thumbnail -> fast ===================="
           PID=$(psql "$DBURL" -tAc \
             "select id from photos_photo where original_key<>'' and thumbnail_key<>'' and status='approved' order by created_at desc limit 1;")
           if [ -z "$PID" ]; then echo "No hay foto aprobada con original+thumb para probar. Fin."; exit 0; fi
