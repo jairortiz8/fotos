@@ -270,3 +270,27 @@ def test_event_cover_upload_goes_to_r2(admin_client: Client, settings) -> None: 
 
     storage_module.reset_default_storage_for_tests()
     cache.clear()
+
+
+@pytest.mark.django_db
+def test_regenerate_thumbnails_enqueues_and_audits(admin_client: Client) -> None:
+    """El botón de mantenimiento encola la task de regeneración y lo audita."""
+    from unittest.mock import patch
+
+    event = EventFactory()
+    ApprovedPhotoFactory(event=event, original_key="events/x/originals/a.jpg")
+
+    with patch("apps.photos.tasks.regenerate_event_thumbnails.delay") as m_delay:
+        resp = admin_client.post(reverse("dashboard:regenerate_thumbnails", args=[event.slug]))
+
+    assert resp.status_code == 200
+    assert m_delay.called
+    assert b"encolada" in resp.content
+    assert AuditLog.objects.filter(action="event.thumbnails_regenerated").exists()
+
+
+@pytest.mark.django_db
+def test_regenerate_thumbnails_requires_staff(client: Client) -> None:
+    event = EventFactory()
+    resp = client.post(reverse("dashboard:regenerate_thumbnails", args=[event.slug]))
+    assert resp.status_code == 302  # anónimo → redirect al login
