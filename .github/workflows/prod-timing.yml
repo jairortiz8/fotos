@@ -1,0 +1,144 @@
+name: prod-timing (one-off)
+
+# Mide en vivo cuánto tarda el procesamiento por foto en prod: process_photo
+# (preview/thumb/branded), OCR (Gemini) y caras (InsightFace/selfie).
+# Calienta el modelo primero (la 1ª foto tras un deploy carga buffalo_l ~28s).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-timing"]
+
+jobs:
+  timing:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" "celery[redis]==5.6.3"
+      - name: medir
+        run: |
+          set -uo pipefail
+          gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
+          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          RID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Redis")|.id')
+          FID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="fotos")|.id')
+          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          RDPUB=$(vars_of "$RID" | jq -r '.REDIS_PUBLIC_URL // empty')
+          CBURL=$(vars_of "$FID" | jq -r '.CELERY_BROKER_URL // empty')
+          SCHEME="${RDPUB%%://*}"; REST="${RDPUB#*://}"; AUTH="${REST%%/*}"
+          DBIDX=$(printf '%s' "$CBURL" | sed -nE 's#.*/([0-9]+)(\?.*)?$#\1#p'); [ -z "$DBIDX" ] && DBIDX=0
+          export BROKER="${SCHEME}://${AUTH}/${DBIDX}"
+
+          python3 - <<'PY'
+          import os, time
+          import psycopg
+          from celery import Celery
+          from kombu import Exchange, Queue
+
+          def conn():
+              return psycopg.connect(os.environ["DBURL"], connect_timeout=20, autocommit=True,
+                                     keepalives=1, keepalives_idle=15, keepalives_interval=5, keepalives_count=5)
+          def q1(sql,a=()):
+              for _ in range(5):
+                  try:
+                      with conn() as c,c.cursor() as cur: cur.execute(sql,a); r=cur.fetchone(); return r[0] if r else None
+                  except psycopg.OperationalError: time.sleep(2)
+              raise RuntimeError("db")
+          def run(sql,a=()):
+              for _ in range(5):
+                  try:
+                      with conn() as c,c.cursor() as cur: cur.execute(sql,a); return
+                  except psycopg.OperationalError: time.sleep(2)
+              raise RuntimeError("db")
+
+          app=Celery(broker=os.environ["BROKER"]); app.conf.task_default_queue="celery"
+          app.conf.task_queues=(Queue("fast",Exchange("fast","direct"),routing_key="fast"),)
+
+          def reset_and_process(pid, clear_bibs=False):
+              run("delete from photos_faceembedding where photo_id=%s",(pid,))
+              if clear_bibs: run("delete from photos_bib where photo_id=%s",(pid,))
+              run("update photos_photo set has_faces_detected=false, has_bibs_detected=false, preview_key='', thumbnail_key='', branded_key='' where id=%s",(pid,))
+
+          def measure(pid):
+              reset_and_process(pid)
+              t0=time.monotonic()
+              app.send_task("photos.process_photo",args=[pid],queue="fast")
+              t_keys=t_ocr=t_faces=None
+              while time.monotonic()-t0 < 180:
+                  time.sleep(1)
+                  row=None
+                  for _ in range(5):
+                      try:
+                          with conn() as c, c.cursor() as cur:
+                              cur.execute("select (preview_key<>'' and thumbnail_key<>'' and branded_key<>''), has_bibs_detected, has_faces_detected, (select count(*) from photos_faceembedding where photo_id=%s) from photos_photo where id=%s",(pid,pid))
+                              row=cur.fetchone()
+                          break
+                      except psycopg.OperationalError:
+                          time.sleep(1)
+                  if row is None:
+                      continue
+                  keys,hb,hf,nemb = row
+                  now=time.monotonic()-t0
+                  if keys and t_keys is None: t_keys=now
+                  if hb and t_ocr is None: t_ocr=now
+                  if (hf or (nemb or 0)>0) and t_faces is None: t_faces=now
+                  if t_keys and t_ocr and t_faces: break
+              run("update photos_photo set status='approved' where id=%s and preview_key<>'' and thumbnail_key<>''",(pid,))
+              return t_keys, t_ocr, t_faces
+
+          # Elegir fotos reales de 'prueba' con dorsales + caras (representativas del tamaño real)
+          eid=q1("select id from events_event where slug='prueba'")
+          ids=[]
+          with conn() as c, c.cursor() as cur:
+              cur.execute("""select p.id, p.file_size, p.width, p.height from photos_photo p
+                             where p.event_id=%s and p.status='approved'
+                             and exists (select 1 from photos_bib b where b.photo_id=p.id)
+                             and exists (select 1 from photos_faceembedding f where f.photo_id=p.id)
+                             order by p.id desc limit 4""",(eid,))
+              rows=cur.fetchall()
+          ids=[r[0] for r in rows]
+          meta={r[0]:(r[1],r[2],r[3]) for r in rows}
+          print("Fotos a medir:", ids)
+
+          if not ids:
+              print("no hay fotos con dorsal+cara para medir"); raise SystemExit(0)
+
+          # 1) Calentamiento (carga buffalo_l en el worker) — no cuenta
+          warm=ids[0]
+          print(f"\nCalentando el modelo con id={warm} (no cuenta)...")
+          tk,to,tf = measure(warm)
+          print(f"  (warm) process={tk}s ocr={to}s caras={tf}s")
+
+          # 2) Medición real (worker ya caliente)
+          print("\n=== MEDICIÓN (worker caliente) ===")
+          print(f"{'foto':>8} {'MB':>6} {'MP':>5} | {'process':>8} {'ocr(gemini)':>12} {'caras':>8} | {'TOTAL listo':>11}")
+          agg=[]
+          for pid in ids[1:]:
+              tk,to,tf = measure(pid)
+              fs,w,h = meta[pid]
+              mb=round((fs or 0)/1048576,1); mp=round((w*h)/1e6,1) if (w and h) else 0
+              total = max(x for x in (tk,to,tf) if x is not None) if any((tk,to,tf)) else None
+              agg.append((tk,to,tf,total))
+              def f(x): return f"{x:.1f}" if x is not None else "n/d"
+              print(f"{pid:>8} {mb:>6} {mp:>5} | {f(tk):>8} {f(to):>12} {f(tf):>8} | {f(total):>11}")
+
+          def avg(i):
+              vals=[a[i] for a in agg if a[i] is not None]
+              return sum(vals)/len(vals) if vals else None
+          def fa(x): return f"{x:.1f}s" if x is not None else "n/d"
+          print("\nPROMEDIO (worker caliente):")
+          print(f"  process_photo (preview/thumb/branded): {fa(avg(0))}")
+          print(f"  OCR Gemini (dorsal):                   {fa(avg(1))} (desde el encolado; corre después del process en worker_fast)")
+          print(f"  caras/selfie (InsightFace):            {fa(avg(2))} (en paralelo, en el worker)")
+          print(f"  TOTAL hasta 'lista y buscable':        {fa(avg(3))}")
+          print("\nNota: la galería MUESTRA la foto apenas termina 'process_photo'; el dorsal y el selfie quedan listos un poco después.")
+          PY
+          echo "==================== FIN ===================="
