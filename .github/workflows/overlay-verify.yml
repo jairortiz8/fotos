@@ -1,0 +1,181 @@
+name: overlay-verify (one-off)
+
+# Espera a que worker + worker_fast estén DEPLOYADOS en el commit del feature
+# (190f4a7), reprocesa las fotos de prueba, las aprueba y verifica por PIXELES
+# que la preview YA tenga los dos logos (esquina izq = Surf City, der = El Salvador),
+# tanto en fotos horizontales como verticales.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-golive"]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      FEATURE_SHORT: 190f4a7
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" "celery[redis]==5.6.3" "boto3==1.35.36" "pillow==11.0.0"
+
+      - name: esperar deploy + reproceso + verificacion pixel
+        run: |
+          set -uo pipefail
+          gql() {
+            curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+              -H "Project-Access-Token: ${RAILWAY_TOKEN}" \
+              -H "Content-Type: application/json" --data "$1"
+          }
+          vars_of() {
+            local q='{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}'
+            gql "$q" | jq '.data.variables // {}'
+          }
+          latest_worker_state() {
+            gql '{"query":"query($p:String!,$e:String!){ deployments(first:100, input:{projectId:$p, environmentId:$e}){ edges { node { status createdAt meta service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}' \
+              | jq -r --arg f "$FEATURE_SHORT" '
+                  [.data.deployments.edges[].node]
+                  | map(select(.service.name|test("^worker")))
+                  | group_by(.service.name)
+                  | map(sort_by(.createdAt)|last)
+                  | map({svc:.service.name, status:.status, commit:((.meta.commitHash // "?")|tostring[0:7])})'
+          }
+
+          echo "==================== 1) ESPERAR DEPLOY DE LOS WORKERS ===================="
+          READY=0
+          for i in $(seq 1 28); do
+            ST=$(latest_worker_state)
+            echo "intento $i:"; echo "$ST" | jq -c '.[]'
+            OK=$(echo "$ST" | jq -r --arg f "$FEATURE_SHORT" \
+              '[.[] | select(.svc|test("worker"))] as $w
+               | ([$w[] | select(.status=="SUCCESS" and .commit==$f)] | length) as $good
+               | ($w|length) as $tot
+               | if ($tot>=2 and $good>=2) then "yes" else "no" end')
+            if [ "$OK" = "yes" ]; then READY=1; echo ">> worker + worker_fast SUCCESS en $FEATURE_SHORT"; break; fi
+            sleep 30
+          done
+          if [ "$READY" != "1" ]; then
+            echo ">> Los workers todavia NO estan listos en $FEATURE_SHORT. Re-corré el workflow en unos minutos."
+            exit 0
+          fi
+          echo
+
+          echo "==================== 2) CREDENCIALES (DB / Redis / R2) ===================="
+          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
+          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          RID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Redis")|.id')
+          FID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="fotos")|.id')
+          DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          RDPUB=$(vars_of "$RID" | jq -r '.REDIS_PUBLIC_URL // empty')
+          FV=$(vars_of "$FID")
+          CBURL=$(echo "$FV" | jq -r '.CELERY_BROKER_URL // empty')
+          SCHEME="${RDPUB%%://*}"; REST="${RDPUB#*://}"; AUTH="${REST%%/*}"
+          DBIDX=$(printf '%s' "$CBURL" | sed -nE 's#.*/([0-9]+)(\?.*)?$#\1#p'); [ -z "$DBIDX" ] && DBIDX=0
+          export BROKER="${SCHEME}://${AUTH}/${DBIDX}"
+          export DBURL
+          export R2_ENDPOINT_URL=$(echo "$FV" | jq -r '.R2_ENDPOINT_URL // empty')
+          export R2_KEY=$(echo "$FV" | jq -r '.R2_ACCESS_KEY_ID // empty')
+          export R2_SECRET=$(echo "$FV" | jq -r '.R2_SECRET_ACCESS_KEY // empty')
+          export R2_BUCKET=$(echo "$FV" | jq -r '.R2_BUCKET_NAME // empty')
+          echo "DB=${DBURL:+ok} REDIS=${BROKER:+ok} R2=${R2_ENDPOINT_URL:+ok}/${R2_BUCKET}"
+          echo
+
+          echo "==================== 3) REPROCESO + APROBACION + VERIFICACION ===================="
+          python3 - <<'PY'
+          import os, io, time
+          import psycopg, boto3
+          from celery import Celery
+          from kombu import Exchange, Queue
+          from PIL import Image, ImageFilter
+
+          OV = "apps/photos/brand_overlays"
+          def load(fn): return Image.open(f"{OV}/{fn}").convert("RGBA")
+          def shadow(l, b, a=150):
+              al = l.split()[3]
+              sh = Image.new("RGBA", l.size, (0, 0, 0, 0))
+              sh.paste(Image.new("RGBA", l.size, (0, 0, 0, a)), (0, 0), al)
+              return sh.filter(ImageFilter.GaussianBlur(b))
+          def brand(img):
+              base = img.convert("RGBA"); w, h = base.size
+              m = round(w * 0.032); bl = max(2, round(w * 0.004))
+              def sc(l, p):
+                  tw = max(1, round(w * p)); th = max(1, round(tw * l.height / l.width))
+                  return l.resize((tw, th), Image.LANCZOS)
+              L = sc(load("surf_city_left.png"), 0.22); R = sc(load("elsalvador_right.png"), 0.24)
+              for lo, x in ((L, m), (R, w - R.width - m)):
+                  y = h - lo.height - m
+                  base.alpha_composite(shadow(lo, bl), (x, y)); base.alpha_composite(lo, (x, y))
+              return base.convert("RGB")
+
+          conn = psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur = conn.cursor()
+          cur.execute("select id from events_event where slug='surf-city-prueba-logos'")
+          row = cur.fetchone()
+          if not row:
+              print("!! No existe el evento surf-city-prueba-logos"); raise SystemExit(1)
+          eid = row[0]
+          cur.execute("select id, extract(epoch from updated_at)::bigint from photos_photo "
+                      "where event_id=%s and status<>'deleted' order by id", (eid,))
+          rows = cur.fetchall(); before = {r[0]: r[1] for r in rows}
+          print("Fotos a reprocesar:", list(before))
+
+          app = Celery(broker=os.environ["BROKER"]); app.conf.task_default_queue = "celery"
+          app.conf.task_queues = (Queue("fast", Exchange("fast", "direct"), routing_key="fast"),)
+          for pid in before:
+              app.send_task("photos.process_photo", args=[pid], queue="fast")
+          done = set()
+          for i in range(30):
+              time.sleep(6)
+              cur.execute("select id, extract(epoch from updated_at)::bigint from photos_photo where id=any(%s)", (list(before),))
+              for pid, ua in cur.fetchall():
+                  if pid not in done and ua != before[pid]: done.add(pid)
+              if len(done) == len(before): break
+          print(f"Reprocesadas: {len(done)}/{len(before)}")
+          cur.execute("update photos_photo set status='approved' where event_id=%s and status='pending_review' "
+                      "and preview_key<>'' and thumbnail_key<>''", (eid,))
+          conn.commit()
+          time.sleep(3)
+
+          s3 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
+                            aws_access_key_id=os.environ["R2_KEY"], aws_secret_access_key=os.environ["R2_SECRET"])
+          bkt = os.environ["R2_BUCKET"]
+          def dl(k):
+              b = io.BytesIO(); s3.download_fileobj(bkt, k, b); b.seek(0); return b
+          def rd(a, b, box):
+              ca = list(a.crop(box).convert("L").getdata()); cb = list(b.crop(box).convert("L").getdata())
+              return sum(abs(x - y) for x, y in zip(ca, cb)) / len(ca)
+
+          cur.execute("select id, original_key, preview_key, width, height from photos_photo "
+                      "where event_id=%s and preview_key<>'' order by id", (eid,))
+          fotos = cur.fetchall()
+          print(f"\nVerificando {len(fotos)} previews:\n")
+          all_ok = True
+          for pid, okey, pkey, w0, h0 in fotos:
+              try:
+                  prod = Image.open(dl(pkey)).convert("RGB")
+                  orig = Image.open(dl(okey)).convert("RGB")
+              except Exception as e:
+                  print(f"foto id={pid}: no pude bajar de R2 ({e})"); all_ok = False; continue
+              ref = orig.copy(); ref.thumbnail((1200, 1200), Image.LANCZOS); ref = brand(ref)
+              if ref.size != prod.size: ref = ref.resize(prod.size, Image.LANCZOS)
+              W, H = prod.size
+              orient = "horizontal" if W >= H else "vertical"
+              d_bl = rd(prod, ref, (0, int(H * 0.80), int(W * 0.30), H))
+              d_br = rd(prod, ref, (int(W * 0.70), int(H * 0.80), W, H))
+              d_ce = rd(prod, ref, (int(W * 0.35), int(H * 0.30), int(W * 0.65), int(H * 0.60)))
+              ok = max(d_bl, d_br) <= d_ce * 2 + 6
+              mark = "✓" if ok else "✗"
+              all_ok = all_ok and ok
+              print(f"  {mark} id={pid} {orient} {W}x{H}  izq={d_bl:.1f} der={d_br:.1f} centro={d_ce:.1f}")
+
+          print()
+          if all_ok:
+              print("VEREDICTO: ✓ TODAS las previews (horizontales y verticales) tienen los logos.")
+          else:
+              print("VEREDICTO: ✗ alguna preview NO tiene los logos.")
+          PY
+          echo "==================== FIN ===================="
