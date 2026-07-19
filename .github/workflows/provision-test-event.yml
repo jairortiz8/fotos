@@ -1,0 +1,119 @@
+name: provision-test-event (one-off)
+
+# Crea el evento PRIVADO de prueba con brand_overlay=surf_city + un link de
+# subida, directo en la DB de prod. Se auto-gatea: solo inserta si la columna
+# `brand_overlay` ya existe (= el deploy con la migración terminó). Idempotente
+# en el evento (por slug); siempre genera un link nuevo.
+#
+# NUNCA imprime la URL de la DB. SÍ imprime el link de subida (es lo que se pide).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-provision"]
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      SITE: https://findyourfoto.com
+    steps:
+      - name: Instalar psycopg
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
+
+      - name: Crear evento privado + link
+        run: |
+          set -uo pipefail
+          gql() {
+            curl -sS "$API" \
+              -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+              -H "Project-Access-Token: ${RAILWAY_TOKEN}" \
+              -H "Content-Type: application/json" --data "$1"
+          }
+          # DATABASE_PUBLIC_URL del servicio Postgres
+          SID=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}' | jq -r '.data.project.services.edges[].node | select(.name=="Postgres") | .id')
+          VQ='{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$SID"'"}}'
+          DBURL=$(gql "$VQ" | jq -r '.data.variables.DATABASE_PUBLIC_URL // empty')
+          if [ -z "$DBURL" ]; then echo "sin DATABASE_PUBLIC_URL"; exit 1; fi
+
+          DBURL="$DBURL" SITE="$SITE" python3 - <<'PY'
+          import os, secrets, hashlib, datetime as dt
+          import psycopg
+
+          site = os.environ["SITE"].rstrip("/")
+          conn = psycopg.connect(os.environ["DBURL"], connect_timeout=20)
+          conn.autocommit = False
+          cur = conn.cursor()
+
+          # GATE: ¿ya está la migración del feature?
+          cur.execute("select 1 from information_schema.columns "
+                      "where table_name='events_event' and column_name='brand_overlay'")
+          if cur.fetchone() is None:
+              print("DEPLOY_PENDIENTE: la columna brand_overlay todavía no existe. "
+                    "El deploy con la migración no terminó. Reintentar en unos minutos.")
+              raise SystemExit(1)
+
+          now = dt.datetime.now(dt.UTC)
+          slug = "surf-city-prueba-logos"
+          event_date = dt.date(2026, 7, 19)
+
+          # Evento idempotente por slug
+          cur.execute("select id, brand_overlay, visibility from events_event where slug=%s", (slug,))
+          row = cur.fetchone()
+          if row:
+              event_id = row[0]
+              # asegurar el flag + privacidad por si el evento ya existía
+              cur.execute("update events_event set brand_overlay='surf_city', visibility='private', "
+                          "updated_at=%s where id=%s", (now, event_id))
+              print(f"Evento ya existía (id={event_id}); flag/visibilidad asegurados.")
+          else:
+              cur.execute(
+                  """insert into events_event
+                     (created_at, updated_at, name, slug, date, location, description,
+                      cover_image, cover_key, organizer_name, organizer_instagram, organizer_facebook,
+                      status, visibility, brand_overlay,
+                      public_until, searchable_until, archive_until, permanent_archive,
+                      photo_count, pending_count, photographer_count, search_count, download_count)
+                     values
+                     (%s,%s,%s,%s,%s,%s,%s, NULL,%s,%s,%s,%s, %s,%s,%s, %s,%s,%s,%s, 0,0,0,0,0)
+                     returning id""",
+                  (now, now, "Surf City — Prueba de logos", slug, event_date, "",
+                   "Evento privado de prueba para el overlay de logos (Surf City).",
+                   "", "", "", "",
+                   "live", "private", "surf_city",
+                   now + dt.timedelta(days=90), now + dt.timedelta(days=180),
+                   now + dt.timedelta(days=365), False),
+              )
+              event_id = cur.fetchone()[0]
+              print(f"Evento creado (id={event_id}, slug={slug}, privado, brand_overlay=surf_city).")
+
+          # Link de subida nuevo (token plano se ve una sola vez)
+          raw_token = secrets.token_urlsafe(24)
+          token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+          expires_at = dt.datetime.combine(event_date, dt.time.max).replace(tzinfo=dt.UTC) + dt.timedelta(days=30)
+          cur.execute(
+              """insert into photographers_photographerlink
+                 (created_at, updated_at, event_id, photographer_name, photographer_email,
+                  photographer_phone, token_hash, expires_at, is_active, revoked_at,
+                  revoked_reason, photo_limit, photos_uploaded, last_used_at, last_used_ip,
+                  featured_image_key)
+                 values (%s,%s,%s,%s, NULL, %s,%s,%s, true, NULL, %s, NULL, 0, NULL, NULL, %s)
+                 returning id""",
+              (now, now, event_id, "Prueba (Jair)", "", token_hash, expires_at, "", ""),
+          )
+          link_id = cur.fetchone()[0]
+          # contador denormalizado de fotógrafos
+          cur.execute("update events_event set photographer_count=photographer_count+1, updated_at=%s "
+                      "where id=%s", (now, event_id))
+          conn.commit()
+
+          print("")
+          print("==================== LINK DE SUBIDA ====================")
+          print(f"{site}/u/{raw_token}/")
+          print("========================================================")
+          print(f"(link_id={link_id}, expira en 30 días)")
+          PY
