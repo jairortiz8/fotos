@@ -1,0 +1,42 @@
+name: redeploy-worker (one-off)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-redeploy-worker"]
+
+jobs:
+  redeploy:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      WORKER_ID: 1846c52a-57c3-4a8b-b4ec-1cc200a8e652
+    steps:
+      - name: Redeploy del worker pesado (faces + crons)
+        run: |
+          set -uo pipefail
+          gql() {
+            curl -sS "$API" \
+              -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+              -H "Project-Access-Token: ${RAILWAY_TOKEN}" \
+              -H "Content-Type: application/json" --data "$1"
+          }
+
+          if [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "(sin RAILWAY_TOKEN: no puedo redeployar)"; exit 1
+          fi
+
+          echo "==================== ESTADO ACTUAL ===================="
+          Q='{"query":"query($p:String!,$e:String!){ deployments(first:60, input:{projectId:$p, environmentId:$e}){ edges { node { id status createdAt service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}'
+          gql "$Q" | jq -r 'if .errors then ("ERR: "+(.errors|tostring)) else ([.data.deployments.edges[].node] | group_by(.service.name) | map(sort_by(.createdAt)|last) | .[] | "\(.service.name)\t\(.status)") end'
+          echo
+
+          echo "==================== REDEPLOY worker ($WORKER_ID) ===================="
+          DQ='{"query":"mutation($s:String!,$e:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e) }","variables":{"s":"'"$WORKER_ID"'","e":"'"$ENV_ID"'"}}'
+          gql "$DQ" | jq '.'
+          echo
+
+          echo "==================== FIN (el build tarda unos minutos) ===================="
