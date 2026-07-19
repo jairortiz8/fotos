@@ -99,35 +99,44 @@ jobs:
           if chosen is None:
               print("VEREDICTO: ningún worker respondió por inspect. Broker sin consumidor."); raise SystemExit(0)
 
+          import redis
           from kombu import Exchange, Queue
           broker = f"{scheme}://{auth}/{chosen}"
           backend = f"{scheme}://{auth}/{rdb}"
+          rc = redis.Redis.from_url(broker)
+          print("LLEN antes:  fast=%s faces=%s celery=%s" % (rc.llen("fast"), rc.llen("faces"), rc.llen("celery")))
+
           app = Celery(broker=broker, backend=backend)
-          # Declarar las colas EXACTAMENTE como el worker (exchange=nombre, direct, key=nombre)
-          # para que el mensaje caiga en la lista Redis correcta y no se descarte.
           app.conf.task_default_queue = "celery"
           app.conf.task_queues = (
-              Queue("celery", Exchange("celery", "direct"), routing_key="celery"),
               Queue("fast", Exchange("fast", "direct"), routing_key="fast"),
-              Queue("faces", Exchange("faces", "direct"), routing_key="faces"),
+              Queue("diagprobe", Exchange("diagprobe", "direct"), routing_key="diagprobe"),
           )
+
+          # (A) PRUEBA DE RUTEO: encolar a 'diagprobe' que NADIE consume. Si mi
+          #     producer rutea bien, el mensaje queda en la lista Redis 'diagprobe'.
+          app.send_task("config.celery.debug_task", queue="diagprobe")
+          time.sleep(1.5)
+          print("RUTEO: LLEN diagprobe =", rc.llen("diagprobe"), "(>=1 => el producer SÍ llega a Redis)")
+
+          # (B) PRUEBA DE CONSUMO: encolar a 'fast' y mirar la lista + el estado.
           r = app.send_task("photos.regenerate_thumbnail", args=[pid],
                             kwargs={"include_preview": False}, queue="fast")
-          print(f"Encolada a 'fast' (DB /{chosen}). task_id={r.id}. Esperando ejecución...")
+          print(f"CONSUMO: encolada a 'fast' (DB /{chosen}). task_id={r.id}")
           final = None
-          for i in range(24):
-              time.sleep(3)
-              st = r.state
-              print(f"  t={i*3+3}s  state={st}")
+          for i in range(12):
+              time.sleep(2)
+              ll = rc.llen("fast"); st = r.state
+              print(f"  t={2*(i+1)}s  LLEN fast={ll}  state={st}")
               if st in ("SUCCESS", "FAILURE"):
                   final = st; break
           if final == "SUCCESS":
               print(f"VEREDICTO: SUCCESS. El pipeline 'fast' FUNCIONA. result={r.result}")
           elif final == "FAILURE":
-              print("VEREDICTO: FAILURE (worker la tomó y ejecutó, pero la tarea falló):")
-              print(str(r.result)[:400])
+              print("VEREDICTO: FAILURE (worker la tomó pero la tarea falló):"); print(str(r.result)[:400])
           else:
-              print(f"VEREDICTO: quedó en '{r.state}' tras 72s (STARTED=colgado ejecutando; PENDING=no la tomó).")
+              print(f"VEREDICTO: estado '{r.state}'. Ver LLEN fast + LLEN diagprobe arriba para aislar ruteo vs consumo.")
+          rc.delete("diagprobe")  # limpieza de la prueba
           PY
 
           echo
