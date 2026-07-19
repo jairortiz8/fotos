@@ -9,6 +9,7 @@ from apps.dashboard.views.events import (
     EventListView,
     EventUpdateView,
     GenerateLinkView,
+    RegenerateThumbnailsView,
 )
 from apps.dashboard.views.home import DashboardHomeView
 from apps.dashboard.views.misc import AuditLogView, SettingsView, StatsView
@@ -51,6 +52,7 @@ __all__ = [
     "PhotoDetailView",
     "PhotographerLinkListView",
     "RegenerateLinkView",
+    "RegenerateThumbnailsView",
     "RejectPhotoView",
     "RemoveBibView",
     "RerunOcrView",

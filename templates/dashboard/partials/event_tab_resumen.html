@@ -44,3 +44,24 @@
     </div>
   </section>
 </div>
+
+{# Mantenimiento del evento #}
+<section class="rf-card overflow-hidden mt-5">
+  <div class="px-5 py-3.5 border-b border-border"><h3 class="font-display font-bold text-[14px]">{% trans "Mantenimiento" %}</h3></div>
+  <div class="p-5 flex items-center justify-between gap-4 flex-wrap">
+    <div class="min-w-0">
+      <div class="text-[13px] text-text-1">{% trans "Regenerar miniaturas en alta calidad" %}</div>
+      <div class="text-[11px] text-text-3 mt-0.5 max-w-md">{% trans "Vuelve a generar las miniaturas de las fotos del evento a 640px. Sirve para eventos subidos antes de la mejora de calidad. No re-aprueba nada; el worker las procesa en segundo plano." %}</div>
+    </div>
+    <div id="regen-thumbs-status" class="shrink-0">
+      <button type="button" class="rf-ghost text-xs gap-1.5"
+              hx-post="{% url 'dashboard:regenerate_thumbnails' slug=event.slug %}"
+              hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+              hx-confirm="{% trans '¿Regenerar las miniaturas de todas las fotos de este evento?' %}"
+              hx-target="#regen-thumbs-status" hx-swap="innerHTML">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        {% trans "Regenerar" %}
+      </button>
+    </div>
+  </div>
+</section>

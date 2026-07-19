@@ -18,6 +18,11 @@ urlpatterns = [
     path("eventos/<slug:slug>/", views.EventDetailView.as_view(), name="event_detail"),
     path("eventos/<slug:slug>/editar/", views.EventUpdateView.as_view(), name="event_update"),
     path(
+        "eventos/<slug:slug>/regenerar-miniaturas/",
+        views.RegenerateThumbnailsView.as_view(),
+        name="regenerate_thumbnails",
+    ),
+    path(
         "eventos/<slug:slug>/generar-link/",
         views.GenerateLinkView.as_view(),
         name="generate_link",

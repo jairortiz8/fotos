@@ -25,6 +25,32 @@ from apps.photos.models import Bib, Photo, PhotoStatus
 _TABS = ("resumen", "fotos", "fotografos", "links", "dorsales")
 
 
+class RegenerateThumbnailsView(StaffRequiredMixin, View):
+    """Encola la regeneración de las miniaturas de las fotos del evento (calidad
+    actual), sin re-aprobar. Corre en el web de prod → encola UNA task al worker,
+    que hace el fan-out. Botón en el detalle del evento (tab Resumen)."""
+
+    def post(self, request: HttpRequest, slug: str) -> HttpResponse:
+        event = get_object_or_404(Event, slug=slug)
+        count = (
+            Photo.objects.filter(event=event)
+            .exclude(status=PhotoStatus.DELETED)
+            .exclude(original_key="")
+            .count()
+        )
+
+        from apps.photos.tasks import regenerate_event_thumbnails
+
+        regenerate_event_thumbnails.delay(event.id)
+        AuditLog.log(
+            "event.thumbnails_regenerated",
+            target=event,
+            user=self.staff_user,
+            metadata={"count": count},
+        )
+        return render(request, "dashboard/partials/regen_thumbs_result.html", {"count": count})
+
+
 def _save_event_cover(event: Event | None, form: EventForm) -> None:
     """Si el form trae una portada nueva, la procesa (webp) → R2 → cover_key.
 

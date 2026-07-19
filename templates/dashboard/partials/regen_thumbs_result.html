@@ -1,0 +1,5 @@
+{% load i18n %}
+<span class="inline-flex items-center gap-1.5 text-[12px] text-success">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+  {% blocktrans count n=count %}{{ n }} foto encolada{% plural %}{{ n }} fotos encoladas{% endblocktrans %}
+</span>

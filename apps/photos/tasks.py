@@ -380,6 +380,23 @@ def regenerate_thumbnail(
     return {"photo_id": photo.id, "thumbnail_key": photo.thumbnail_key, "preview": include_preview}
 
 
+@shared_task(name="photos.regenerate_event_thumbnails")
+def regenerate_event_thumbnails(event_id: int, *, include_preview: bool = False) -> dict[str, int]:
+    """Encola `regenerate_thumbnail` para todas las fotos (no borradas, con
+    original) de un evento. La usa el botón del dashboard: el web encola ESTA
+    (una sola task) y el worker hace el fan-out — así el request web no dispara
+    miles de `.delay()`."""
+    ids = list(
+        Photo.objects.filter(event_id=event_id)
+        .exclude(status=PhotoStatus.DELETED)
+        .exclude(original_key="")
+        .values_list("id", flat=True)
+    )
+    for pid in ids:
+        regenerate_thumbnail.delay(pid, include_preview=include_preview)
+    return {"event_id": event_id, "enqueued": len(ids)}
+
+
 # ---------------------------------------------------------------------------
 # reindex_missing_faces (auto-recuperación del indexado facial)
 # ---------------------------------------------------------------------------
