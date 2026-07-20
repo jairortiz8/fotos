@@ -4,7 +4,7 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  audit:
+  now:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: deps
         run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" redis
-      - name: audit
+      - name: now
         shell: bash +e {0}
         run: |
           set +e
@@ -25,38 +25,23 @@ jobs:
           vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
           export DBURL=$(vars_of "$PG_ID" | jq -r '.DATABASE_PUBLIC_URL // empty')
           export REDISURL=$(vars_of "$REDIS_ID" | jq -r '.REDIS_PUBLIC_URL // empty')
-
-          echo "===== SITIO: healthz + página de selfie ====="
-          curl -sS -m 20 "$SITE/healthz" | jq -c '{status,db:.checks.db.ok,workers:.checks.celery_workers.workers}' 2>/dev/null
-          echo "  buscar-selfie HTTP: $(curl -sS -o /dev/null -m 20 -w '%{http_code}' "$SITE/eventos/surf-city-2026/buscar-selfie/")  (200=activo, 503=apagado)"
-          echo
-
+          echo "SITIO:"
+          curl -sS -m 20 "$SITE/healthz" | jq -c '{status,db:.checks.db.ok,redis:.checks.redis.ok,r2:.checks.r2.ok,workers:.checks.celery_workers.workers,beat:.checks.celery_beat.ok}'
+          echo "  home HTTP:        $(curl -sS -o /dev/null -m 20 -w '%{http_code}' "$SITE/")"
+          echo "  evento HTTP:      $(curl -sS -o /dev/null -m 20 -w '%{http_code}' "$SITE/eventos/surf-city-2026/")"
+          echo "  buscar-selfie:    $(curl -sS -o /dev/null -m 20 -w '%{http_code}' "$SITE/eventos/surf-city-2026/buscar-selfie/")"
           python3 - <<'PY'
           import os, redis, psycopg
           r=redis.from_url(os.environ["REDISURL"], socket_connect_timeout=15)
-          print("===== COLA Celery (backlog drenando) =====")
-          print("  ", {q:r.llen(q) for q in ("fast","faces","celery")})
-
+          print("COLA Celery:", {q:r.llen(q) for q in ("fast","faces","celery")})
           c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
-          def q(sql,a=()):
-              cur.execute(sql,a); return cur.fetchall()
-
-          print("\n===== ESTADOS de fotos (backlog) =====")
-          for s,n in q("select status,count(*) from photos_photo group by status order by 2 desc"): print(f"   {s:18} {n}")
-
-          print("\n===== THROUGHPUT worker (últimos 10 min) =====")
-          print("   pasaron a pending_review/approved:", q("select count(*) from photos_photo where status in ('pending_review','approved') and updated_at>now()-interval '10 minutes'")[0][0])
-          print("   siguen en processing:", q("select count(*) from photos_photo where status='processing'")[0][0])
-
-          print("\n===== OCR (dorsales) =====")
-          print("   fotos con dorsal:", q("select count(distinct photo_id) from photos_bib")[0][0])
-          print("   dorsales por fuente:", q("select source,count(*) from photos_bib group by source order by 2 desc"))
-          print("   dorsales agregados últimos 15 min:", q("select count(*) from photos_bib where created_at>now()-interval '15 minutes'")[0][0])
-
-          print("\n===== SELFIE (caras/embeddings) =====")
-          print("   embeddings totales:", q("select count(*) from photos_faceembedding")[0][0])
-          print("   fotos con caras:", q("select count(*) from photos_photo where has_faces_detected=true")[0][0])
-          print("   embeddings agregados últimos 15 min:", q("select count(*) from photos_faceembedding where created_at>now()-interval '15 minutes'")[0][0])
-          print("   fotos processing_failed (falló pipeline):", q("select count(*) from photos_photo where status='processing_failed'")[0][0])
+          cur.execute("select status,count(*) from photos_photo group by status order by 2 desc")
+          print("ESTADOS:", dict(cur.fetchall()))
+          cur.execute("select count(*) from photos_photo where status='processing' and updated_at<now()-interval '10 minutes'")
+          print("colgadas (processing >10min):", cur.fetchone()[0])
+          cur.execute("select count(*) from photos_bib where created_at>now()-interval '10 minutes'")
+          print("dorsales nuevos (10min):", cur.fetchone()[0])
+          cur.execute("select count(*) from photos_faceembedding")
+          print("embeddings totales:", cur.fetchone()[0])
           PY
           echo "==================== FIN ===================="
