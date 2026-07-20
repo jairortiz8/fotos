@@ -1,0 +1,73 @@
+name: prod-ocrselfie (one-off)
+
+# READ-ONLY. NO deploya (no reinicia el web). Estado de OCR + selfie de Surf City.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-ocrselfie"]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+    steps:
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
+      - name: audit
+        run: |
+          set -uo pipefail
+          gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
+          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          python3 - <<'PY'
+          import os
+          import psycopg
+          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
+          def s(q,a=()):
+              cur.execute(q,a); return cur.fetchone()[0]
+          eid=s("select id from events_event where slug='surf-city-2026'")
+          tot=s("select count(*) from photos_photo where event_id=%s and status<>'deleted'",(eid,))
+          appr=s("select count(*) from photos_photo where event_id=%s and status='approved'",(eid,))
+          print(f"===== surf-city-2026: {tot} fotos ({appr} aprobadas) =====\n")
+
+          print("----- OCR (dorsales) -----")
+          concar=s("select count(distinct photo_id) from photos_bib b join photos_photo p on p.id=b.photo_id where p.event_id=%s and p.status<>'deleted' and b.rejected=false",(eid,))
+          print(f"  fotos con dorsal detectado: {concar} / {tot}  ({round(100*concar/max(tot,1))}%)")
+          cur.execute("""select b.source, count(*) from photos_bib b join photos_photo p on p.id=b.photo_id
+                         where p.event_id=%s and p.status<>'deleted' group by b.source order by count(*) desc""",(eid,))
+          rows=cur.fetchall(); tb=sum(n for _,n in rows) or 1
+          for src,n in rows:
+              tag="IA Gemini" if src=="ocr_gemini" else ("local" if src.startswith("ocr_") else "manual")
+              print(f"    {src:14} {n:6} ({round(100*n/tb,1)}%) [{tag}]")
+          print()
+
+          print("----- SELFIE (caras) -----")
+          # universo re-indexado (verticales) + estado global
+          conemb=s("select count(distinct p.id) from photos_photo p where p.event_id=%s and p.status<>'deleted' and exists(select 1 from photos_faceembedding f where f.photo_id=p.id)",(eid,))
+          embs=s("select count(*) from photos_faceembedding f join photos_photo p on p.id=f.photo_id where p.event_id=%s",(eid,))
+          pend=s("select count(*) from photos_photo where event_id=%s and status='approved' and has_faces_detected=false",(eid,))
+          failed=s("select count(*) from photos_photo where event_id=%s and status='processing_failed'",(eid,))
+          print(f"  fotos con cara indexada: {conemb} / {tot}  ({round(100*conemb/max(tot,1))}%)")
+          print(f"  embeddings (caras) totales: {embs}")
+          print(f"  aprobadas SIN indexar aún (en cola): {pend}")
+          print(f"  processing_failed: {failed}")
+          print()
+
+          print("----- ¿Va al día con lo que entra? -----")
+          proc=s("select count(*) from photos_photo where event_id=%s and status in ('uploading','processing')",(eid,))
+          stuck=s("select count(*) from photos_photo where event_id=%s and status in ('uploading','processing') and updated_at < now() - interval '10 minutes'",(eid,))
+          last5=s("select count(*) from photos_photo where event_id=%s and created_at > now() - interval '5 minutes'",(eid,))
+          print(f"  subidas últimos 5 min: {last5}")
+          print(f"  en proceso ahora: {proc}  (trabadas >10min: {stuck})")
+          print()
+          ok = stuck==0 and failed<5
+          print("VEREDICTO: OCR con IA + selfie corriendo al día." if ok else "VEREDICTO: revisar (trabadas/fallidas).")
+          PY
+          echo "==================== FIN ===================="
