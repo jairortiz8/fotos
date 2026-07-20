@@ -1,0 +1,60 @@
+name: prod-ocr-audit (one-off)
+
+# READ-ONLY: confirma con qué motor se están leyendo los dorsales de Surf City
+# (ocr_gemini = IA, ocr_paddle/ocr_easy = local, manual_* = admin).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-ocraudit"]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+    steps:
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
+      - name: audit
+        run: |
+          set -uo pipefail
+          gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
+          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          python3 - <<'PY'
+          import os
+          import psycopg
+          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
+          eid=cur.execute("select id from events_event where slug='surf-city-2026'"); eid=cur.fetchone()[0]
+
+          print("===== DORSALES por MOTOR — surf-city-2026 =====")
+          cur.execute("""select b.source, count(*) from photos_bib b join photos_photo p on p.id=b.photo_id
+                         where p.event_id=%s and p.status<>'deleted' group by b.source order by count(*) desc""",(eid,))
+          rows=cur.fetchall()
+          total=sum(n for _,n in rows) or 1
+          for src,n in rows:
+              tag = "IA (Gemini)" if src=="ocr_gemini" else ("local Paddle/Easy" if src in ("ocr_paddle","ocr_easy") else "manual/otro")
+              print(f"  {src:18} {n:6}  ({round(100*n/total,1)}%)  [{tag}]")
+          print(f"  TOTAL dorsales: {total}")
+          print()
+
+          fotos_con=cur.execute("select count(distinct photo_id) from photos_bib b join photos_photo p on p.id=b.photo_id where p.event_id=%s and p.status<>'deleted'",(eid,)); fotos_con=cur.fetchone()[0]
+          fotos_tot=cur.execute("select count(*) from photos_photo where event_id=%s and status<>'deleted'",(eid,)); fotos_tot=cur.fetchone()[0]
+          print(f"Fotos con al menos 1 dorsal: {fotos_con} / {fotos_tot}")
+          print()
+
+          print("Ejemplos de las MÁS RECIENTES (foto → dorsales/motor):")
+          cur.execute("""select p.id, array_agg(b.number||'/'||b.source order by b.confidence desc)
+                         from photos_photo p join photos_bib b on b.photo_id=p.id
+                         where p.event_id=%s and p.status<>'deleted'
+                         group by p.id order by p.id desc limit 8""",(eid,))
+          for pid,bibs in cur.fetchall():
+              print(f"  foto {pid}: {bibs}")
+          PY
+          echo "==================== FIN ===================="
