@@ -1,8 +1,7 @@
 name: prod-julio (one-off)
 
-# Fix de esquema SIN deploy (no reinicia el web): reemplaza el UNIQUE total de
-# original_key por un UNIQUE PARCIAL (solo keys no vacías). Así las subidas
-# abandonadas (original_key='') dejan de romper el insert de nuevas subidas.
+# READ-ONLY. Mide el volumen de Postgres (tamaño y uso) por la API de Railway.
+# NO toca la base (que está caída por disco lleno).
 
 on:
   workflow_dispatch:
@@ -10,7 +9,7 @@ on:
     branches: ["run-julio"]
 
 jobs:
-  fix:
+  vol:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
@@ -18,62 +17,29 @@ jobs:
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
     steps:
-      - name: deps
-        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
-      - name: fix
+      - name: vol
         shell: bash +e {0}
         run: |
           set +e
           gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
+
+          echo "===== VOLÚMENES del proyecto (tamaño configurado) ====="
+          gql '{"query":"query($p:String!){ project(id:$p){ volumes{ edges{ node{ id name volumeInstances{ edges{ node{ id sizeMB currentSizeMB state serviceId } } } } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}' \
+            | jq -r '.data.project.volumes.edges[]?.node | "  volume: \(.name) (\(.id))", ( .volumeInstances.edges[]?.node | "     inst \(.id) sizeMB=\(.sizeMB) currentSizeMB=\(.currentSizeMB) state=\(.state) svc=\(.serviceId)" )'
+          echo
+
+          echo "===== servicios (para mapear svc->nombre) ====="
+          gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}' \
+            | jq -r '.data.project.services.edges[].node | "  \(.id)  \(.name)"'
+          echo
+
+          echo "===== métricas de disco del volumen de Postgres (uso real) ====="
           PGID=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}' | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
-          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
-          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
-          python3 - <<'PY'
-          import os, psycopg
-          c=psycopg.connect(os.environ["DBURL"], connect_timeout=30); cur=c.cursor()
-
-          def show():
-              cur.execute("""select conname from pg_constraint
-                             where conrelid='photos_photo'::regclass and contype='u'""")
-              print("  constraints UNIQUE en photos_photo:", [r[0] for r in cur.fetchall()])
-              cur.execute("""select indexname from pg_indexes
-                             where tablename='photos_photo' and indexdef ilike '%original_key%'""")
-              print("  indexes sobre original_key:", [r[0] for r in cur.fetchall()])
-
-          print("== ANTES ==")
-          show()
-          # seguridad: no debe haber duplicados de keys reales (el partial fallaría si los hubiera)
-          cur.execute("select original_key, count(*) from photos_photo where original_key<>'' group by 1 having count(*)>1")
-          dups=cur.fetchall()
-          print("  duplicados de key real:", dups if dups else "ninguno")
-          if dups:
-              print("  ABORTADO: hay duplicados reales, no aplico el fix.")
-          else:
-              try:
-                  cur.execute("BEGIN")
-                  cur.execute("ALTER TABLE photos_photo DROP CONSTRAINT IF EXISTS photos_photo_original_key_key")
-                  cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uniq_original_key_nonempty
-                                 ON photos_photo (original_key) WHERE original_key <> ''""")
-                  cur.execute("COMMIT")
-                  print("  OK: constraint total -> indice parcial aplicado.")
-              except Exception as e:
-                  cur.execute("ROLLBACK")
-                  print("  ERROR aplicando:", repr(e))
-          print("== DESPUES ==")
-          show()
-          # prueba funcional: dos filas con original_key='' deben poder coexistir ahora (rollback, no ensucia)
-          try:
-              cur.execute("BEGIN")
-              cur.execute("select id from photos_photo where original_key<>'' limit 1")
-              _ = cur.fetchone()
-              cur.execute("""insert into photos_photo (event_id, original_key, original_filename, width, height, file_size, status, created_at, updated_at, content_hash, uploaded_by_admin, needs_minor_review, has_faces_detected, branded_key, preview_key, thumbnail_key)
-                             select event_id, '', 'TEST_A', 0,0,0,'uploading', now(), now(), 'x'||md5(random()::text), false, false, false, '', '', '' from photos_photo limit 1""")
-              cur.execute("""insert into photos_photo (event_id, original_key, original_filename, width, height, file_size, status, created_at, updated_at, content_hash, uploaded_by_admin, needs_minor_review, has_faces_detected, branded_key, preview_key, thumbnail_key)
-                             select event_id, '', 'TEST_B', 0,0,0,'uploading', now(), now(), 'x'||md5(random()::text), false, false, false, '', '', '' from photos_photo limit 1""")
-              print("  PRUEBA: dos filas con original_key='' insertadas OK (antes esto era el 500). Hago ROLLBACK.")
-              cur.execute("ROLLBACK")
-          except Exception as e:
-              cur.execute("ROLLBACK")
-              print("  PRUEBA falló (columnas distintas, no crítico):", repr(e)[:180])
-          PY
+          START=$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+          for M in DISK_USAGE_GB VOLUME_USAGE_GB; do
+            R=$(gql '{"query":"query($m:MetricMeasurement!,$p:String!,$e:String!,$s:String!,$d:DateTime!){ metrics(measurements:[$m], projectId:$p, environmentId:$e, serviceId:$s, startDate:$d, sampleRateSeconds:120){ measurement values { ts value } } }","variables":{"m":"'"$M"'","p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$PGID"'","d":"'"$START"'"}}')
+            ERR=$(echo "$R" | jq -r '.errors[0].message // empty')
+            if [ -n "$ERR" ]; then echo "  $M: (error) $ERR"; continue; fi
+            echo "  $M (últimos):"; echo "$R" | jq -r '.data.metrics[0].values[-6:][]? | "     \(.value)"'
+          done
           echo "==================== FIN ===================="
