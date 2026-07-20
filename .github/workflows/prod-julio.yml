@@ -1,7 +1,7 @@
 name: prod-julio (one-off)
 
-# READ-ONLY. NO deploya. ¿Web/workers sanos o saturados? + datos del fotógrafo
-# Julio Barraza + carga de subida actual + latencia.
+# READ-ONLY. NO deploya. Lee los LOGS del web para entender la foto de Julio
+# que "siempre da error de red": ¿rechazo limpio, timeout de gunicorn, u OOM?
 
 on:
   workflow_dispatch:
@@ -16,62 +16,39 @@ jobs:
       API: https://backboard.railway.app/graphql/v2
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
-      SITE: https://findyourfoto.com
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
     steps:
-      - name: deps
-        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
       - name: audit
         run: |
           set -uo pipefail
-          gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
-          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
-          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
-          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
 
-          echo "===== 1) SERVICIOS: último estado por servicio ====="
-          gql '{"query":"query($p:String!,$e:String!){ deployments(first:120, input:{projectId:$p, environmentId:$e}){ edges { node { status createdAt service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}' \
-            | jq -r '[.data.deployments.edges[].node]|group_by(.service.name)|map(sort_by(.createdAt)|last)|.[]|"  \(.service.name): \(.status)  (desde \(.createdAt))"'
+          echo "===== deployment activo del WEB ====="
+          DEP=$(gql '{"query":"query($p:String!,$e:String!){ deployments(first:5, input:{projectId:$p, environmentId:$e, serviceId:\"'"$WEB_ID"'\"}){ edges { node { id status createdAt } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}')
+          echo "$DEP" | jq -r '.data.deployments.edges[].node | "  \(.id) \(.status) \(.createdAt)"'
+          DID=$(echo "$DEP" | jq -r '[.data.deployments.edges[].node | select(.status=="SUCCESS")][0].id')
+          echo "  usando: $DID"
           echo
 
-          echo "===== 2) HEALTHZ + LATENCIA (¿responde rápido o está saturado?) ====="
-          curl -sS -m 25 "$SITE/healthz" | jq -c '{status, workers: .checks.celery_workers.workers, beat: .checks.celery_beat.ok, db: .checks.db.ok, redis: .checks.redis.ok, r2: .checks.r2.ok}' 2>/dev/null || echo "  healthz no respondió (mala señal)"
-          echo "  latencia /healthz/lite (8 muestras):"
-          for i in $(seq 1 8); do t=$(curl -sS -o /dev/null -m 30 -w "%{time_total}" "$SITE/healthz/lite" 2>/dev/null || echo TIMEOUT); echo "    $i: ${t}s"; done
+          logs() {  # $1 = filtro de texto, $2 = limit
+            gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$l){ timestamp message } }","variables":{"d":"'"$DID"'","f":"'"$1"'","l":'"$2"'}}' \
+              | jq -r '.data.deploymentLogs[]? | "  \(.timestamp)  \(.message)"'
+          }
+
+          echo "===== A) upload FALLO (rechazos limpios registrados) últimos ====="
+          logs "upload FALLO" 60
           echo
-
-          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
-          python3 - <<'PY'
-          import os
-          import psycopg
-          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
-          def s(q,a=()):
-              cur.execute(q,a); return cur.fetchone()[0]
-
-          print("===== 3) FOTÓGRAFO Julio Barraza =====")
-          cur.execute("""select l.id, l.photographer_name, e.slug, l.is_active, l.expires_at,
-                         (select count(*) from photos_photo p where p.photographer_link_id=l.id and p.status<>'deleted'),
-                         (select count(*) from photos_photo p where p.photographer_link_id=l.id and p.created_at > now()-interval '10 minutes')
-                         from photographers_photographerlink l join events_event e on e.id=l.event_id
-                         where l.photographer_name ilike %s or l.photographer_name ilike %s""",
-                      ("%julio%","%barraza%"))
-          links=cur.fetchall()
-          if not links: print("  (no encontré un link con ese nombre)")
-          for lid,name,slug,active,exp,n,rec in links:
-              print(f"  link={lid} '{name}' evento={slug} activo={active} vence={exp}")
-              print(f"     fotos subidas: {n} · en los últimos 10 min: {rec}")
-          print()
-
-          print("===== 4) CARGA DE SUBIDA (todos los fotógrafos) =====")
-          for lbl,m in (("1 min",1),("5 min",5),("15 min",15)):
-              n=s("select count(*) from photos_photo where created_at > now()-(%s||' minutes')::interval",(m,))
-              print(f"  subidas últimos {lbl}: {n}")
-          proc=s("select count(*) from photos_photo where status in ('uploading','processing')")
-          stuck=s("select count(*) from photos_photo where status in ('uploading','processing') and updated_at < now()-interval '10 minutes'")
-          up=s("select count(*) from photos_photo where status='uploading' and created_at < now()-interval '5 minutes'")
-          print(f"  en proceso ahora: {proc} · trabadas>10min: {stuck} · uploading abandonadas(>5min): {up}")
-          print()
-          print("NOTA: 'error de red' = el navegador no pudo completar el POST (conexión cortada). Si el web")
-          print("responde rápido acá y hay muchas subidas simultáneas, suele ser saturación puntual del web")
-          print("(1 worker) o el WiFi del fotógrafo. El botón 'Reintentar las que fallaron' las recupera.")
-          PY
+          echo "===== B) link=27 (Julio) en logs de upload ====="
+          logs "link=27" 60
+          echo
+          echo "===== C) señales de TIMEOUT / worker muerto / OOM ====="
+          logs "WORKER TIMEOUT" 30
+          logs "SIGKILL" 30
+          logs "out of memory" 20
+          logs "MemoryError" 20
+          logs "Booting worker" 20
+          echo
+          echo "===== D) errores 500 / tracebacks recientes ====="
+          logs "Traceback" 30
+          logs "ERROR" 40
           echo "==================== FIN ===================="
