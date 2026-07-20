@@ -137,11 +137,27 @@ def _detections_from_faces(faces: list[Any]) -> list[FaceDetection]:
     return out
 
 
+def _oriented_bgr_from_pil(pim: Any) -> np.ndarray:
+    """PIL image → ndarray BGR (lo que espera InsightFace/cv2), rotada según la
+    orientación EXIF. Sin esto, `cv2.imread`/`cv2.imdecode` ignoran el tag de
+    orientación y una foto vertical se detecta ACOSTADA (peor detección de caras)."""
+    from PIL import ImageOps
+
+    pim = ImageOps.exif_transpose(pim) or pim
+    rgb = pim.convert("RGB")
+    return np.ascontiguousarray(np.asarray(rgb)[:, :, ::-1])  # RGB → BGR
+
+
 def extract_faces(image_path: Path) -> list[FaceDetection]:
     """Detecta todas las caras de una imagen en disco. [] si no hay."""
     import cv2
+    from PIL import Image
 
-    img = cv2.imread(str(image_path))
+    try:
+        with Image.open(image_path) as pim:
+            img: np.ndarray | None = _oriented_bgr_from_pil(pim)
+    except Exception:
+        img = cv2.imread(str(image_path))  # fallback
     if img is None:
         logger.warning("extract_faces: no pude leer %s", image_path)
         return []
@@ -180,9 +196,16 @@ def embedding_from_bytes(image_bytes: bytes) -> np.ndarray:
     InvalidImageError según corresponda.
     """
     import cv2
+    from PIL import Image
 
-    arr = np.frombuffer(image_bytes, dtype=np.uint8)
-    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    try:
+        from io import BytesIO
+
+        with Image.open(BytesIO(image_bytes)) as pim:
+            img = _oriented_bgr_from_pil(pim)  # respeta orientación EXIF del selfie
+    except Exception:
+        arr = np.frombuffer(image_bytes, dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
         raise InvalidImageError("No se pudo decodificar la imagen.")
 

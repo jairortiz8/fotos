@@ -67,6 +67,27 @@ def test_apply_brand_overlay_works_portrait_and_landscape() -> None:
         assert _has_bright(out, 0, w // 3, h * 3 // 4, h)
 
 
+def test_open_oriented_rotates_per_exif(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Una foto guardada horizontal + tag EXIF 'rotar 90°' (Orientation=6) se abre
+    ya VERTICAL. Sin esto, las verticales de cámara salían acostadas."""
+    from apps.photos.imaging import _open_oriented
+
+    img = Image.new("RGB", (240, 120), (0, 0, 0))  # píxeles crudos: horizontal
+    exif = img.getexif()
+    exif[274] = 6  # 274 = Orientation; 6 = rotar para verse vertical
+    p = tmp_path / "oriented.jpg"
+    img.save(p, exif=exif)
+
+    out = _open_oriented(p)
+    assert out.size == (120, 240)  # ahora se ve vertical
+
+    # Sin tag → no cambia nada.
+    img2 = Image.new("RGB", (240, 120), (0, 0, 0))
+    p2 = tmp_path / "plain.jpg"
+    img2.save(p2)
+    assert _open_oriented(p2).size == (240, 120)
+
+
 def _bright_count(img: Image.Image) -> int:
     """Cuenta píxeles ~blancos (proxy del área que ocupan los logos)."""
     return sum(1 for r, g, b in img.getdata() if r > 180 and g > 180 and b > 180)

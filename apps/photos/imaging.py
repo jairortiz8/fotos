@@ -45,6 +45,21 @@ WATERMARK_ANGLE = -30
 
 
 # ---------------------------------------------------------------------------
+# Orientación EXIF
+# ---------------------------------------------------------------------------
+def _open_oriented(source_path: Path) -> Image.Image:
+    """Abre la imagen y la ROTA según la orientación EXIF.
+
+    Las cámaras (y celulares) guardan las fotos VERTICALES como horizontales +
+    una etiqueta EXIF que dice "rotá 90°". Si abrimos con `Image.open` sin más,
+    trabajamos sobre los píxeles crudos (de costado) → la vertical sale acostada
+    y, peor, los logos se pegan en el borde equivocado. `exif_transpose` aplica
+    esa rotación y deja la imagen como se debe VER, sin la etiqueta."""
+    img = Image.open(source_path)
+    return ImageOps.exif_transpose(img) or img
+
+
+# ---------------------------------------------------------------------------
 # EXIF
 # ---------------------------------------------------------------------------
 def extract_exif_and_dimensions(photo: Photo, source_path: Path) -> None:
@@ -53,9 +68,11 @@ def extract_exif_and_dimensions(photo: Photo, source_path: Path) -> None:
     No hace `save()` — la task que lo llama decide cuándo persistir.
     """
     with Image.open(source_path) as img:
-        photo.width = img.width
-        photo.height = img.height
         exif = _exif_to_dict(img)
+        # width/height de cómo se VE (ya rotada), no de los píxeles crudos.
+        oriented = ImageOps.exif_transpose(img) or img
+        photo.width = oriented.width
+        photo.height = oriented.height
 
     photo.exif_raw = exif
     photo.capture_time = _parse_capture_time(exif)
@@ -221,7 +238,7 @@ def generate_preview(
     Acepta `source_path` (lee de disco) o `img_object` (imagen ya cargada,
     p.ej. con blur de menores aplicado).
     """
-    img = img_object.copy() if img_object is not None else Image.open(source_path)  # type: ignore[arg-type]
+    img = img_object.copy() if img_object is not None else _open_oriented(source_path)  # type: ignore[arg-type]
     img.thumbnail((PREVIEW_LONG_EDGE, PREVIEW_LONG_EDGE), Image.Resampling.LANCZOS)
 
     final = _try_brand_overlay(img, photo)
@@ -247,7 +264,7 @@ def generate_thumbnail(
 ) -> str:
     """Thumb sin watermark (es pequeño). Si el evento tiene `brand_overlay`, sí
     lleva los logos de marca (para que la galería se vea brandeada)."""
-    img = img_object.copy() if img_object is not None else Image.open(source_path)  # type: ignore[arg-type]
+    img = img_object.copy() if img_object is not None else _open_oriented(source_path)  # type: ignore[arg-type]
     img.thumbnail((THUMB_LONG_EDGE, THUMB_LONG_EDGE), Image.Resampling.LANCZOS)
 
     rgb = img.convert("RGB")
@@ -298,7 +315,7 @@ def generate_branded_original(
 
         if not is_valid_template(template):
             return None
-        img = img_object.copy() if img_object is not None else Image.open(source_path)  # type: ignore[arg-type]
+        img = img_object.copy() if img_object is not None else _open_oriented(source_path)  # type: ignore[arg-type]
         branded = apply_brand_overlay(img, template)  # full-res, mismos % que el preview
 
         buf = BytesIO()
@@ -376,7 +393,7 @@ def blur_minor_faces_and_regenerate(
     """
     from PIL import ImageFilter
 
-    img = Image.open(source_path).convert("RGB")
+    img = _open_oriented(source_path).convert("RGB")
     w, h = img.size
 
     for face in minor_faces:
