@@ -1,0 +1,83 @@
+name: prod-stuck (one-off)
+
+# READ-ONLY. NO deploya. Caracteriza las fotos "trabadas" (uploading/processing
+# hace rato) en TODOS los eventos, para ver si es 1 aislada o un patrón.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-stuck"]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+    steps:
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
+      - name: audit
+        run: |
+          set -uo pipefail
+          gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
+          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          python3 - <<'PY'
+          import os
+          import psycopg
+          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
+
+          print("===== TRABADAS en TODOS los eventos (uploading/processing > 10 min) =====")
+          cur.execute("""
+            select p.id, e.slug, p.status,
+                   round(extract(epoch from (now()-p.created_at))/60) as edad_min,
+                   round(extract(epoch from (now()-p.updated_at))/60) as sin_avance_min,
+                   (p.original_key<>'') as tiene_original,
+                   (p.preview_key<>'') as tiene_preview,
+                   coalesce(p.original_filename,'')
+            from photos_photo p join events_event e on e.id=p.event_id
+            where p.status in ('uploading','processing')
+              and p.updated_at < now() - interval '10 minutes'
+              and p.status<>'deleted'
+            order by p.updated_at asc
+          """)
+          rows=cur.fetchall()
+          print(f"  cantidad: {len(rows)}\n")
+          for pid,slug,st,edad,sinav,orig,prev,fn in rows:
+              print(f"  id={pid} [{slug}] status={st} edad={edad}min sin_avance={sinav}min "
+                    f"original={'sí' if orig else 'NO'} preview={'sí' if prev else 'no'} archivo='{fn}'")
+          print()
+
+          print("===== Contexto: estados 'raros' por evento (global) =====")
+          cur.execute("""select status, count(*) from photos_photo
+                         where status in ('uploading','processing','processing_failed')
+                         group by status order by count(*) desc""")
+          for st,n in cur.fetchall(): print(f"  {st}: {n}")
+          print()
+
+          print("===== 'uploading' viejas = subidas abandonadas (cliente cortó / web reinició) =====")
+          up=cur.execute("select count(*) from photos_photo where status='uploading' and created_at < now()-interval '30 minutes'"); up=cur.fetchone()[0]
+          print(f"  uploading > 30 min (nunca terminaron de subir): {up}")
+          print()
+
+          # Diagnóstico
+          if not rows:
+              print("DIAGNÓSTICO: ya no hay ninguna trabada (se resolvió sola).")
+          else:
+              only_upload = all(r[2]=='uploading' or not r[5] for r in rows)
+              if len(rows) <= 3 and only_upload:
+                  print("DIAGNÓSTICO: es/son subida(s) ABANDONADA(S) — el archivo ni llegó a R2")
+                  print("  (el fotógrafo cerró la pestaña o el web se reinició a mitad). NO afecta a las demás;")
+                  print("  es una fila muerta en la DB. El cron de limpieza (cleanup_failed_processing) la barre sola.")
+              elif len(rows) <= 3:
+                  print("DIAGNÓSTICO: pocas y aisladas — process_photo reintentando o murió en 1-2 fotos puntuales.")
+                  print("  No es sistémico (el resto procesa al día). Se puede reprocesar puntual si hiciera falta.")
+              else:
+                  print("DIAGNÓSTICO: son varias → podría ser un patrón; conviene revisar el worker.")
+          PY
+          echo "==================== FIN ===================="
