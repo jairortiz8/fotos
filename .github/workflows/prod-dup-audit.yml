@@ -1,0 +1,79 @@
+name: prod-dup-audit (one-off)
+
+# READ-ONLY: cuenta fotos duplicadas (mismo contenido) por evento. No borra nada.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-dupaudit"]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+    steps:
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
+      - name: audit
+        run: |
+          set -uo pipefail
+          gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
+          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          python3 - <<'PY'
+          import os
+          import psycopg
+          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
+
+          print("===== DUPLICADOS (mismo contenido) por evento =====")
+          # grupos de fotos con el MISMO hash dentro de un evento (no borradas, hash no vacío)
+          cur.execute("""
+            with dup as (
+              select p.event_id, p.content_hash, count(*) n
+              from photos_photo p
+              where p.status<>'deleted' and coalesce(p.content_hash,'')<>''
+              group by p.event_id, p.content_hash having count(*) > 1
+            )
+            select e.slug,
+                   count(*) as grupos_duplicados,
+                   coalesce(sum(d.n - 1),0) as fotos_de_mas
+            from dup d join events_event e on e.id=d.event_id
+            group by e.slug order by fotos_de_mas desc
+          """)
+          rows=cur.fetchall()
+          if not rows:
+              print("  (ninguno con hash de contenido)")
+          for slug,grupos,demas in rows:
+              print(f"  {slug}: {grupos} grupo(s) repetido(s) → {demas} foto(s) de más")
+          print()
+
+          # totales
+          cur.execute("select count(*) from photos_photo where status<>'deleted'")
+          tot=cur.fetchone()[0]
+          cur.execute("select count(*) from photos_photo where status<>'deleted' and coalesce(content_hash,'')=''")
+          sinhash=cur.fetchone()[0]
+          print(f"Fotos totales (no borradas): {tot}")
+          print(f"  con hash de contenido (chequeables): {tot - sinhash}")
+          print(f"  SIN hash (viejas, no se pueden comparar por contenido): {sinhash}")
+          print()
+
+          # ejemplos en surf-city-2026
+          cur.execute("select id from events_event where slug='surf-city-2026'")
+          r=cur.fetchone()
+          if r:
+              eid=r[0]
+              cur.execute("""select content_hash, count(*) n, array_agg(id order by id)
+                             from photos_photo where event_id=%s and status<>'deleted' and coalesce(content_hash,'')<>''
+                             group by content_hash having count(*)>1 order by n desc limit 5""",(eid,))
+              ex=cur.fetchall()
+              print("Ejemplos de repetidas en surf-city-2026 (hash → fotos):")
+              if not ex: print("  (ninguna)")
+              for h,n,ids in ex: print(f"  {h[:12]}… ×{n}  ids={ids}")
+          PY
+          echo "==================== FIN ===================="
