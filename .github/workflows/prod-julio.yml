@@ -4,73 +4,56 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  audit:
+  diag:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
-      SITE: https://findyourfoto.com
-      TOKEN: iSEH4R7fXv5whK_44-JWkIsQGJMdm0-3
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
     steps:
       - name: deps
-        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" pillow
-      - name: audit
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" redis
+      - name: diag
         shell: bash +e {0}
         run: |
           set +e
           gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
-
-          echo "===== 1) VOLÚMENES (Postgres + Redis) ====="
-          gql '{"query":"query($p:String!){ project(id:$p){ volumes{ edges{ node{ name volumeInstances{ edges{ node{ sizeMB currentSizeMB } } } } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}' \
-            | jq -r '.data.project.volumes.edges[]?.node | .name as $n | .volumeInstances.edges[]?.node | "  \($n): \(.sizeMB) MB máx · \(.currentSizeMB|floor) MB usado (\((.currentSizeMB/.sizeMB*100)|floor)%)"'
-          echo
-
-          echo "===== 2) MEMORIA por servicio (GB) ====="
-          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
-          START=$(date -u -d '15 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
-          for NAME in fotos worker worker_fast Redis; do
-            SID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="'"$NAME"'")|.id')
-            [ -z "$SID" ] && continue
-            R=$(gql '{"query":"query($m:MetricMeasurement!,$p:String!,$e:String!,$s:String!,$d:DateTime!){ metrics(measurements:[$m], projectId:$p, environmentId:$e, serviceId:$s, startDate:$d, sampleRateSeconds:120){ values { value } } }","variables":{"m":"MEMORY_USAGE_GB","p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$SID"'","d":"'"$START"'"}}')
-            V=$(echo "$R" | jq -r '.data.metrics[0].values[-1].value // "?"')
-            echo "  $NAME: ${V} GB"
-          done
-          echo
-
-          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          PGID=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}' | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
           vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
           export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
-
-          echo "===== 3) PRUEBA DE SUBIDA REAL (POST a /u/<token>/upload/) ====="
+          export REDISURL=$(vars_of "$WEB_ID" | jq -r '.REDIS_PUBLIC_URL // .REDIS_URL // empty')
           python3 - <<'PY'
-          from PIL import Image
-          Image.new("RGB",(400,300),(200,60,0)).save("/tmp/test_upload.jpg","JPEG",quality=80)
-          print("  jpeg de prueba creado")
-          PY
-          RESP=$(curl -sS -m 40 -o /tmp/resp.json -w "%{http_code}" -F "file=@/tmp/test_upload.jpg;type=image/jpeg" "$SITE/u/$TOKEN/upload/")
-          echo "  HTTP=$RESP  body=$(cat /tmp/resp.json 2>/dev/null | head -c 200)"
-          NEWID=$(jq -r '.id // empty' /tmp/resp.json 2>/dev/null)
-          echo "  photo id creado: ${NEWID:-(ninguno)}"
-
-          echo "===== 4) estado de subidas (últimos 15 min) + limpieza del test ====="
-          python3 - <<PY
           import os, psycopg
-          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); c.autocommit=True; cur=c.cursor()
-          cur.execute("select status,count(*) from photos_photo where created_at>now()-interval '15 minutes' group by status order by 2 desc")
-          print("  por estado (15m):", cur.fetchall())
-          cur.execute("select count(*) from photos_photo where original_key=''")
-          print("  filas '' ahora:", cur.fetchone()[0])
-          nid="${NEWID}"
-          if nid.isdigit():
-              cur.execute("delete from core_auditlog where target_type='photo' and target_id=%s",(nid,))
-              cur.execute("delete from photos_bib where photo_id=%s",(nid,))
-              cur.execute("delete from photos_faceembedding where photo_id=%s",(nid,))
-              cur.execute("update photographers_photographerlink set photos_uploaded=greatest(photos_uploaded-1,0) where id=27")
-              cur.execute("delete from photos_photo where id=%s returning id, status, original_key",(nid,))
-              print("  foto de prueba BORRADA:", cur.fetchone())
+          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
+          print("===== TOTAL por estado (todas las fotos) =====")
+          cur.execute("select status,count(*) from photos_photo group by status order by 2 desc")
+          for s,n in cur.fetchall(): print(f"   {s:20} {n}")
+          print("\n===== Ani / Marti Tolentino por estado =====")
+          cur.execute("""select l.photographer_name, p.status, count(*)
+                         from photos_photo p join photographers_photographerlink l on l.id=p.photographer_link_id
+                         where l.photographer_name ilike %s
+                         group by 1,2 order by 1,3 desc""",("%tolentino%",))
+          for name,st,n in cur.fetchall(): print(f"   {name:18} {st:18} {n}")
+          print("\n===== 'colgadas' = processing/uploading con updated_at viejo =====")
+          for mins in (5,15,60):
+              cur.execute("select count(*) from photos_photo where status in ('processing','uploading') and updated_at < now()-(%s||' minutes')::interval",(mins,))
+              print(f"   > {mins} min sin cambio: {cur.fetchone()[0]}")
+          cur.execute("select min(updated_at), max(updated_at) from photos_photo where status in ('processing','uploading')")
+          print("   rango updated_at de las processing/uploading:", cur.fetchone())
+
+          import redis
+          ru=os.environ.get("REDISURL","")
+          if ru:
+              try:
+                  r=redis.from_url(ru, socket_connect_timeout=10)
+                  print("\n===== COLA de Celery en Redis (mensajes pendientes) =====")
+                  for q in ("fast","faces","celery"):
+                      print(f"   queue '{q}': LLEN={r.llen(q)}")
+              except Exception as e:
+                  print("   (no pude leer Redis:", repr(e)[:120], ")")
           else:
-              print("  (no hubo id que borrar)")
+              print("   (sin REDIS url)")
           PY
           echo "==================== FIN ===================="
