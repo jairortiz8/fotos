@@ -1,6 +1,6 @@
 name: prod-julio (one-off)
 
-# READ-ONLY. NO deploya. Métricas (mem/disco/cpu) del web + reproducir el POST.
+# READ-ONLY. NO deploya. Saca el exc_info (traceback) de los attributes del log JSON.
 
 on:
   workflow_dispatch:
@@ -15,22 +15,21 @@ jobs:
       API: https://backboard.railway.app/graphql/v2
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
-      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
     steps:
       - name: audit
         shell: bash +e {0}
         run: |
           set +e
           gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
-          START=$(date -u -d '40 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
-          echo "desde: $START"
+          DEP=$(gql '{"query":"query($p:String!,$e:String!){ deployments(first:60, input:{projectId:$p, environmentId:$e}){ edges { node { id status createdAt service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}')
+          DID=$(echo "$DEP" | jq -r '[.data.deployments.edges[].node | select(.service.name=="fotos" and .status=="SUCCESS")] | sort_by(.createdAt) | last | .id')
+          echo "web deployment: $DID"
 
-          echo "===== MÉTRICAS del web (mem GB / disco GB / cpu) ====="
-          for M in MEMORY_USAGE_GB DISK_USAGE_GB CPU_USAGE EPHEMERAL_DISK_USAGE_GB; do
-            R=$(gql '{"query":"query($m:MetricMeasurement!,$p:String!,$e:String!,$s:String!,$d:DateTime!){ metrics(measurements:[$m], projectId:$p, environmentId:$e, serviceId:$s, startDate:$d, sampleRateSeconds:120){ measurement values { ts value } } }","variables":{"m":"'"$M"'","p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$WEB_ID"'","d":"'"$START"'"}}')
-            ERR=$(echo "$R" | jq -r '.errors[0].message // empty')
-            if [ -n "$ERR" ]; then echo "  $M: (error) $ERR"; continue; fi
-            echo "  $M (últimos):"
-            echo "$R" | jq -r '.data.metrics[0].values[-6:][]? | "     \(.ts)  \(.value)"'
-          done
+          echo "===== log completo (attributes) de los 500 de subida ====="
+          RESP=$(gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$l){ timestamp message severity attributes { key value } } }","variables":{"d":"'"$DID"'","f":"Internal Server Error","l":6}}')
+          echo "$RESP" | jq -r '.data.deploymentLogs[]? | "==== \(.timestamp) sev=\(.severity)\nMSG: \(.message)\nATTRS:\n" + ( [.attributes[]? | "  \(.key) = \(.value)"] | join("\n") )'
+          echo
+          echo "=== si arriba no hay traceback, probamos con filtro del path del upload y attrs ==="
+          RESP2=$(gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$l){ timestamp message attributes { key value } } }","variables":{"d":"'"$DID"'","f":"exc_info","l":4}}')
+          echo "$RESP2" | jq -r '.data.deploymentLogs[]? | "==== \(.timestamp)\n" + ( [.attributes[]? | select(.key=="exc_info" or .key=="stack_info" or .key=="exception") | "\(.key):\n\(.value)"] | join("\n") )'
           echo "==================== FIN ===================="
