@@ -194,6 +194,25 @@ def test_run_ocr_discards_hallucinated_bib_flood(tmp_path: Path) -> None:
 
 
 @pytest.mark.django_db
+def test_run_ocr_keeps_real_bib_drops_sequential_run(tmp_path: Path) -> None:
+    """Foto con 1 dorsal real (615) + una tira inventada (800..899): se conserva
+    el 615 y se descarta la tira."""
+    photo = PhotoFactory(original_key="events/x/originals/abc.jpg", has_bibs_detected=False)
+    dets = [BibDetection(number="615", confidence=0.9, bbox={}, engine="gemini")] + [
+        BibDetection(number=str(n), confidence=0.9, bbox={}, engine="gemini")
+        for n in range(800, 900)
+    ]
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch("apps.ml.ocr.detect_bibs", return_value=dets),
+    ):
+        run_ocr_on_photo.apply(args=[photo.id]).get()
+
+    assert Bib.objects.filter(photo=photo, number="615").exists()
+    assert Bib.objects.filter(photo=photo).count() == 1
+
+
+@pytest.mark.django_db
 def test_run_ocr_keeps_reasonable_bib_count(tmp_path: Path) -> None:
     """Una foto grupal con varios dorsales (dentro del tope) sí se guarda."""
     photo = PhotoFactory(original_key="events/x/originals/abc.jpg", has_bibs_detected=False)

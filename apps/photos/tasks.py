@@ -31,10 +31,32 @@ from apps.photos.storage import default_storage
 
 logger = logging.getLogger(__name__)
 
-# Máximo de dorsales que aceptamos por foto. Por encima de esto asumimos que el
-# OCR alucinó (una tira secuencial inventada) y descartamos todo. Una foto real,
-# incluso grupal, rara vez tiene más que esto de dorsales CLARAMENTE legibles.
+# Anti-alucinación del OCR (sobre todo Gemini en fotos grupales):
+#  - Una TIRA de >= RUN_MIN números consecutivos (800,801,802,…) es inventada:
+#    ningún grupo real tiene tantos dorsales correlativos y legibles seguidos.
+#    Se descarta SOLO esa tira; los números sueltos reales (ej. 615) se conservan.
+#  - Si aun así quedan más de MAX_BIBS_PER_PHOTO, es basura → se descarta todo.
 MAX_BIBS_PER_PHOTO = 12
+HALLUCINATION_RUN_MIN = 5
+
+
+def _drop_hallucinated_bibs(detections: list) -> list:
+    """Filtra las alucinaciones del OCR (tiras de números consecutivos)."""
+    nums = sorted({int(d.number) for d in detections if str(d.number).isdigit()})
+    in_run: set[int] = set()
+    i = 0
+    while i < len(nums):
+        j = i
+        while j + 1 < len(nums) and nums[j + 1] == nums[j] + 1:
+            j += 1
+        if j - i + 1 >= HALLUCINATION_RUN_MIN:
+            in_run.update(nums[i : j + 1])
+        i = j + 1
+    kept = [d for d in detections if not (str(d.number).isdigit() and int(d.number) in in_run)]
+    # Red de seguridad: si tras sacar las tiras SIGUE habiendo un montón, es ruido.
+    if len(kept) > MAX_BIBS_PER_PHOTO:
+        return []
+    return kept
 
 
 # ---------------------------------------------------------------------------
@@ -189,19 +211,17 @@ def run_ocr_on_photo(self, photo_id: int, exhaustive: bool = False) -> dict[str,
         with download_temp_file(photo.original_key) as source:
             detections = _detect_bibs(source, exhaustive=exhaustive, photo_id=photo_id)
 
-        # Anti-alucinación: una foto de carrera tiene unos POCOS dorsales legibles.
-        # Si el OCR (sobre todo Gemini) devuelve una cantidad absurda —típicamente
-        # una tira secuencial inventada (815, 816, …, 1000)— no se puede confiar en
-        # cuáles son reales, así que se descartan TODOS. Mejor 0 dorsales (el admin
-        # agrega a mano / la búsqueda por selfie igual funciona) que ensuciar la
-        # búsqueda con cientos de números falsos.
-        if len(detections) > MAX_BIBS_PER_PHOTO:
+        # Anti-alucinación: sacar las tiras secuenciales inventadas, conservando
+        # los dorsales sueltos reales. (Ej: [615, 800..1000] → queda [615].)
+        n_before = len(detections)
+        detections = _drop_hallucinated_bibs(detections)
+        if len(detections) != n_before:
             logger.warning(
-                "OCR devolvió %d dorsales para la foto %s — probable alucinación; se descartan todos",
-                len(detections),
+                "OCR foto %s: %d dorsales → %d tras filtrar alucinaciones",
                 photo_id,
+                n_before,
+                len(detections),
             )
-            detections = []
 
         if not detections:
             return {"photo_id": photo.id, "detected": 0, "created": 0}
