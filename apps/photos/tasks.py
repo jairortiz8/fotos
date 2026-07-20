@@ -31,6 +31,11 @@ from apps.photos.storage import default_storage
 
 logger = logging.getLogger(__name__)
 
+# Máximo de dorsales que aceptamos por foto. Por encima de esto asumimos que el
+# OCR alucinó (una tira secuencial inventada) y descartamos todo. Una foto real,
+# incluso grupal, rara vez tiene más que esto de dorsales CLARAMENTE legibles.
+MAX_BIBS_PER_PHOTO = 12
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -183,6 +188,20 @@ def run_ocr_on_photo(self, photo_id: int, exhaustive: bool = False) -> dict[str,
         bib_sources_created: list[str] = []
         with download_temp_file(photo.original_key) as source:
             detections = _detect_bibs(source, exhaustive=exhaustive, photo_id=photo_id)
+
+        # Anti-alucinación: una foto de carrera tiene unos POCOS dorsales legibles.
+        # Si el OCR (sobre todo Gemini) devuelve una cantidad absurda —típicamente
+        # una tira secuencial inventada (815, 816, …, 1000)— no se puede confiar en
+        # cuáles son reales, así que se descartan TODOS. Mejor 0 dorsales (el admin
+        # agrega a mano / la búsqueda por selfie igual funciona) que ensuciar la
+        # búsqueda con cientos de números falsos.
+        if len(detections) > MAX_BIBS_PER_PHOTO:
+            logger.warning(
+                "OCR devolvió %d dorsales para la foto %s — probable alucinación; se descartan todos",
+                len(detections),
+                photo_id,
+            )
+            detections = []
 
         if not detections:
             return {"photo_id": photo.id, "detected": 0, "created": 0}

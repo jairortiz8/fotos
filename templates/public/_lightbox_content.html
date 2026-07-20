@@ -48,8 +48,10 @@
       Cada chip linkea a la búsqueda de ese dorsal: tocar un número en una foto
       grupal = saltar a todas las fotos de ese corredor.{% endcomment %}
     {% if bibs %}
-    <div class="flex flex-wrap gap-1.5 shrink-0 max-w-[40vw]">
-      {% for bib in bibs %}
+    {% comment %}Tope de 8 chips: si una foto tiene una lista rara y larga (p. ej. un
+      OCR que alucinó), NO se llena la pantalla — se muestran los primeros y "+N".{% endcomment %}
+    <div class="flex flex-wrap gap-1.5 shrink-0 max-w-[40vw] max-h-[24vh] overflow-hidden">
+      {% for bib in bibs|slice:":8" %}
         {% if bib_filter and bib.number == bib_filter %}
         {# Dorsal buscado (resaltado): click = QUITAR el filtro → galería completa. #}
         <a href="{% url 'events:gallery' slug=event.slug %}"
@@ -61,6 +63,9 @@
            aria-label="{% blocktrans with n=bib.number %}Ver todas las fotos del dorsal {{ n }}{% endblocktrans %}">#{{ bib.number }}</a>
         {% endif %}
       {% endfor %}
+      {% if bibs|length > 8 %}
+      <span class="rf-bib rf-bib--lg opacity-70">+{{ bibs|length|add:"-8" }}</span>
+      {% endif %}
     </div>
     {% endif %}
     <div class="flex flex-col gap-0.5 min-w-0">

@@ -18,8 +18,8 @@ Al tocarla se abre el lightbox, donde se descarga la foto (una a la vez).{% endc
      Cada chip es un LINK a la búsqueda de ese dorsal (tocar un número = ver
      todas las fotos de ese corredor). OJO: jamás {# #} multilínea — se
      renderiza como texto.{% endcomment %}
-  <div class="absolute bottom-2 left-2 flex flex-wrap gap-1 max-w-[85%]">
-    {% for bib in photo.bibs.all %}{% if not bib.rejected %}
+  <div class="absolute bottom-2 left-2 flex flex-wrap gap-1 max-w-[85%] max-h-[45%] overflow-hidden">
+    {% for bib in photo.bibs.all|slice:":10" %}{% if not bib.rejected %}
       {% if bib_filter and bib.number == bib_filter %}
       {# Dorsal buscado (resaltado): click = QUITAR el filtro → galería completa. #}
       <a href="{% url 'events:gallery' slug=photo.event.slug %}"

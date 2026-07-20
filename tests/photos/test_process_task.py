@@ -175,6 +175,41 @@ def test_run_ocr_idempotent(tmp_path: Path) -> None:
 
 
 @pytest.mark.django_db
+def test_run_ocr_discards_hallucinated_bib_flood(tmp_path: Path) -> None:
+    """Si el OCR devuelve una cantidad absurda de dorsales (alucinación tipo
+    tira secuencial), se descartan TODOS — no se crea ninguno."""
+    photo = PhotoFactory(original_key="events/x/originals/abc.jpg", has_bibs_detected=False)
+    flood = [
+        BibDetection(number=str(n), confidence=0.9, bbox={}, engine="gemini")
+        for n in range(800, 900)  # 100 dorsales consecutivos = alucinación
+    ]
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch("apps.ml.ocr.detect_bibs", return_value=flood),
+    ):
+        result = run_ocr_on_photo.apply(args=[photo.id]).get()
+
+    assert Bib.objects.filter(photo=photo).count() == 0
+    assert result["detected"] == 0
+
+
+@pytest.mark.django_db
+def test_run_ocr_keeps_reasonable_bib_count(tmp_path: Path) -> None:
+    """Una foto grupal con varios dorsales (dentro del tope) sí se guarda."""
+    photo = PhotoFactory(original_key="events/x/originals/abc.jpg", has_bibs_detected=False)
+    dets = [
+        BibDetection(number=str(n), confidence=0.9, bbox={}, engine="gemini")
+        for n in (615, 238, 160, 159, 55)
+    ]
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch("apps.ml.ocr.detect_bibs", return_value=dets),
+    ):
+        result = run_ocr_on_photo.apply(args=[photo.id]).get()
+    assert result["created"] == 5
+
+
+@pytest.mark.django_db
 def test_run_ocr_with_no_detections(tmp_path: Path) -> None:
     photo = PhotoFactory(original_key="events/x/originals/abc.jpg")
     with (
