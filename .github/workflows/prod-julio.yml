@@ -1,30 +1,42 @@
 name: prod-julio (one-off)
-
-# READ-ONLY. Polea /healthz hasta que la DB vuelva (Postgres terminando recovery
-# tras el resize). Sin deps: solo curl.
-
 on:
   workflow_dispatch:
   push:
     branches: ["run-julio"]
-
 jobs:
-  wait:
+  confirm:
     runs-on: ubuntu-latest
     env:
-      SITE: https://findyourfoto.com
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
     steps:
-      - name: wait
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
+      - name: confirm
         shell: bash +e {0}
         run: |
           set +e
-          for i in $(seq 1 30); do
-            BODY=$(curl -sS -m 15 "$SITE/healthz")
-            DB=$(echo "$BODY" | jq -r '.checks.db.ok // "?"' 2>/dev/null)
-            ST=$(echo "$BODY" | jq -r '.status // "?"' 2>/dev/null)
-            CODE=$(curl -sS -o /dev/null -m 15 -w "%{http_code}" "$SITE/healthz/lite")
-            echo "  intento $i: status=$ST db=$DB  /healthz/lite=$CODE"
-            if [ "$DB" = "true" ]; then echo "  >>> DB ARRIBA. healthz OK."; echo "$BODY" | jq -c '{status,db:.checks.db.ok,redis:.checks.redis.ok,r2:.checks.r2.ok,workers:.checks.celery_workers.workers}'; break; fi
-            sleep 8
-          done
+          gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
+          PGID=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}' | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          python3 - <<'PY'
+          import os, psycopg
+          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
+          cur.execute("select pg_size_pretty(pg_database_size(current_database()))"); print("  DB size:", cur.fetchone()[0])
+          cur.execute("select conname from pg_constraint where conrelid='photos_photo'::regclass and contype='u'")
+          print("  UNIQUE constraints (debe estar []):", [r[0] for r in cur.fetchall()])
+          cur.execute("select indexname from pg_indexes where tablename='photos_photo' and indexname='uniq_original_key_nonempty'")
+          print("  indice parcial:", ([r[0] for r in cur.fetchall()] or "AUSENTE (!!)"))
+          cur.execute("select count(*) from photos_photo where original_key=''"); print("  filas trabadas '':", cur.fetchone()[0])
+          cur.execute("select count(*) from photos_photo"); print("  total fotos:", cur.fetchone()[0])
+          # qué ocupa: top tablas
+          cur.execute("""select relname, pg_size_pretty(pg_total_relation_size(c.oid))
+                         from pg_class c join pg_namespace n on n.oid=c.relnamespace
+                         where n.nspname='public' and c.relkind='r'
+                         order by pg_total_relation_size(c.oid) desc limit 6""")
+          print("  tablas más grandes:", cur.fetchall())
+          PY
           echo "==================== FIN ===================="
