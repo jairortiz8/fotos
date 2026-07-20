@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from django.db import models
-from django.db.models import F
+from django.db.models import F, Q, UniqueConstraint
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from pgvector.django import HnswIndex, VectorField
@@ -58,7 +58,13 @@ class Photo(TimeStampedModel):
     )
 
     # --- R2 keys (paths de objetos en R2) ---
-    original_key = models.CharField(_("key del original"), max_length=500, unique=True)
+    # OJO: unique=True NO — la unicidad se aplica con un UniqueConstraint PARCIAL
+    # en Meta (solo keys reales, ignora ""). Al crear la Photo se inserta con
+    # original_key="" y recién tras subir a R2 se setea la key definitiva; con
+    # unique total, dos subidas simultáneas/abandonadas con "" chocaban y tiraban
+    # 500 en TODA subida (una subida trabada bloqueaba a todos). El parcial deja
+    # convivir muchos "" sin perder la unicidad de las keys reales.
+    original_key = models.CharField(_("key del original"), max_length=500)
     preview_key = models.CharField(_("key del preview"), max_length=500, blank=True)
     thumbnail_key = models.CharField(_("key del thumbnail"), max_length=500, blank=True)
     # Original FULL-RES con los logos de marca pegados (JPEG). Sólo se genera para
@@ -133,6 +139,15 @@ class Photo(TimeStampedModel):
             models.Index(
                 fields=["photographer_link", "status"],
                 name="photo_link_status_idx",
+            ),
+        ]
+        constraints = [
+            # Unicidad SOLO sobre keys reales. Las "" (subidas en curso o
+            # abandonadas) quedan exentas → no bloquean nuevas subidas.
+            UniqueConstraint(
+                fields=["original_key"],
+                condition=~Q(original_key=""),
+                name="uniq_original_key_nonempty",
             ),
         ]
 
