@@ -89,7 +89,8 @@ jobs:
           for lid,name,eid,slug,n in q("""select l.id, l.photographer_name, l.event_id, e.slug,
                      (select count(*) from photos_photo p where p.photographer_link_id=l.id and p.status<>'deleted')
                      from photographers_photographerlink l join events_event e on e.id=l.event_id
-                     where l.photographer_name ilike '%ani%' or l.photographer_name ilike '%tolen%'"""):
+                     where l.photographer_name ilike %s or l.photographer_name ilike %s""",
+                     ("%ani%","%tolen%")):
               print(f"  link={lid} '{name}' evento={slug} fotos={n}")
           print()
 
