@@ -1,7 +1,6 @@
 name: prod-julio (one-off)
 
-# READ-ONLY. NO deploya. Lee los LOGS del web para entender la foto de Julio
-# que "siempre da error de red": ¿rechazo limpio, timeout de gunicorn, u OOM?
+# READ-ONLY. NO deploya. Traceback del 500 de subida + a quién pertenece el token.
 
 on:
   workflow_dispatch:
@@ -17,41 +16,46 @@ jobs:
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
     steps:
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
       - name: audit
         shell: bash +e {0}
         run: |
           set +e
           gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
 
-          echo "===== deployment activo del WEB (fotos) ====="
           DEP=$(gql '{"query":"query($p:String!,$e:String!){ deployments(first:60, input:{projectId:$p, environmentId:$e}){ edges { node { id status createdAt service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}')
           DID=$(echo "$DEP" | jq -r '[.data.deployments.edges[].node | select(.service.name=="fotos" and .status=="SUCCESS")] | sort_by(.createdAt) | last | .id')
-          echo "  deployment web: $DID"
-          if [ -z "$DID" ] || [ "$DID" = "null" ]; then echo "RESP CRUDA:"; echo "$DEP" | head -c 800; exit 0; fi
-          echo
+          PGID=$(echo "$DEP" >/dev/null; gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}' | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          echo "web deployment: $DID  · pg: $PGID"
 
-          logs() {  # $1 = filtro de texto, $2 = limit
-            RESP=$(gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$l){ timestamp message } }","variables":{"d":"'"$DID"'","f":"'"$1"'","l":'"$2"'}}')
-            N=$(echo "$RESP" | jq -r '.data.deploymentLogs | length' 2>/dev/null)
-            if [ "$N" = "null" ] || [ -z "$N" ]; then echo "  (query logs falló) $(echo "$RESP" | head -c 300)"; return; fi
-            echo "  [$N líneas]"
-            echo "$RESP" | jq -r '.data.deploymentLogs[]? | "  \(.timestamp)  \(.message)"'
+          logs() {
+            gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$l){ timestamp message } }","variables":{"d":"'"$DID"'","f":"'"$1"'","l":'"$2"'}}' \
+              | jq -r '.data.deploymentLogs[]? | "  \(.timestamp)  \(.message)"'
           }
 
-          echo "===== A) 'upload FALLO' (rechazos limpios registrados) ====="
-          logs "upload FALLO" 80
+          echo "===== TRACEBACK / excepción del 500 (varias pistas) ====="
+          for kw in "Traceback (most recent call" "  File \"" "Error" "Exception" "boto" "ClientError" "OSError" "No space" "psycopg" "OperationalError" "MemoryError" "Broken" "IncompleteRead" "RequestData" "SuspiciousOperation" "cv2" "insightface" "onnx"; do
+            OUT=$(logs "$kw" 25)
+            if [ -n "$OUT" ]; then echo "---- match: '$kw' ----"; echo "$OUT" | tail -25; fi
+          done
           echo
-          echo "===== B) 'link=27' (Julio) ====="
-          logs "link=27" 80
-          echo
-          echo "===== C) TIMEOUT / worker muerto / OOM ====="
-          logs "WORKER TIMEOUT" 30
-          logs "SIGKILL" 30
-          logs "SIGABRT" 20
-          logs "memory" 30
-          logs "Booting worker" 20
-          echo
-          echo "===== D) tracebacks / errores ====="
-          logs "Traceback" 30
-          logs "Internal Server Error" 30
+
+          echo "===== ¿de quién es el token iSEH4R7fXv5whK_44-JWkIsQGJMdm0-3? ====="
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          python3 - <<'PY'
+          import os, hashlib, psycopg
+          tok="iSEH4R7fXv5whK_44-JWkIsQGJMdm0-3"
+          h=hashlib.sha256(tok.encode()).hexdigest()
+          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
+          cur.execute("""select l.id,l.photographer_name,e.slug,l.is_active,l.revoked_at,l.expires_at,l.photo_limit,l.photos_uploaded
+                         from photographers_photographerlink l join events_event e on e.id=l.event_id
+                         where l.token_hash=%s""",(h,))
+          r=cur.fetchone()
+          print("  token ->", r if r else "(no matchea ningún link)")
+          # ¿cuántas fotos 'uploading' recientes y estados?
+          cur.execute("select status,count(*) from photos_photo where created_at>now()-interval '90 minutes' group by status order by 2 desc")
+          print("  fotos por estado (últimos 90m):", cur.fetchall())
+          PY
           echo "==================== FIN ===================="
