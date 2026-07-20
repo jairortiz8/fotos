@@ -1,0 +1,92 @@
+name: prod-clean-bibflood (one-off)
+
+# Despliega el tope anti-alucinación y LIMPIA los dorsales inventados: en fotos
+# con una cantidad absurda de dorsales (>12), borra los de OCR (deja los
+# manuales) y resetea el flag. Los uploads futuros ya salen topados.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-bibflood"]
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      SHA: 35debf19f413db6473449008fe842988f34ff724
+    steps:
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
+      - name: deploy + limpiar
+        run: |
+          set -uo pipefail
+          SHORT="${SHA:0:7}"
+          gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          deploy(){ gql '{"query":"mutation($s:String!,$e:String!,$c:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e, commitSha:$c) }","variables":{"s":"'"$1"'","e":"'"$ENV_ID"'","c":"'"$SHA"'"}}' | jq -c '.data // .errors'; }
+          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
+          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          FID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="fotos")|.id')
+          WID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="worker")|.id')
+          WFID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="worker_fast")|.id')
+
+          echo "== deploy $SHORT (web+worker+worker_fast) =="
+          echo "web -> $(deploy "$FID")"; echo "worker -> $(deploy "$WID")"; echo "worker_fast -> $(deploy "$WFID")"
+          for i in $(seq 1 30); do
+            ST=$(gql '{"query":"query($p:String!,$e:String!){ deployments(first:120, input:{projectId:$p, environmentId:$e}){ edges { node { status createdAt meta service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}' \
+              | jq -r --arg f "$SHORT" '[.data.deployments.edges[].node]|map(select(.service.name|test("^(worker|fotos)")))|group_by(.service.name)|map(sort_by(.createdAt)|last)|map({s:.service.name,st:.status,c:((.meta.commitHash//"?")|tostring[0:7])})')
+            OK=$(echo "$ST" | jq -r --arg f "$SHORT" '([.[]|select(.st=="SUCCESS" and .c==$f)]|length) as $g|if(length>=3 and $g>=3)then"yes"else"no"end')
+            echo "intento $i: $(echo "$ST"|jq -c '.')"
+            [ "$OK" = "yes" ] && { echo ">> listo"; break; }
+            sleep 30
+          done
+          echo
+
+          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          python3 - <<'PY'
+          import os
+          import psycopg
+          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); c.autocommit=True; cur=c.cursor()
+          MAX=12
+
+          # Fotos con demasiados dorsales = alucinación
+          cur.execute("""select p.event_id, e.slug, p.id, count(*) as n
+                         from photos_bib b join photos_photo p on p.id=b.photo_id
+                         join events_event e on e.id=p.event_id
+                         where p.status<>'deleted'
+                         group by p.event_id, e.slug, p.id having count(*) > %s
+                         order by n desc""",(MAX,))
+          rows=cur.fetchall()
+          print(f"Fotos con > {MAX} dorsales (alucinación): {len(rows)}")
+          by_ev={}
+          for eid,slug,pid,n in rows:
+              by_ev.setdefault(slug,[]).append((pid,n))
+          for slug,lst in by_ev.items():
+              ns=[n for _,n in lst]
+              print(f"  {slug}: {len(lst)} fotos (dorsales por foto: max={max(ns)}, ej. {lst[:3]})")
+          print()
+
+          pids=[pid for _,_,pid,_ in rows]
+          if not pids:
+              print("No hay nada que limpiar."); raise SystemExit(0)
+
+          # Borrar SOLO los dorsales de OCR (dejar los manuales del admin)
+          cur.execute("""delete from photos_bib where photo_id = any(%s)
+                         and source in ('ocr_gemini','ocr_paddle','ocr_easy')""",(pids,))
+          deleted=cur.rowcount
+          # Resetear flag en las fotos que quedaron sin dorsales
+          cur.execute("""update photos_photo set has_bibs_detected=false
+                         where id = any(%s) and not exists
+                         (select 1 from photos_bib b where b.photo_id=photos_photo.id)""",(pids,))
+          print(f"Dorsales de OCR borrados: {deleted}")
+          print(f"Fotos limpiadas: {len(pids)}")
+          # Verificación
+          cur.execute("select count(*) from photos_bib b join photos_photo p on p.id=b.photo_id where p.id=any(%s)",(pids,))
+          print(f"Dorsales restantes en esas fotos (manuales): {cur.fetchone()[0]}")
+          print("\nListo. Esas fotos quedaron sin la tira inventada; el admin puede agregar el real a mano si hace falta, y la búsqueda por selfie igual las encuentra. Los uploads nuevos ya salen topados (no vuelve a pasar).")
+          PY
+          echo "==================== FIN ===================="
