@@ -1,0 +1,59 @@
+name: prod-upload-audit (one-off)
+
+# READ-ONLY: diagnóstico de por qué la subida va lenta. No cambia nada.
+#  - deploys/reinicios del web de hoy (cada push = un reinicio + recarga del modelo)
+#  - config real del web (workers/threads/timeout, selfie, tamaño máx)
+#  - latencia actual de varios endpoints
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-uploadaudit"]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      SITE: https://findyourfoto.com
+    steps:
+      - name: audit
+        run: |
+          set -uo pipefail
+          gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
+          FID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="fotos")|.id')
+
+          echo "===== 1) DEPLOYS/REINICIOS del web (fotos) — recientes ====="
+          gql '{"query":"query($p:String!,$e:String!){ deployments(first:100, input:{projectId:$p, environmentId:$e}){ edges { node { status createdAt service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}' \
+            | jq -r '[.data.deployments.edges[].node]|map(select(.service.name=="fotos"))|sort_by(.createdAt)|reverse|.[0:12][]|"  \(.createdAt)  \(.status)"'
+          echo "  (cada deploy = el web se reinicia y la 1ª búsqueda por selfie recarga el modelo ~28s)"
+          echo
+
+          echo "===== 2) CONFIG del web ====="
+          vars_of "$FID" | jq -r '{
+            WEB_CONCURRENCY: (.WEB_CONCURRENCY // "(default 1)"),
+            WEB_THREADS: (.WEB_THREADS // "(default 8)"),
+            WEB_TIMEOUT: (.WEB_TIMEOUT // "(default 120)"),
+            FACE_SEARCH_ENABLED: .FACE_SEARCH_ENABLED,
+            PHOTO_UPLOAD_MAX_MB: (.PHOTO_UPLOAD_MAX_MB // "(default 40)")
+          } | to_entries | map("  \(.key) = \(.value)") | .[]'
+          echo "  (el web carga InsightFace para el selfie → 1 worker con el modelo en RAM; 8 threads comparten CPU por el GIL de Python)"
+          echo
+
+          echo "===== 3) LATENCIA actual (5 muestras) ====="
+          for path in "/healthz/lite" "/"; do
+            echo "  $path:"
+            for i in 1 2 3 4 5; do
+              t=$(curl -sS -o /dev/null -m 30 -w "%{time_total}" "$SITE$path" 2>/dev/null || echo "err")
+              echo "    intento $i: ${t}s"
+            done
+          done
+          echo
+          echo "===== 4) SERVICIOS arriba ====="
+          curl -sS -m 20 "$SITE/healthz" | jq -c '{status, workers: .checks.celery_workers.workers, db: .checks.db.ok, redis: .checks.redis.ok, r2: .checks.r2.ok}' 2>/dev/null || echo "healthz sin JSON"
+          echo "==================== FIN ===================="
