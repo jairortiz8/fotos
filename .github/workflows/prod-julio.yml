@@ -16,39 +16,42 @@ jobs:
       API: https://backboard.railway.app/graphql/v2
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
-      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
     steps:
       - name: audit
+        shell: bash +e {0}
         run: |
-          set -uo pipefail
+          set +e
           gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
 
-          echo "===== deployment activo del WEB ====="
-          DEP=$(gql '{"query":"query($p:String!,$e:String!){ deployments(first:5, input:{projectId:$p, environmentId:$e, serviceId:\"'"$WEB_ID"'\"}){ edges { node { id status createdAt } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}')
-          echo "$DEP" | jq -r '.data.deployments.edges[].node | "  \(.id) \(.status) \(.createdAt)"'
-          DID=$(echo "$DEP" | jq -r '[.data.deployments.edges[].node | select(.status=="SUCCESS")][0].id')
-          echo "  usando: $DID"
+          echo "===== deployment activo del WEB (fotos) ====="
+          DEP=$(gql '{"query":"query($p:String!,$e:String!){ deployments(first:60, input:{projectId:$p, environmentId:$e}){ edges { node { id status createdAt service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}')
+          DID=$(echo "$DEP" | jq -r '[.data.deployments.edges[].node | select(.service.name=="fotos" and .status=="SUCCESS")] | sort_by(.createdAt) | last | .id')
+          echo "  deployment web: $DID"
+          if [ -z "$DID" ] || [ "$DID" = "null" ]; then echo "RESP CRUDA:"; echo "$DEP" | head -c 800; exit 0; fi
           echo
 
           logs() {  # $1 = filtro de texto, $2 = limit
-            gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$l){ timestamp message } }","variables":{"d":"'"$DID"'","f":"'"$1"'","l":'"$2"'}}' \
-              | jq -r '.data.deploymentLogs[]? | "  \(.timestamp)  \(.message)"'
+            RESP=$(gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$l){ timestamp message } }","variables":{"d":"'"$DID"'","f":"'"$1"'","l":'"$2"'}}')
+            N=$(echo "$RESP" | jq -r '.data.deploymentLogs | length' 2>/dev/null)
+            if [ "$N" = "null" ] || [ -z "$N" ]; then echo "  (query logs falló) $(echo "$RESP" | head -c 300)"; return; fi
+            echo "  [$N líneas]"
+            echo "$RESP" | jq -r '.data.deploymentLogs[]? | "  \(.timestamp)  \(.message)"'
           }
 
-          echo "===== A) upload FALLO (rechazos limpios registrados) últimos ====="
-          logs "upload FALLO" 60
+          echo "===== A) 'upload FALLO' (rechazos limpios registrados) ====="
+          logs "upload FALLO" 80
           echo
-          echo "===== B) link=27 (Julio) en logs de upload ====="
-          logs "link=27" 60
+          echo "===== B) 'link=27' (Julio) ====="
+          logs "link=27" 80
           echo
-          echo "===== C) señales de TIMEOUT / worker muerto / OOM ====="
+          echo "===== C) TIMEOUT / worker muerto / OOM ====="
           logs "WORKER TIMEOUT" 30
           logs "SIGKILL" 30
-          logs "out of memory" 20
-          logs "MemoryError" 20
+          logs "SIGABRT" 20
+          logs "memory" 30
           logs "Booting worker" 20
           echo
-          echo "===== D) errores 500 / tracebacks recientes ====="
+          echo "===== D) tracebacks / errores ====="
           logs "Traceback" 30
-          logs "ERROR" 40
+          logs "Internal Server Error" 30
           echo "==================== FIN ===================="
