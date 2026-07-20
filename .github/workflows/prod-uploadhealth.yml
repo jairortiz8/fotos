@@ -1,0 +1,87 @@
+name: prod-uploadhealth (one-off)
+
+# READ-ONLY. NO deploya nada (no reinicia el web). Mira cómo viene el web con
+# las subidas: ritmo de subida, backlog de procesamiento, fallidas, estabilidad.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-uploadhealth"]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      SITE: https://findyourfoto.com
+    steps:
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
+      - name: audit
+        run: |
+          set -uo pipefail
+          gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
+          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+
+          echo "===== ESTABILIDAD del web (último deploy = último reinicio) ====="
+          gql '{"query":"query($p:String!,$e:String!){ deployments(first:60, input:{projectId:$p, environmentId:$e}){ edges { node { status createdAt service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}' \
+            | jq -r '[.data.deployments.edges[].node]|map(select(.service.name=="fotos"))|sort_by(.createdAt)|last|"  último deploy del web: \(.createdAt)  (\(.status)) → sin reinicios desde entonces"'
+          echo
+
+          echo "===== LATENCIA actual del web ====="
+          for i in 1 2 3; do t=$(curl -sS -o /dev/null -m 20 -w "%{time_total}" "$SITE/healthz/lite" 2>/dev/null || echo err); echo "  /healthz/lite intento $i: ${t}s"; done
+          echo
+
+          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          python3 - <<'PY'
+          import os
+          import psycopg
+          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
+          eid=cur.execute("select id from events_event where slug='surf-city-2026'"); eid=cur.fetchone()[0]
+
+          def scalar(q,a=()):
+              cur.execute(q,a); return cur.fetchone()[0]
+
+          print("===== SUBIDAS de surf-city-2026 por ESTADO =====")
+          cur.execute("""select status, count(*) from photos_photo
+                         where event_id=%s group by status order by count(*) desc""",(eid,))
+          for st,n in cur.fetchall(): print(f"  {st:20} {n}")
+          print()
+
+          print("===== RITMO de subida (fotos creadas en los últimos…) =====")
+          for label,mins in (("5 min",5),("15 min",15),("30 min",30),("60 min",60)):
+              n=scalar("""select count(*) from photos_photo where event_id=%s
+                          and created_at > now() - (%s || ' minutes')::interval""",(eid,mins))
+              print(f"  {label:8}: {n} fotos")
+          print()
+
+          print("===== BACKLOG de procesamiento (¿el worker va al día?) =====")
+          proc=scalar("""select count(*) from photos_photo where event_id=%s
+                         and status in ('uploading','processing')""",(eid,))
+          stuck=scalar("""select count(*) from photos_photo where event_id=%s
+                          and status in ('uploading','processing')
+                          and updated_at < now() - interval '10 minutes'""",(eid,))
+          failed=scalar("select count(*) from photos_photo where event_id=%s and status='processing_failed'",(eid,))
+          print(f"  en curso (uploading/processing): {proc}")
+          print(f"  trabadas (>10 min sin avanzar):  {stuck}")
+          print(f"  processing_failed:               {failed}")
+          print()
+
+          print("===== Últimas 8 subidas (hora + estado) =====")
+          cur.execute("""select id, status, to_char(created_at,'HH24:MI:SS'),
+                         (preview_key<>'') as prev
+                         from photos_photo where event_id=%s order by created_at desc limit 8""",(eid,))
+          for pid,st,t,prev in cur.fetchall():
+              print(f"  {t}  id={pid}  {st}  preview={'sí' if prev else 'no'}")
+          print()
+          if stuck==0 and failed<5:
+              print("VEREDICTO: el web está tomando las subidas y el worker las procesa al día (sin trabadas, sin fallidas relevantes).")
+          else:
+              print("VEREDICTO: revisar — hay fotos trabadas o fallidas (ver arriba).")
+          PY
+          echo "==================== FIN ===================="
