@@ -1,7 +1,7 @@
 name: prod-julio (one-off)
 
-# READ-ONLY. Verifica post-resize: volumen nuevo, Postgres up, healthz, y que el
-# fix del indice parcial sobrevivio el crash/recovery + salud de subidas.
+# READ-ONLY. Polea /healthz hasta que la DB vuelva (Postgres terminando recovery
+# tras el resize). Sin deps: solo curl.
 
 on:
   workflow_dispatch:
@@ -9,54 +9,22 @@ on:
     branches: ["run-julio"]
 
 jobs:
-  verify:
+  wait:
     runs-on: ubuntu-latest
     env:
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-      API: https://backboard.railway.app/graphql/v2
-      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
-      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
       SITE: https://findyourfoto.com
     steps:
-      - name: deps
-        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
-      - name: verify
+      - name: wait
         shell: bash +e {0}
         run: |
           set +e
-          gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
-
-          echo "===== 1) VOLUMEN de Postgres (nuevo tamaño) ====="
-          gql '{"query":"query($p:String!){ project(id:$p){ volumes{ edges{ node{ name volumeInstances{ edges{ node{ sizeMB currentSizeMB state } } } } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}' \
-            | jq -r '.data.project.volumes.edges[]?.node|select(.name=="postgres-volume")| .volumeInstances.edges[]?.node | "  sizeMB=\(.sizeMB)  usadoMB=\(.currentSizeMB)  state=\(.state)  uso=\((.currentSizeMB/.sizeMB*100)|floor)%"'
-          echo
-
-          echo "===== 2) HEALTHZ del sitio ====="
-          curl -sS -m 25 "$SITE/healthz" | jq -c '{status, db:.checks.db.ok, redis:.checks.redis.ok, r2:.checks.r2.ok, workers:.checks.celery_workers.workers, beat:.checks.celery_beat.ok}' 2>/dev/null || echo "  healthz no respondio"
-          echo "  latencia /healthz/lite:"; for i in 1 2 3; do curl -sS -o /dev/null -m 20 -w "    %{time_total}s (http %{http_code})\n" "$SITE/healthz/lite"; done
-          echo
-
-          PGID=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}' | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
-          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
-          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
-          python3 - <<'PY'
-          import os, psycopg
-          try:
-              c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
-          except Exception as e:
-              print("  !!! Postgres NO acepta conexiones todavia:", repr(e)[:150]); raise SystemExit(0)
-          print("===== 3) Postgres responde + estado del fix =====")
-          cur.execute("select 1"); print("  SELECT 1 ->", cur.fetchone()[0])
-          cur.execute("select pg_size_pretty(pg_database_size(current_database()))")
-          print("  tamaño de la DB:", cur.fetchone()[0])
-          cur.execute("""select conname from pg_constraint where conrelid='photos_photo'::regclass and contype='u'""")
-          print("  constraints UNIQUE (debe estar VACIO):", [r[0] for r in cur.fetchall()])
-          cur.execute("""select indexname from pg_indexes where tablename='photos_photo' and indexname='uniq_original_key_nonempty'""")
-          print("  indice parcial presente:", [r[0] for r in cur.fetchall()] or "NO (!!)")
-          cur.execute("select count(*) from photos_photo where original_key=''")
-          print("  filas trabadas (original_key=''):", cur.fetchone()[0])
-          print("===== 4) salud de subidas (ultimos 15 min) =====")
-          cur.execute("select status, count(*) from photos_photo where created_at>now()-interval '15 minutes' group by status order by 2 desc")
-          print("  por estado:", cur.fetchall() or "sin subidas nuevas todavia")
-          PY
+          for i in $(seq 1 30); do
+            BODY=$(curl -sS -m 15 "$SITE/healthz")
+            DB=$(echo "$BODY" | jq -r '.checks.db.ok // "?"' 2>/dev/null)
+            ST=$(echo "$BODY" | jq -r '.status // "?"' 2>/dev/null)
+            CODE=$(curl -sS -o /dev/null -m 15 -w "%{http_code}" "$SITE/healthz/lite")
+            echo "  intento $i: status=$ST db=$DB  /healthz/lite=$CODE"
+            if [ "$DB" = "true" ]; then echo "  >>> DB ARRIBA. healthz OK."; echo "$BODY" | jq -c '{status,db:.checks.db.ok,redis:.checks.redis.ok,r2:.checks.r2.ok,workers:.checks.celery_workers.workers}'; break; fi
+            sleep 8
+          done
           echo "==================== FIN ===================="
