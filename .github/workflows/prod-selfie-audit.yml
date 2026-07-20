@@ -1,0 +1,70 @@
+name: prod-selfie-audit (one-off)
+
+# Auditoría READ-ONLY del avance del re-indexado facial de Surf City.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-selfieaudit"]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+    steps:
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
+      - name: audit
+        run: |
+          set -uo pipefail
+          gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
+          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          python3 - <<'PY'
+          import os
+          import psycopg
+          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
+          def one(q,a=()):
+              cur.execute(q,a); return cur.fetchone()[0]
+
+          eid=one("select id from events_event where slug='surf-city-2026'")
+          # universo re-indexado: verticales (Orientation 5/6/7/8)
+          base="""from photos_photo p where p.event_id=%s and p.status<>'deleted'
+                  and (p.exif_raw->>'Orientation') in ('5','6','7','8')"""
+          total=one(f"select count(*) {base}",(eid,))
+          done=one(f"select count(*) {base} and p.has_faces_detected",(eid,))
+          pend=one(f"select count(*) {base} and not p.has_faces_detected",(eid,))
+          withemb=one(f"select count(distinct p.id) {base} and exists(select 1 from photos_faceembedding f where f.photo_id=p.id)",(eid,))
+          embs=one("""select count(*) from photos_faceembedding f join photos_photo p on p.id=f.photo_id
+                      where p.event_id=%s and (p.exif_raw->>'Orientation') in ('5','6','7','8')""",(eid,))
+          failed=one(f"select count(*) {base} and p.status='processing_failed'",(eid,))
+          noface=one(f"select count(*) {base} and p.has_faces_detected and not exists(select 1 from photos_faceembedding f where f.photo_id=p.id)",(eid,))
+
+          pct = round(100*done/total,1) if total else 0
+          print("===== AVANCE DEL RE-INDEXADO FACIAL — surf-city-2026 =====")
+          print(f"  fotos verticales a re-indexar: {total}")
+          print(f"  YA re-indexadas (con caras procesadas): {done}  ({pct}%)")
+          print(f"  pendientes (en cola / procesando):       {pend}")
+          print(f"  con al menos 1 embedding:                {withemb}")
+          print(f"  embeddings totales (caras):              {embs}")
+          print(f"  sin caras detectadas (foto sin gente clara): {noface}")
+          print(f"  en 'processing_failed':                  {failed}")
+          print()
+          # muestra de 5
+          cur.execute(f"""select p.id, p.has_faces_detected,
+                          (select count(*) from photos_faceembedding f where f.photo_id=p.id)
+                          {base} order by p.id limit 5""",(eid,))
+          print("  muestra:", [(r[0], "ok" if r[1] else "pend", f"{r[2]} caras") for r in cur.fetchall()])
+          print()
+          if pend==0:
+              print("VEREDICTO: ✓ re-indexado COMPLETO.")
+          else:
+              print(f"VEREDICTO: en progreso — {done}/{total} listas ({pct}%). Sigue de fondo en el worker.")
+          PY
+          echo "==================== FIN ===================="
