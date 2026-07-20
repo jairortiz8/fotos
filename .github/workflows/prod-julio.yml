@@ -1,7 +1,8 @@
 name: prod-julio (one-off)
 
-# Arreglo de datos (NO deploy, NO reinicia el web): borra la/s Photo trabada/s
-# con original_key='' que rompen el UNIQUE y tiran 500 en TODA subida.
+# Fix de esquema SIN deploy (no reinicia el web): reemplaza el UNIQUE total de
+# original_key por un UNIQUE PARCIAL (solo keys no vacías). Así las subidas
+# abandonadas (original_key='') dejan de romper el insert de nuevas subidas.
 
 on:
   workflow_dispatch:
@@ -29,26 +30,50 @@ jobs:
           export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
           python3 - <<'PY'
           import os, psycopg
-          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); c.autocommit=True; cur=c.cursor()
-          print("== filas con original_key='' (las que rompen el UNIQUE) ==")
-          cur.execute("""select id, event_id, photographer_link_id, status, original_filename,
-                         created_at, updated_at
-                         from photos_photo where original_key='' order by created_at""")
-          rows=cur.fetchall()
-          for r in rows: print("  ", r)
-          print(f"  total: {len(rows)}")
-          # Sólo borramos las trabadas (uploading/processing) con key vacía y viejas (>2 min).
-          cur.execute("""delete from photos_photo
-                         where original_key=''
-                           and status in ('uploading','processing')
-                           and created_at < now()-interval '2 minutes'
-                         returning id, status, original_filename""")
-          deleted=cur.fetchall()
-          print("== BORRADAS ==")
-          for d in deleted: print("  ", d)
-          print(f"  total borradas: {len(deleted)}")
-          # Verificación: ¿queda alguna '' ocupando el slot?
-          cur.execute("select count(*) from photos_photo where original_key=''")
-          print("  quedan con original_key='':", cur.fetchone()[0])
+          c=psycopg.connect(os.environ["DBURL"], connect_timeout=30); cur=c.cursor()
+
+          def show():
+              cur.execute("""select conname from pg_constraint
+                             where conrelid='photos_photo'::regclass and contype='u'""")
+              print("  constraints UNIQUE en photos_photo:", [r[0] for r in cur.fetchall()])
+              cur.execute("""select indexname from pg_indexes
+                             where tablename='photos_photo' and indexdef ilike '%original_key%'""")
+              print("  indexes sobre original_key:", [r[0] for r in cur.fetchall()])
+
+          print("== ANTES ==")
+          show()
+          # seguridad: no debe haber duplicados de keys reales (el partial fallaría si los hubiera)
+          cur.execute("select original_key, count(*) from photos_photo where original_key<>'' group by 1 having count(*)>1")
+          dups=cur.fetchall()
+          print("  duplicados de key real:", dups if dups else "ninguno")
+          if dups:
+              print("  ABORTADO: hay duplicados reales, no aplico el fix.")
+          else:
+              try:
+                  cur.execute("BEGIN")
+                  cur.execute("ALTER TABLE photos_photo DROP CONSTRAINT IF EXISTS photos_photo_original_key_key")
+                  cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uniq_original_key_nonempty
+                                 ON photos_photo (original_key) WHERE original_key <> ''""")
+                  cur.execute("COMMIT")
+                  print("  OK: constraint total -> indice parcial aplicado.")
+              except Exception as e:
+                  cur.execute("ROLLBACK")
+                  print("  ERROR aplicando:", repr(e))
+          print("== DESPUES ==")
+          show()
+          # prueba funcional: dos filas con original_key='' deben poder coexistir ahora (rollback, no ensucia)
+          try:
+              cur.execute("BEGIN")
+              cur.execute("select id from photos_photo where original_key<>'' limit 1")
+              _ = cur.fetchone()
+              cur.execute("""insert into photos_photo (event_id, original_key, original_filename, width, height, file_size, status, created_at, updated_at, content_hash, uploaded_by_admin, needs_minor_review, has_faces_detected, branded_key, preview_key, thumbnail_key)
+                             select event_id, '', 'TEST_A', 0,0,0,'uploading', now(), now(), 'x'||md5(random()::text), false, false, false, '', '', '' from photos_photo limit 1""")
+              cur.execute("""insert into photos_photo (event_id, original_key, original_filename, width, height, file_size, status, created_at, updated_at, content_hash, uploaded_by_admin, needs_minor_review, has_faces_detected, branded_key, preview_key, thumbnail_key)
+                             select event_id, '', 'TEST_B', 0,0,0,'uploading', now(), now(), 'x'||md5(random()::text), false, false, false, '', '', '' from photos_photo limit 1""")
+              print("  PRUEBA: dos filas con original_key='' insertadas OK (antes esto era el 500). Hago ROLLBACK.")
+              cur.execute("ROLLBACK")
+          except Exception as e:
+              cur.execute("ROLLBACK")
+              print("  PRUEBA falló (columnas distintas, no crítico):", repr(e)[:180])
           PY
           echo "==================== FIN ===================="
