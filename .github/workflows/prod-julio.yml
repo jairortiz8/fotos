@@ -1,6 +1,7 @@
 name: prod-julio (one-off)
 
-# READ-ONLY. NO deploya. Saca el exc_info (traceback) de los attributes del log JSON.
+# Arreglo de datos (NO deploy, NO reinicia el web): borra la/s Photo trabada/s
+# con original_key='' que rompen el UNIQUE y tiran 500 en TODA subida.
 
 on:
   workflow_dispatch:
@@ -8,7 +9,7 @@ on:
     branches: ["run-julio"]
 
 jobs:
-  audit:
+  fix:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
@@ -16,20 +17,38 @@ jobs:
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
     steps:
-      - name: audit
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
+      - name: fix
         shell: bash +e {0}
         run: |
           set +e
           gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
-          DEP=$(gql '{"query":"query($p:String!,$e:String!){ deployments(first:60, input:{projectId:$p, environmentId:$e}){ edges { node { id status createdAt service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}')
-          DID=$(echo "$DEP" | jq -r '[.data.deployments.edges[].node | select(.service.name=="fotos" and .status=="SUCCESS")] | sort_by(.createdAt) | last | .id')
-          echo "web deployment: $DID"
-
-          echo "===== log completo (attributes) de los 500 de subida ====="
-          RESP=$(gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$l){ timestamp message severity attributes { key value } } }","variables":{"d":"'"$DID"'","f":"Internal Server Error","l":6}}')
-          echo "$RESP" | jq -r '.data.deploymentLogs[]? | "==== \(.timestamp) sev=\(.severity)\nMSG: \(.message)\nATTRS:\n" + ( [.attributes[]? | "  \(.key) = \(.value)"] | join("\n") )'
-          echo
-          echo "=== si arriba no hay traceback, probamos con filtro del path del upload y attrs ==="
-          RESP2=$(gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$l){ timestamp message attributes { key value } } }","variables":{"d":"'"$DID"'","f":"exc_info","l":4}}')
-          echo "$RESP2" | jq -r '.data.deploymentLogs[]? | "==== \(.timestamp)\n" + ( [.attributes[]? | select(.key=="exc_info" or .key=="stack_info" or .key=="exception") | "\(.key):\n\(.value)"] | join("\n") )'
+          PGID=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}' | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          python3 - <<'PY'
+          import os, psycopg
+          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); c.autocommit=True; cur=c.cursor()
+          print("== filas con original_key='' (las que rompen el UNIQUE) ==")
+          cur.execute("""select id, event_id, photographer_link_id, status, original_filename,
+                         created_at, updated_at
+                         from photos_photo where original_key='' order by created_at""")
+          rows=cur.fetchall()
+          for r in rows: print("  ", r)
+          print(f"  total: {len(rows)}")
+          # Sólo borramos las trabadas (uploading/processing) con key vacía y viejas (>2 min).
+          cur.execute("""delete from photos_photo
+                         where original_key=''
+                           and status in ('uploading','processing')
+                           and created_at < now()-interval '2 minutes'
+                         returning id, status, original_filename""")
+          deleted=cur.fetchall()
+          print("== BORRADAS ==")
+          for d in deleted: print("  ", d)
+          print(f"  total borradas: {len(deleted)}")
+          # Verificación: ¿queda alguna '' ocupando el slot?
+          cur.execute("select count(*) from photos_photo where original_key=''")
+          print("  quedan con original_key='':", cur.fetchone()[0])
+          PY
           echo "==================== FIN ===================="
