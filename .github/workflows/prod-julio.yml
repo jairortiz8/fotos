@@ -4,56 +4,62 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  diag:
+  requeue:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
-      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      REDIS_ID: 37559685-4af5-4b9a-851d-84d9424f7424
     steps:
       - name: deps
-        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" redis
-      - name: diag
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" redis celery
+      - name: requeue
         shell: bash +e {0}
         run: |
           set +e
           gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
-          PGID=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}' | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
           vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
-          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
-          export REDISURL=$(vars_of "$WEB_ID" | jq -r '.REDIS_PUBLIC_URL // .REDIS_URL // empty')
+          export DBURL=$(vars_of "$PG_ID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          RV=$(vars_of "$REDIS_ID")
+          export REDISURL=$(echo "$RV" | jq -r '.REDIS_PUBLIC_URL // empty')
+          echo "  redis keys disponibles: $(echo "$RV" | jq -r 'keys|join(",")')"
           python3 - <<'PY'
-          import os, psycopg
-          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
-          print("===== TOTAL por estado (todas las fotos) =====")
-          cur.execute("select status,count(*) from photos_photo group by status order by 2 desc")
-          for s,n in cur.fetchall(): print(f"   {s:20} {n}")
-          print("\n===== Ani / Marti Tolentino por estado =====")
-          cur.execute("""select l.photographer_name, p.status, count(*)
-                         from photos_photo p join photographers_photographerlink l on l.id=p.photographer_link_id
-                         where l.photographer_name ilike %s
-                         group by 1,2 order by 1,3 desc""",("%tolentino%",))
-          for name,st,n in cur.fetchall(): print(f"   {name:18} {st:18} {n}")
-          print("\n===== 'colgadas' = processing/uploading con updated_at viejo =====")
-          for mins in (5,15,60):
-              cur.execute("select count(*) from photos_photo where status in ('processing','uploading') and updated_at < now()-(%s||' minutes')::interval",(mins,))
-              print(f"   > {mins} min sin cambio: {cur.fetchone()[0]}")
-          cur.execute("select min(updated_at), max(updated_at) from photos_photo where status in ('processing','uploading')")
-          print("   rango updated_at de las processing/uploading:", cur.fetchone())
-
-          import redis
+          import os, redis, psycopg
+          from celery import Celery
           ru=os.environ.get("REDISURL","")
-          if ru:
+          if not ru:
+              print("  !! sin REDIS_PUBLIC_URL, no puedo encolar"); raise SystemExit(0)
+          r=redis.from_url(ru, socket_connect_timeout=15)
+          depths={q:r.llen(q) for q in ("fast","faces","celery")}
+          print("  COLA Celery:", depths)
+
+          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
+          cur.execute("""select id from photos_photo
+                         where status='processing' and original_key<>''
+                           and updated_at < now()-interval '10 minutes'
+                         order by id""")
+          ids=[r0[0] for r0 in cur.fetchall()]
+          print(f"  colgadas a re-encolar (processing, key real, >10min): {len(ids)}")
+
+          busy = depths.get("fast",0)+depths.get("faces",0)
+          if busy > 200:
+              print(f"  >> La cola tiene {busy} pendientes: el worker está poniéndose al día. NO re-encolo (evito duplicar).")
+              raise SystemExit(0)
+          if not ids:
+              print("  >> nada colgado. Nada que hacer."); raise SystemExit(0)
+
+          app=Celery(broker=ru)
+          sent=0
+          for pid in ids:
               try:
-                  r=redis.from_url(ru, socket_connect_timeout=10)
-                  print("\n===== COLA de Celery en Redis (mensajes pendientes) =====")
-                  for q in ("fast","faces","celery"):
-                      print(f"   queue '{q}': LLEN={r.llen(q)}")
+                  app.send_task("apps.photos.tasks.process_photo", args=[pid], queue="fast")
+                  sent+=1
               except Exception as e:
-                  print("   (no pude leer Redis:", repr(e)[:120], ")")
-          else:
-              print("   (sin REDIS url)")
+                  print("  error encolando", pid, repr(e)[:80]); break
+          print(f"  >> RE-ENCOLADAS {sent} fotos a la cola 'fast' (process_photo). El worker las va a terminar.")
+          print("  nueva profundidad fast:", r.llen("fast"))
           PY
           echo "==================== FIN ===================="
