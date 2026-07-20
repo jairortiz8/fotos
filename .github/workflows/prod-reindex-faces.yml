@@ -1,0 +1,110 @@
+name: prod-reindex-faces (one-off)
+
+# Re-indexa las CARAS de las fotos de Surf City que estaban indexadas "de costado"
+# (leídas sin orientación EXIF). Borra los embeddings viejos + resetea el flag y
+# encola run_face_recognition (que ahora lee la imagen ya rotada). Corre de fondo
+# en el worker. NO toca preview/thumb/branded ni saca de aprobadas.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-reindex"]
+
+jobs:
+  reindex:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      EXPECTED: e8bb233
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" "celery[redis]==5.6.3"
+      - name: reindex
+        run: |
+          set -uo pipefail
+          gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
+          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          RID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Redis")|.id')
+          FID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="fotos")|.id')
+
+          echo "== worker en el commit del fix? (esperado $EXPECTED) =="
+          gql '{"query":"query($p:String!,$e:String!){ deployments(first:60, input:{projectId:$p, environmentId:$e}){ edges { node { status createdAt meta service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}' \
+            | jq -r '[.data.deployments.edges[].node]|map(select(.service.name=="worker"))|sort_by(.createdAt)|last|"worker: \(.status) commit=\((.meta.commitHash//"?")|tostring[0:7])"'
+          echo
+
+          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          RDPUB=$(vars_of "$RID" | jq -r '.REDIS_PUBLIC_URL // empty')
+          CBURL=$(vars_of "$FID" | jq -r '.CELERY_BROKER_URL // empty')
+          SCHEME="${RDPUB%%://*}"; REST="${RDPUB#*://}"; AUTH="${REST%%/*}"
+          DBIDX=$(printf '%s' "$CBURL" | sed -nE 's#.*/([0-9]+)(\?.*)?$#\1#p'); [ -z "$DBIDX" ] && DBIDX=0
+          export BROKER="${SCHEME}://${AUTH}/${DBIDX}"
+
+          python3 - <<'PY'
+          import os, time
+          import psycopg
+          from celery import Celery
+          from kombu import Exchange, Queue
+
+          def conn():
+              return psycopg.connect(os.environ["DBURL"], connect_timeout=20, autocommit=True,
+                                     keepalives=1, keepalives_idle=15, keepalives_interval=5, keepalives_count=5)
+          def q(sql,a=()):
+              for _ in range(4):
+                  try:
+                      with conn() as c, c.cursor() as cur: cur.execute(sql,a); return cur.fetchall()
+                  except psycopg.OperationalError: time.sleep(2)
+              raise RuntimeError("db")
+          def run(sql,a=()):
+              for _ in range(4):
+                  try:
+                      with conn() as c, c.cursor() as cur: cur.execute(sql,a); return
+                  except psycopg.OperationalError: time.sleep(2)
+              raise RuntimeError("db")
+
+          # Fotos verticales (Orientation 5/6/7/8) de eventos con logos = las que
+          # estaban indexadas de costado.
+          rows=q("""select p.id from photos_photo p join events_event e on e.id=p.event_id
+                    where e.brand_overlay<>'' and (p.exif_raw->>'Orientation') in ('5','6','7','8')
+                    and p.status<>'deleted' order by p.id""")
+          ids=[r[0] for r in rows]
+          print(f"Fotos a re-indexar: {len(ids)}")
+          if not ids:
+              print("nada para re-indexar"); raise SystemExit(0)
+
+          # Borrar embeddings viejos (de costado) + resetear el flag para que
+          # run_face_recognition vuelva a correr (es idempotente: si no se resetea, saltea).
+          BATCH=500
+          for i in range(0, len(ids), BATCH):
+              chunk=ids[i:i+BATCH]
+              run("delete from photos_faceembedding where photo_id = any(%s)", (chunk,))
+              run("update photos_photo set has_faces_detected=false, has_minors_detected=false, needs_minor_review=false where id = any(%s)", (chunk,))
+          print("embeddings viejos borrados + flags reseteados")
+
+          app=Celery(broker=os.environ["BROKER"]); app.conf.task_default_queue="celery"
+          app.conf.task_queues=(Queue("faces",Exchange("faces","direct"),routing_key="faces"),)
+          for pid in ids:
+              app.send_task("photos.run_face_recognition_on_photo", args=[pid], queue="faces")
+          print(f"encoladas {len(ids)} tareas de reconocimiento facial (cola 'faces' → worker, de fondo)")
+
+          # Verificación: esperar que UNA se re-indexe con la lectura ya orientada
+          sample=ids[0]
+          print(f"\nVerificando re-indexado de id={sample}...")
+          okc=0
+          for _ in range(50):
+              time.sleep(6)
+              n=q("select count(*) from photos_faceembedding where photo_id=%s",(sample,))[0][0]
+              hf=q("select has_faces_detected from photos_photo where id=%s",(sample,))[0][0]
+              if hf:
+                  print(f"  ✓ id={sample} re-indexada: {n} cara(s) (leída ya orientada)")
+                  okc=1; break
+          if not okc:
+              print("  (la muestra todavía procesa; el resto sigue de fondo en el worker)")
+          print("\nEl re-indexado completo corre de fondo (~horas para todas). Es CPU barato; el costo grande de Railway es la MEMORIA del modelo, no esto.")
+          PY
+          echo "==================== FIN ===================="
