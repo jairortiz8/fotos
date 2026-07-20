@@ -4,7 +4,7 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  requeue:
+  audit:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
@@ -13,53 +13,50 @@ jobs:
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
       REDIS_ID: 37559685-4af5-4b9a-851d-84d9424f7424
+      SITE: https://findyourfoto.com
     steps:
       - name: deps
-        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" redis celery
-      - name: requeue
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" redis
+      - name: audit
         shell: bash +e {0}
         run: |
           set +e
           gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
           vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
           export DBURL=$(vars_of "$PG_ID" | jq -r '.DATABASE_PUBLIC_URL // empty')
-          RV=$(vars_of "$REDIS_ID")
-          export REDISURL=$(echo "$RV" | jq -r '.REDIS_PUBLIC_URL // empty')
-          echo "  redis keys disponibles: $(echo "$RV" | jq -r 'keys|join(",")')"
+          export REDISURL=$(vars_of "$REDIS_ID" | jq -r '.REDIS_PUBLIC_URL // empty')
+
+          echo "===== SITIO: healthz + página de selfie ====="
+          curl -sS -m 20 "$SITE/healthz" | jq -c '{status,db:.checks.db.ok,workers:.checks.celery_workers.workers}' 2>/dev/null
+          echo "  buscar-selfie HTTP: $(curl -sS -o /dev/null -m 20 -w '%{http_code}' "$SITE/eventos/surf-city-2026/buscar-selfie/")  (200=activo, 503=apagado)"
+          echo
+
           python3 - <<'PY'
           import os, redis, psycopg
-          from celery import Celery
-          ru=os.environ.get("REDISURL","")
-          if not ru:
-              print("  !! sin REDIS_PUBLIC_URL, no puedo encolar"); raise SystemExit(0)
-          r=redis.from_url(ru, socket_connect_timeout=15)
-          depths={q:r.llen(q) for q in ("fast","faces","celery")}
-          print("  COLA Celery:", depths)
+          r=redis.from_url(os.environ["REDISURL"], socket_connect_timeout=15)
+          print("===== COLA Celery (backlog drenando) =====")
+          print("  ", {q:r.llen(q) for q in ("fast","faces","celery")})
 
           c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
-          cur.execute("""select id from photos_photo
-                         where status='processing' and original_key<>''
-                           and updated_at < now()-interval '10 minutes'
-                         order by id""")
-          ids=[r0[0] for r0 in cur.fetchall()]
-          print(f"  colgadas a re-encolar (processing, key real, >10min): {len(ids)}")
+          def q(sql,a=()):
+              cur.execute(sql,a); return cur.fetchall()
 
-          busy = depths.get("fast",0)+depths.get("faces",0)
-          if busy > 200:
-              print(f"  >> La cola tiene {busy} pendientes: el worker está poniéndose al día. NO re-encolo (evito duplicar).")
-              raise SystemExit(0)
-          if not ids:
-              print("  >> nada colgado. Nada que hacer."); raise SystemExit(0)
+          print("\n===== ESTADOS de fotos (backlog) =====")
+          for s,n in q("select status,count(*) from photos_photo group by status order by 2 desc"): print(f"   {s:18} {n}")
 
-          app=Celery(broker=ru)
-          sent=0
-          for pid in ids:
-              try:
-                  app.send_task("apps.photos.tasks.process_photo", args=[pid], queue="fast")
-                  sent+=1
-              except Exception as e:
-                  print("  error encolando", pid, repr(e)[:80]); break
-          print(f"  >> RE-ENCOLADAS {sent} fotos a la cola 'fast' (process_photo). El worker las va a terminar.")
-          print("  nueva profundidad fast:", r.llen("fast"))
+          print("\n===== THROUGHPUT worker (últimos 10 min) =====")
+          print("   pasaron a pending_review/approved:", q("select count(*) from photos_photo where status in ('pending_review','approved') and updated_at>now()-interval '10 minutes'")[0][0])
+          print("   siguen en processing:", q("select count(*) from photos_photo where status='processing'")[0][0])
+
+          print("\n===== OCR (dorsales) =====")
+          print("   fotos con dorsal:", q("select count(distinct photo_id) from photos_bib")[0][0])
+          print("   dorsales por fuente:", q("select source,count(*) from photos_bib group by source order by 2 desc"))
+          print("   dorsales agregados últimos 15 min:", q("select count(*) from photos_bib where created_at>now()-interval '15 minutes'")[0][0])
+
+          print("\n===== SELFIE (caras/embeddings) =====")
+          print("   embeddings totales:", q("select count(*) from photos_faceembedding")[0][0])
+          print("   fotos con caras:", q("select count(*) from photos_photo where has_faces_detected=true")[0][0])
+          print("   embeddings agregados últimos 15 min:", q("select count(*) from photos_faceembedding where created_at>now()-interval '15 minutes'")[0][0])
+          print("   fotos processing_failed (falló pipeline):", q("select count(*) from photos_photo where status='processing_failed'")[0][0])
           PY
           echo "==================== FIN ===================="
