@@ -1,0 +1,156 @@
+name: prod-orient-fix (one-off)
+
+# Despliega el fix de orientación EXIF y REPROCESA las fotos verticales que
+# salieron de costado: regenera preview/thumb/branded ya ROTADAS y corrige
+# width/height, SIN sacarlas de aprobadas (usa regenerate_thumbnail, no
+# process_photo). Diagnostica el alcance (fotos afectadas por evento + Ani).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-orient"]
+
+jobs:
+  orient:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      SHA: e8bb233e30816a7ffaccb9b93c19581da43a3246
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" "celery[redis]==5.6.3" "boto3==1.35.36" "pillow==11.0.0"
+      - name: deploy + reprocesar orientación
+        run: |
+          set -uo pipefail
+          SHORT="${SHA:0:7}"
+          gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          deploy(){ gql '{"query":"mutation($s:String!,$e:String!,$c:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e, commitSha:$c) }","variables":{"s":"'"$1"'","e":"'"$ENV_ID"'","c":"'"$SHA"'"}}' | jq -c '.data // .errors'; }
+          SVCS=$(gql '{"query":"query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }","variables":{"p":"'"$PROJECT_ID"'"}}')
+          PGID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Postgres")|.id')
+          RID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="Redis")|.id')
+          FID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="fotos")|.id')
+          WID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="worker")|.id')
+          WFID=$(echo "$SVCS" | jq -r '.data.project.services.edges[].node|select(.name=="worker_fast")|.id')
+
+          echo "==================== DEPLOY $SHORT (web+worker+worker_fast) ===================="
+          echo "web -> $(deploy "$FID")"; echo "worker -> $(deploy "$WID")"; echo "worker_fast -> $(deploy "$WFID")"
+          for i in $(seq 1 30); do
+            ST=$(gql '{"query":"query($p:String!,$e:String!){ deployments(first:120, input:{projectId:$p, environmentId:$e}){ edges { node { status createdAt meta service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}' \
+              | jq -r --arg f "$SHORT" '[.data.deployments.edges[].node] | map(select(.service.name|test("^(worker|fotos)")))
+                  | group_by(.service.name) | map(sort_by(.createdAt)|last)
+                  | map({svc:.service.name,status:.status,commit:((.meta.commitHash//"?")|tostring[0:7])})')
+            echo "intento $i: $(echo "$ST" | jq -c '.')"
+            OK=$(echo "$ST" | jq -r --arg f "$SHORT" '([.[]|select(.status=="SUCCESS" and .commit==$f)]|length) as $g | if (length>=3 and $g>=3) then "yes" else "no" end')
+            [ "$OK" = "yes" ] && { echo ">> listo en $SHORT"; break; }
+            sleep 30
+          done
+          echo
+
+          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          RDPUB=$(vars_of "$RID" | jq -r '.REDIS_PUBLIC_URL // empty')
+          CBURL=$(vars_of "$FID" | jq -r '.CELERY_BROKER_URL // empty')
+          SCHEME="${RDPUB%%://*}"; REST="${RDPUB#*://}"; AUTH="${REST%%/*}"
+          DBIDX=$(printf '%s' "$CBURL" | sed -nE 's#.*/([0-9]+)(\?.*)?$#\1#p'); [ -z "$DBIDX" ] && DBIDX=0
+          export BROKER="${SCHEME}://${AUTH}/${DBIDX}"
+          export R2_ENDPOINT_URL=$(vars_of "$FID" | jq -r '.R2_ENDPOINT_URL // empty')
+          export R2_KEY=$(vars_of "$FID" | jq -r '.R2_ACCESS_KEY_ID // empty')
+          export R2_SECRET=$(vars_of "$FID" | jq -r '.R2_SECRET_ACCESS_KEY // empty')
+          export R2_BUCKET=$(vars_of "$FID" | jq -r '.R2_BUCKET_NAME // empty')
+
+          python3 - <<'PY'
+          import os, io, time
+          import psycopg, boto3
+          from celery import Celery
+          from kombu import Exchange, Queue
+          from PIL import Image
+
+          def conn():
+              return psycopg.connect(os.environ["DBURL"], connect_timeout=20, autocommit=True,
+                                     keepalives=1, keepalives_idle=15, keepalives_interval=5, keepalives_count=5)
+          def q(sql,a=()):
+              for _ in range(4):
+                  try:
+                      with conn() as c, c.cursor() as cur: cur.execute(sql,a); return cur.fetchall()
+                  except psycopg.OperationalError: time.sleep(2)
+              raise RuntimeError("db")
+          def run(sql,a=()):
+              for _ in range(4):
+                  try:
+                      with conn() as c, c.cursor() as cur: cur.execute(sql,a); return
+                  except psycopg.OperationalError: time.sleep(2)
+              raise RuntimeError("db")
+
+          print("== Fotógrafo Ani / Tolentino ==")
+          for lid,name,eid,slug,n in q("""select l.id, l.photographer_name, l.event_id, e.slug,
+                     (select count(*) from photos_photo p where p.photographer_link_id=l.id and p.status<>'deleted')
+                     from photographers_photographerlink l join events_event e on e.id=l.event_id
+                     where l.photographer_name ilike '%ani%' or l.photographer_name ilike '%tolen%'"""):
+              print(f"  link={lid} '{name}' evento={slug} fotos={n}")
+          print()
+
+          # Alcance: fotos rotadas (Orientation 5/6/7/8) por evento con logos
+          print("== Fotos VERTICALES afectadas (Orientation 5/6/7/8), por evento branded ==")
+          rows=q("""select e.slug, count(*) filter (where p.status<>'deleted'),
+                       count(*) filter (where (p.exif_raw->>'Orientation') in ('5','6','7','8') and p.status<>'deleted')
+                    from events_event e join photos_photo p on p.event_id=e.id
+                    where e.brand_overlay<>'' group by e.slug order by e.slug""")
+          target_slugs=[]
+          for slug,tot,aff in rows:
+              print(f"  {slug}: total={tot}  afectadas={aff}")
+              if aff and aff>0: target_slugs.append(slug)
+          print()
+
+          if not target_slugs:
+              print("No hay fotos verticales afectadas en eventos con logos. (Quizá Ani subió a otro evento — ver arriba.)")
+              # incluir igualmente cualquier evento donde Ani haya subido
+          # Reprocesar TODAS las afectadas de eventos branded
+          ids_status=q("""select p.id, p.status, p.width, p.height from photos_photo p
+                          join events_event e on e.id=p.event_id
+                          where e.brand_overlay<>'' and (p.exif_raw->>'Orientation') in ('5','6','7','8')
+                          and p.status<>'deleted' order by p.id""")
+          ids=[r[0] for r in ids_status]
+          print(f"== Reprocesando {len(ids)} fotos afectadas (regenerate_thumbnail, SIN sacar de aprobadas) ==")
+          if ids:
+              # corregir width/height (girar 90°): swap
+              run("""update photos_photo set width=height, height=width
+                     where id = any(%s) and (exif_raw->>'Orientation') in ('5','6','7','8')""",(ids,))
+              app=Celery(broker=os.environ["BROKER"]); app.conf.task_default_queue="celery"
+              app.conf.task_queues=(Queue("fast",Exchange("fast","direct"),routing_key="fast"),)
+              for pid in ids:
+                  app.send_task("photos.regenerate_thumbnail", args=[pid], kwargs={"include_preview": True}, queue="fast")
+              print(f"  encoladas {len(ids)} (corren de fondo en worker_fast ~pocos seg c/u).")
+
+              # Verificación de UNA foto: esperar que su preview se regenere y chequear que quedó VERTICAL + logos abajo
+              sample=ids[0]
+              print(f"\n== Verificando la foto id={sample} ==")
+              s3=boto3.client("s3",endpoint_url=os.environ["R2_ENDPOINT_URL"],aws_access_key_id=os.environ["R2_KEY"],aws_secret_access_key=os.environ["R2_SECRET"])
+              bkt=os.environ["R2_BUCKET"]
+              def dl(k):
+                  b=io.BytesIO(); s3.download_fileobj(bkt,k,b); b.seek(0); return b
+              pkey=q("select preview_key from photos_photo where id=%s",(sample,))[0][0]
+              ok=False
+              for _ in range(40):
+                  time.sleep(6)
+                  try:
+                      im=Image.open(dl(pkey)).convert("RGB")
+                  except Exception:
+                      continue
+                  w,h=im.size
+                  vert = h>w
+                  def bright(x0,x1,y0,y1): return any(sum(im.getpixel((x,y)))>510 for x in range(x0,x1,max(1,(x1-x0)//40)) for y in range(y0,y1,max(1,(y1-y0)//40)))
+                  logos = bright(0,w//3,h*3//4,h) and bright(w*2//3,w,h*3//4,h)
+                  if vert and logos:
+                      print(f"  ✓ preview {w}x{h} (vertical) con logos abajo — arreglado")
+                      ok=True; break
+                  else:
+                      print(f"  ... preview {w}x{h} vert={vert} logos={logos} (esperando regeneración)")
+              if not ok:
+                  print("  (todavía no se ve el cambio en la muestra; el resto sigue procesando de fondo)")
+          print("\nNota: las fotos SIGUEN aprobadas (no hubo que re-aprobar). El evento surf-city-2026 está en 'próximo' → no era público todavía.")
+          PY
+          echo "==================== FIN ===================="
