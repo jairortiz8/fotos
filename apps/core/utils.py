@@ -67,6 +67,24 @@ def normalize_bib_query(raw: str) -> str:
     return raw.strip().upper()
 
 
+def bib_query_variants(query: str) -> list[str]:
+    """Variantes de un dorsal para buscar IGNORANDO los ceros a la izquierda.
+
+    Los dorsales chicos suelen imprimirse con ceros ("001", "099") y el OCR los
+    lee así. Un corredor que busca "99" debe encontrar "099". Para queries
+    NUMÉRICOS devolvemos el número sin ceros + todas las versiones rellenadas con
+    ceros (hasta 6 dígitos, el largo máximo de un dorsal): "99" → 99, 099, 0099…
+    Para alfanuméricos ("A15") se devuelve tal cual (sólo aplica a números)."""
+    q = normalize_bib_query(query)
+    if not q.isdigit():
+        return [q]
+    core = str(int(q))  # sin ceros a la izquierda ("099" → "99", "0" → "0")
+    variants = {q, core}
+    for width in range(len(core), 7):
+        variants.add(core.zfill(width))
+    return sorted(variants)
+
+
 def is_valid_bib_format(value: str) -> bool:
     """¿El string tiene forma de dorsal? 1-6 dígitos, o letra + 1-5 dígitos."""
     return bool(_BIB_RE.match(normalize_bib_query(value)))

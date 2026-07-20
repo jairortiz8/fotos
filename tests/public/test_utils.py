@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from apps.core.utils import (
+    bib_query_variants,
     generate_ocr_variants,
     hash_ip,
     is_valid_bib_format,
@@ -36,6 +37,17 @@ def test_is_valid_bib_format(value: str, expected: bool) -> None:
 def test_normalize_bib_query() -> None:
     assert normalize_bib_query(" a123 ") == "A123"
     assert normalize_bib_query("1042") == "1042"
+
+
+def test_bib_query_variants_ignores_leading_zeros() -> None:
+    # "99" encuentra "099" (impreso con ceros) y viceversa.
+    assert "099" in bib_query_variants("99")
+    assert "99" in bib_query_variants("099")
+    assert "015" in bib_query_variants("15")
+    # No sobre-matchea números distintos.
+    assert "99" not in bib_query_variants("990")
+    # Alfanumérico: exacto, sin variantes.
+    assert bib_query_variants("A15") == ["A15"]
 
 
 def test_generate_ocr_variants_numeric() -> None:

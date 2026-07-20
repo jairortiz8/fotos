@@ -14,6 +14,7 @@ from django.views import View
 from django.views.generic import TemplateView
 
 from apps.core.utils import (
+    bib_query_variants,
     check_bib_specific_rate_limit,
     check_general_search_rate_limit,
     generate_ocr_variants,
@@ -179,7 +180,8 @@ class EventGalleryView(View):
                 Photo.objects.filter(
                     event=event,
                     status=PhotoStatus.APPROVED,
-                    bibs__number=bib_query,
+                    # Ignora ceros a la izquierda: "99" encuentra "099" (y viceversa).
+                    bibs__number__in=bib_query_variants(bib_query),
                     bibs__rejected=False,
                 )
                 .distinct()

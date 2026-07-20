@@ -39,6 +39,34 @@ def test_search_returns_matching_photos(client: Client) -> None:
 
 
 @pytest.mark.django_db
+def test_search_matches_leading_zero_bibs(client: Client) -> None:
+    """El dorsal impreso con ceros ("099") se encuentra buscando "99" (sin cero)."""
+    event, photo = _event_with_bib("099")
+    response = client.get(reverse("events:gallery", args=[event.slug]), {"bib": "99"})
+    assert response.status_code == 200
+    assert response.context.get("is_search_result") is True
+    assert photo in response.context["search_photos"]
+
+
+@pytest.mark.django_db
+def test_search_matches_unpadded_when_query_padded(client: Client) -> None:
+    """Y al revés: dorsal "15" se encuentra buscando "015"."""
+    event, photo = _event_with_bib("15")
+    response = client.get(reverse("events:gallery", args=[event.slug]), {"bib": "015"})
+    assert response.status_code == 200
+    assert photo in response.context["search_photos"]
+
+
+@pytest.mark.django_db
+def test_search_does_not_overmatch_different_numbers(client: Client) -> None:
+    """ "99" NO debe traer al dorsal "990" (número distinto, no es un cero a la izq)."""
+    event, _photo = _event_with_bib("990")
+    response = client.get(reverse("events:gallery", args=[event.slug]), {"bib": "99"})
+    # Sin resultados → cae al template de "sin resultados" (no is_search_result).
+    assert response.context.get("is_search_result") is None
+
+
+@pytest.mark.django_db
 def test_active_bib_chip_and_strip_clear_the_filter(client: Client) -> None:
     """Con un dorsal buscado, el chip resaltado y el pill del filtro linkean a
     QUITAR el filtro (galería sin ?bib), no a re-buscar el mismo dorsal."""

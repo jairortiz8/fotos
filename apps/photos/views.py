@@ -58,7 +58,11 @@ class PhotoLightboxView(View):
         """Foto anterior/siguiente dentro del mismo evento (y filtro de dorsal)."""
         qs = Photo.objects.filter(event=photo.event, status=PhotoStatus.APPROVED)
         if bib_filter:
-            qs = qs.filter(bibs__number=bib_filter, bibs__rejected=False).distinct()
+            from apps.core.utils import bib_query_variants
+
+            qs = qs.filter(
+                bibs__number__in=bib_query_variants(bib_filter), bibs__rejected=False
+            ).distinct()
         qs = qs.order_by("capture_time", "created_at")
 
         ids = list(qs.values_list("id", flat=True))
