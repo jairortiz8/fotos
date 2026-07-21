@@ -19,24 +19,22 @@ jobs:
           gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
           DID=$(gql '{"query":"query($p:String!,$e:String!){ deployments(first:60, input:{projectId:$p, environmentId:$e}){ edges { node { id status createdAt service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}' | jq -r '[.data.deployments.edges[].node|select(.service.name=="fotos" and .status=="SUCCESS")]|sort_by(.createdAt)|last|.id')
           SINCE=$(date -u -d '60 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
-          echo "Contando desde: $SINCE (UTC) — última hora"
+          echo "Ahora(UTC): $(date -u +%FT%TZ) · contando desde: $SINCE (última hora)"
           echo
-
-          # trae hasta 5000 líneas que matcheen el filtro, y del lado del cliente:
-          # (1) re-filtra por substring exacto (el filtro de Railway es difuso),
-          # (2) sólo cuenta las de la última hora, (3) reporta total traído (si topa 5000, es piso).
-          measure() { # $1 filtro Railway, $2 substring exacto, $3 etiqueta
-            R=$(gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:5000){ timestamp message } }","variables":{"d":"'"$DID"'","f":"'"$1"'"}}')
-            TOTraw=$(echo "$R" | jq '.data.deploymentLogs|length')
-            N=$(echo "$R" | jq --arg s "$SINCE" --arg p "$2" '[.data.deploymentLogs[] | select(.timestamp >= $s) | select(.message | contains($p))] | length')
-            CAP=""; [ "$TOTraw" -ge 5000 ] && CAP=" (⚠ tope 5000 traído, el real puede ser mayor)"
-            printf "  %-28s %s%s\n" "$3:" "$N" "$CAP"
+          measure() { # $1 filtro  $2 substring exacto  $3 etiqueta
+            R=$(gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:1000){ timestamp message } }","variables":{"d":"'"$DID"'","f":"'"$1"'"}}')
+            OK=$(echo "$R" | jq -r 'if .data.deploymentLogs then "y" else "n" end')
+            if [ "$OK" != "y" ]; then printf "  %-30s (query falló)\n" "$3:"; return; fi
+            TOT=$(echo "$R" | jq '.data.deploymentLogs|length')
+            OLDEST=$(echo "$R" | jq -r '[.data.deploymentLogs[].timestamp]|min // "-"')
+            N=$(echo "$R" | jq --arg s "$SINCE" --arg p "$2" '[.data.deploymentLogs[]|select(.timestamp>=$s)|select(.message|contains($p))]|length')
+            NOTE=""; if [ "$TOT" -ge 1000 ] && [ "$OLDEST" \> "$SINCE" ]; then NOTE=" (⚠ piso: 1000 líneas sólo cubren desde $OLDEST)"; fi
+            printf "  %-30s %s%s\n" "$3:" "$N" "$NOTE"
           }
-
           echo "===== ÚLTIMA HORA ====="
-          measure "descargas/foto"        "/descargas/foto/"            "DESCARGAS"
-          measure "buscar-selfie"         "/buscar-selfie/"            "BÚSQUEDAS por SELFIE"
-          measure "bib="                  "?bib="                      "BÚSQUEDAS por DORSAL (?bib=)"
+          measure "descargas/foto" "/descargas/foto/" "DESCARGAS"
+          measure "buscar-selfie"  "/buscar-selfie/"  "BÚSQUEDAS por SELFIE"
+          measure "?bib="          "?bib="            "BÚSQUEDAS por DORSAL"
           echo
-          echo "  (nota: 'búsqueda por dorsal' cuenta requests con ?bib= — incluye clicks en chips de dorsal, no sólo el buscador)"
+          echo "  (dorsal = requests con ?bib=, incluye clicks en chips de dorsal, no sólo el buscador)"
           echo "==================== FIN ===================="
