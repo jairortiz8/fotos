@@ -4,7 +4,7 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  up:
+  report:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
@@ -12,55 +12,42 @@ jobs:
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
-      SITE: https://findyourfoto.com
-      TOKEN: iSEH4R7fXv5whK_44-JWkIsQGJMdm0-3
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
     steps:
       - name: deps
-        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" pillow
-      - name: up
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
+      - name: report
         shell: bash +e {0}
         run: |
           set +e
           gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
+          echo "===== EGRESS total (últimas 14h ≈ desde el lanzamiento) ====="
+          START=$(date -u -d '14 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          gql '{"query":"query($m:MetricMeasurement!,$p:String!,$e:String!,$s:String!,$d:DateTime!){ metrics(measurements:[$m], projectId:$p, environmentId:$e, serviceId:$s, startDate:$d, sampleRateSeconds:1800){ values { value } } }","variables":{"m":"NETWORK_TX_GB","p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$WEB_ID"'","d":"'"$START"'"}}' \
+            | jq -r '"   egress (GB descargados aprox): " + (([.data.metrics[0].values[]?.value]|add)|.*100|floor/100|tostring)'
           vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
           export DBURL=$(vars_of "$PG_ID" | jq -r '.DATABASE_PUBLIC_URL // empty')
-
-          echo "===== ¿SUBIDA TRABADA? ====="
           python3 - <<'PY'
           import os, psycopg
           c=psycopg.connect(os.environ["DBURL"],connect_timeout=20);cur=c.cursor()
-          def q(s,a=()):cur.execute(s,a);return cur.fetchall()
-          print("   estados:", dict(q("select status,count(*) from photos_photo group by status")))
-          print("   en 'uploading':", q("select count(*) from photos_photo where status='uploading'")[0][0],
-                "· en 'processing':", q("select count(*) from photos_photo where status='processing'")[0][0])
-          print("   TRABADAS (uploading/processing sin moverse >10min):",
-                q("select count(*) from photos_photo where status in ('uploading','processing') and updated_at<now()-interval '10 minutes'")[0][0])
-          print("   filas original_key='' (subidas a medias):", q("select count(*) from photos_photo where original_key=''")[0][0])
-          uq=[r[0] for r in q("select indexname from pg_indexes where tablename='photos_photo' and indexname='uniq_original_key_nonempty'")]
-          full=[r[0] for r in q("select conname from pg_constraint where conrelid='photos_photo'::regclass and contype='u'")]
-          print("   FIX del índice: parcial presente =", bool(uq), "· constraint total (debe estar vacío) =", full)
-          PY
-          echo
-          echo "===== PRUEBA DE SUBIDA REAL (POST) ====="
-          python3 - <<'PY'
-          from PIL import Image
-          Image.new("RGB",(400,300),(0,120,200)).save("/tmp/t.jpg","JPEG",quality=80)
-          PY
-          CODE=$(curl -sS -o /tmp/r.json -m40 -w '%{http_code}' -F "file=@/tmp/t.jpg;type=image/jpeg" "$SITE/u/$TOKEN/upload/")
-          echo "   HTTP=$CODE  body=$(head -c 160 /tmp/r.json)"
-          NID=$(jq -r '.id // empty' /tmp/r.json 2>/dev/null)
-          python3 - <<PY
-          import os, psycopg
-          nid="${NID}"
-          if nid.isdigit():
-              c=psycopg.connect(os.environ["DBURL"],connect_timeout=20);c.autocommit=True;cur=c.cursor()
-              cur.execute("delete from core_auditlog where target_type='photo' and target_id=%s",(nid,))
-              cur.execute("delete from photos_bib where photo_id=%s",(nid,))
-              cur.execute("delete from photos_faceembedding where photo_id=%s",(nid,))
-              cur.execute("update photographers_photographerlink set photos_uploaded=greatest(photos_uploaded-1,0) where id=27")
-              cur.execute("delete from photos_photo where id=%s returning id",(nid,))
-              print("   foto de prueba borrada:", cur.fetchone())
-          else:
-              print("   (sin id — la subida NO devolvió 200)")
+          def one(s,a=()):cur.execute(s,a);return cur.fetchone()[0]
+          eid=one("select id from events_event where slug='surf-city-2026'")
+          print("===== EVENTO =====")
+          cur.execute("select name, date, location, search_count, download_count from events_event where id=%s",(eid,))
+          n,d,loc,sc,dc=cur.fetchone(); print(f"   {n} · {d} · {loc}")
+          print("\n===== FOTOS =====")
+          print("   fotos publicadas (aprobadas):", one("select count(*) from photos_photo where event_id=%s and status='approved'",(eid,)))
+          print("   fotógrafos que aportaron:", one("select count(distinct photographer_link_id) from photos_photo where event_id=%s and status='approved'",(eid,)))
+          print("\n===== OCR (dorsales) =====")
+          print("   fotos con dorsal detectado:", one("select count(distinct p.id) from photos_photo p join photos_bib b on b.photo_id=p.id where p.event_id=%s and p.status='approved'",(eid,)))
+          print("   dorsales ÚNICOS detectados:", one("select count(distinct b.number) from photos_photo p join photos_bib b on b.photo_id=p.id where p.event_id=%s and p.status='approved' and b.number ~ '^[0-9]{1,5}$'",(eid,)))
+          print("\n===== SELFIE (caras) =====")
+          print("   caras indexadas (búsqueda por selfie):", one("select count(*) from photos_faceembedding f join photos_photo p on p.id=f.photo_id where p.event_id=%s",(eid,)))
+          print("   fotos con caras:", one("select count(*) from photos_photo where event_id=%s and status='approved' and has_faces_detected",(eid,)))
+          print("\n===== USO DEL PÚBLICO =====")
+          print("   búsquedas (dorsal + selfie):", sc)
+          print("   descargas (evento):", dc)
+          print("   descargas (suma por foto):", one("select coalesce(sum(download_count),0) from photos_photo where event_id=%s",(eid,)))
+          print("   vistas de fotos:", one("select coalesce(sum(view_count),0) from photos_photo where event_id=%s",(eid,)))
           PY
           echo "==================== FIN ===================="
