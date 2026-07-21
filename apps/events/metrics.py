@@ -57,9 +57,9 @@ def record_event_metric(
                     event_id=event_id, metric=metric, bucket=bucket, count=count
                 )
         except IntegrityError:
-            EventMetric.objects.filter(
-                event_id=event_id, metric=metric, bucket=bucket
-            ).update(count=F("count") + count)
+            EventMetric.objects.filter(event_id=event_id, metric=metric, bucket=bucket).update(
+                count=F("count") + count
+            )
     except Exception:  # la instrumentación jamás rompe el request del usuario
         logger.debug(
             "record_event_metric falló (event=%s metric=%s)", event_id, metric, exc_info=True
