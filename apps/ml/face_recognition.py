@@ -202,7 +202,9 @@ def embedding_from_bytes(image_bytes: bytes) -> np.ndarray:
         from io import BytesIO
 
         with Image.open(BytesIO(image_bytes)) as pim:
-            img = _oriented_bgr_from_pil(pim)  # respeta orientación EXIF del selfie
+            # cv2.imdecode (rama except) puede devolver None → tipamos Optional y
+            # lo cubre el `if img is None` de abajo.
+            img: np.ndarray | None = _oriented_bgr_from_pil(pim)  # respeta EXIF del selfie
     except Exception:
         arr = np.frombuffer(image_bytes, dtype=np.uint8)
         img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
