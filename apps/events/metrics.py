@@ -26,7 +26,7 @@ Metric = EventMetric.Metric
 
 def _hour_bucket(when: dt.datetime) -> dt.datetime:
     """Trunca un datetime tz-aware al inicio de su hora (en UTC)."""
-    when = when.astimezone(dt.timezone.utc)
+    when = when.astimezone(dt.UTC)
     return when.replace(minute=0, second=0, microsecond=0)
 
 
@@ -60,7 +60,7 @@ def record_event_metric(
             EventMetric.objects.filter(
                 event_id=event_id, metric=metric, bucket=bucket
             ).update(count=F("count") + count)
-    except Exception:  # noqa: BLE001 — la instrumentación jamás rompe el request
+    except Exception:  # la instrumentación jamás rompe el request del usuario
         logger.debug(
             "record_event_metric falló (event=%s metric=%s)", event_id, metric, exc_info=True
         )

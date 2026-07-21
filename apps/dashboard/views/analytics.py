@@ -88,7 +88,7 @@ def _build_charts(event_id: int | None, days: int) -> dict[str, Any]:
             {
                 "label": labels[k],
                 "count": c,
-                "pct": int(round(c / mx * 100)) if mx else 0,
+                "pct": round(c / mx * 100) if mx else 0,
                 "is_now": k == now_key,
             }
             for k, c in zip(keys, counts, strict=True)
