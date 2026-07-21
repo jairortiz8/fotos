@@ -4,7 +4,7 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  now:
+  ani:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
@@ -12,36 +12,30 @@ jobs:
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
-      REDIS_ID: 37559685-4af5-4b9a-851d-84d9424f7424
-      SITE: https://findyourfoto.com
     steps:
       - name: deps
-        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" redis
-      - name: now
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
+      - name: ani
         shell: bash +e {0}
         run: |
           set +e
           gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
           vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
           export DBURL=$(vars_of "$PG_ID" | jq -r '.DATABASE_PUBLIC_URL // empty')
-          export REDISURL=$(vars_of "$REDIS_ID" | jq -r '.REDIS_PUBLIC_URL // empty')
-          echo "SITIO:"
-          curl -sS -m 20 "$SITE/healthz" | jq -c '{status,db:.checks.db.ok,redis:.checks.redis.ok,r2:.checks.r2.ok,workers:.checks.celery_workers.workers,beat:.checks.celery_beat.ok}'
-          echo "  home HTTP:        $(curl -sS -o /dev/null -m 20 -w '%{http_code}' "$SITE/")"
-          echo "  evento HTTP:      $(curl -sS -o /dev/null -m 20 -w '%{http_code}' "$SITE/eventos/surf-city-2026/")"
-          echo "  buscar-selfie:    $(curl -sS -o /dev/null -m 20 -w '%{http_code}' "$SITE/eventos/surf-city-2026/buscar-selfie/")"
           python3 - <<'PY'
-          import os, redis, psycopg
-          r=redis.from_url(os.environ["REDISURL"], socket_connect_timeout=15)
-          print("COLA Celery:", {q:r.llen(q) for q in ("fast","faces","celery")})
+          import os, psycopg
           c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
-          cur.execute("select status,count(*) from photos_photo group by status order by 2 desc")
-          print("ESTADOS:", dict(cur.fetchall()))
-          cur.execute("select count(*) from photos_photo where status='processing' and updated_at<now()-interval '10 minutes'")
-          print("colgadas (processing >10min):", cur.fetchone()[0])
-          cur.execute("select count(*) from photos_bib where created_at>now()-interval '10 minutes'")
-          print("dorsales nuevos (10min):", cur.fetchone()[0])
-          cur.execute("select count(*) from photos_faceembedding")
-          print("embeddings totales:", cur.fetchone()[0])
+          cur.execute("""select id, photographer_name, last_used_at, photos_uploaded, created_at
+                         from photographers_photographerlink where photographer_name ilike %s""",("%ani%tolentino%",))
+          for lid,name,lu,pu,cr in cur.fetchall():
+              print(f"LINK {lid} '{name}'  last_used={lu}  contador={pu}  creado={cr}")
+              cur.execute("select status,count(*) from photos_photo where photographer_link_id=%s group by status order by 2 desc",(lid,))
+              print("   fotos por estado:", cur.fetchall())
+              cur.execute("select max(created_at) from photos_photo where photographer_link_id=%s",(lid,))
+              print("   última foto subida:", cur.fetchone()[0])
+              cur.execute("select count(*) from photos_photo where photographer_link_id=%s and created_at between '2026-07-20 18:20:00+00' and '2026-07-20 18:35:00+00'",(lid,))
+              print("   fotos creadas 18:20-18:35 UTC:", cur.fetchone()[0])
+              cur.execute("select count(*) from photos_photo where photographer_link_id=%s and status not in ('approved','deleted','rejected')",(lid,))
+              print("   fotos NO terminadas (ni approved/rejected/deleted):", cur.fetchone()[0])
           PY
           echo "==================== FIN ===================="
