@@ -4,17 +4,18 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  traffic:
+  clean:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
-      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
-      SITE: https://findyourfoto.com
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
     steps:
-      - name: traffic
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
+      - name: clean
         shell: bash +e {0}
         run: |
           set +e
@@ -22,28 +23,27 @@ jobs:
           DEP=$(gql '{"query":"query($p:String!,$e:String!){ deployments(first:60, input:{projectId:$p, environmentId:$e}){ edges { node { id status createdAt service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}')
           DID=$(echo "$DEP" | jq -r '[.data.deployments.edges[].node|select(.service.name=="fotos" and .status=="SUCCESS")]|sort_by(.createdAt)|last|.id')
 
-          echo "===== MÉTRICAS del web (últimos 30 min) ====="
-          START=$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
-          for M in CPU_USAGE MEMORY_USAGE_GB NETWORK_TX_GB NETWORK_RX_GB; do
-            R=$(gql '{"query":"query($m:MetricMeasurement!,$p:String!,$e:String!,$s:String!,$d:DateTime!){ metrics(measurements:[$m], projectId:$p, environmentId:$e, serviceId:$s, startDate:$d, sampleRateSeconds:300){ values { value } } }","variables":{"m":"'"$M"'","p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$WEB_ID"'","d":"'"$START"'"}}')
-            ERR=$(echo "$R" | jq -r '.errors[0].message // empty')
-            if [ -n "$ERR" ]; then echo "  $M: (n/d)"; else echo "  $M (por muestra 5min): $(echo "$R" | jq -r '[.data.metrics[0].values[]?.value]|map(.*1000|floor/1000)|@csv')"; fi
-          done
+          echo "===== ¿ERRORES 500 recientes? (timestamps reales, últimos que haya) ====="
+          gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$l){ timestamp message } }","variables":{"d":"'"$DID"'","f":"Internal Server Error","l":8}}' \
+            | jq -r '.data.deploymentLogs[]? | "  \(.timestamp)  \(.message[0:70])"'
+          echo "  (si los más nuevos son de las ~20:xx/incidente y NO de ahora ~02:xx, no hay errores nuevos)"
           echo
 
-          cnt() { gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$l){ message } }","variables":{"d":"'"$DID"'","f":"'"$1"'","l":800}}' | jq '.data.deploymentLogs|length'; }
-          codes() { gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$l){ message } }","variables":{"d":"'"$DID"'","f":"'"$1"'","l":800}}' | jq -r '[.data.deploymentLogs[].message | capture(" (?<c>[2345][0-9][0-9]) ")?.c] | group_by(.)|map({(.[0]):length})|add'; }
-
-          echo "===== VOLUMEN de requests en los logs recientes (hasta 800 líneas/filtro) ====="
-          echo "  DESCARGAS (/descargas/foto): $(cnt '/descargas/foto/') líneas · códigos: $(codes '/descargas/foto/')"
-          echo "  GALERÍA/EVENTO (/eventos/):  $(cnt '/eventos/') líneas"
-          echo "  BÚSQUEDA por dorsal (?bib=): $(cnt 'bib=') líneas"
-          echo "  BÚSQUEDA selfie:             $(cnt 'buscar-selfie') líneas"
-          echo "  HOME (\"GET / \"):            $(cnt '\"GET / HTTP') líneas"
-          echo "  ERRORES 500:                 $(cnt 'Internal Server Error') · TIMEOUT: $(cnt 'WORKER TIMEOUT')"
+          echo "===== muestra REAL de descargas (líneas de acceso con código) ====="
+          gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$l){ timestamp message } }","variables":{"d":"'"$DID"'","f":"descargas/foto","l":12}}' \
+            | jq -r '.data.deploymentLogs[]? | "  \(.timestamp[11:19])  \(.message | capture("\"(?<r>[A-Z]+ [^\"]*)\" (?<c>[0-9]+)"; "x") | "\(.r)  -> \(.c)")? // .message[0:90]'
           echo
 
-          echo "===== LATENCIA del sitio bajo carga (8 muestras) ====="
-          curl -sS -m 20 "$SITE/healthz" | jq -c '{status,db:.checks.db.ok,workers:.checks.celery_workers.workers}'
-          for i in $(seq 1 8); do echo "  home: $(curl -sS -o /dev/null -m 20 -w '%{time_total}s (%{http_code})' "$SITE/")"; done
+          PGID="$PG_ID"
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          python3 - <<'PY'
+          import os, psycopg
+          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
+          cur.execute("select name, slug, search_count, download_count from events_event where slug='surf-city-2026'")
+          print("===== contadores del evento (acumulados) =====")
+          for n,s,sc,dc in cur.fetchall(): print(f"  {n}: búsquedas={sc}  descargas={dc}")
+          cur.execute("select coalesce(sum(view_count),0), coalesce(sum(download_count),0) from photos_photo where status='approved'")
+          v,d=cur.fetchone(); print(f"  sumatoria fotos: vistas={v}  descargas={d}")
+          PY
           echo "==================== FIN ===================="
