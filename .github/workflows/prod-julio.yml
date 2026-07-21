@@ -4,97 +4,118 @@ on:
   push:
     branches: ["run-julio"]
 
-# Valida la rama de feature (panel de analíticas) SIN deployar: corre el mismo
-# lint + types + tests que CI, más migrate/makemigrations, contra un Postgres
-# efímero. No toca prod.
+# Post-deploy del panel de analíticas:
+#  1. espera a que el WEB termine de deployar + healthz 200
+#  2. verifica que la migración 0005_eventmetric aplicó (tabla + backfill de subidas)
+#  3. re-apaga worker / worker_fast / beat (el push a main los despertó)
 jobs:
-  validate:
-    name: validate feature branch
+  postdeploy:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: runfoto
-          POSTGRES_PASSWORD: runfoto
-          POSTGRES_DB: runfoto
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U runfoto -d runfoto"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-
     env:
-      DJANGO_SETTINGS_MODULE: config.settings.dev
-      SECRET_KEY: ci-secret-key-not-real
-      DEBUG: "True"
-      ALLOWED_HOSTS: "*"
-      DATABASE_URL: postgres://runfoto:runfoto@localhost:5432/runfoto
-      REDIS_URL: redis://localhost:6379/0
-      CELERY_BROKER_URL: redis://localhost:6379/1
-      CELERY_RESULT_BACKEND: redis://localhost:6379/2
-      SITE_NAME: "find your foto"
-      SITE_DOMAIN: localhost:8000
-      NOTIFIER_BACKEND: whatsapp_manual
-      LANGUAGE_CODE: es
-      TIME_ZONE: America/El_Salvador
-
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: claude/runfoto-security-audit-bknirm
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" requests
 
-      - name: Install system libs for OpenCV/onnxruntime
+      - name: post-deploy ops
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libgl1 libglib2.0-0 libgomp1 libxcb1 libsm6 libxext6 libxrender1
+          python3 - <<'PY'
+          import os, time, requests
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          ENV=os.environ["ENV_ID"]; PROJ=os.environ["PROJECT_ID"]; WEB=os.environ["WEB_ID"]; PG=os.environ["PG_ID"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          def gql(q,v=None):
+              r=requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=40)
+              try: return r.json()
+              except Exception: return {"_raw":r.text[:400]}
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
+          # --- servicios del proyecto (id -> nombre) ---
+          q_services='query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }'
+          d=gql(q_services,{"p":PROJ})
+          svcs={}
+          try:
+              for e in d["data"]["project"]["services"]["edges"]:
+                  svcs[e["node"]["name"]]=e["node"]["id"]
+          except Exception:
+              print("ERROR listando servicios:", d); raise SystemExit(1)
+          print("Servicios:", svcs)
 
-      - name: Install Python deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          q_inst='query($s:String!,$e:String!){ serviceInstance(serviceId:$s,environmentId:$e){ latestDeployment{ id status } } }'
+          def latest(sid):
+              d=gql(q_inst,{"s":sid,"e":ENV})
+              try: return d["data"]["serviceInstance"]["latestDeployment"]
+              except Exception: return None
 
-      - name: Ruff (lint)
-        run: ruff check .
+          # --- 1. esperar el WEB (SUCCESS) ---
+          print("\n== Esperando deploy del WEB ==")
+          web_ok=False
+          for i in range(40):  # ~10 min
+              ld=latest(WEB) or {}
+              st=ld.get("status")
+              print(f"  web[{i}] status={st}")
+              if st=="SUCCESS": web_ok=True; break
+              if st in ("FAILED","CRASHED"): print("  WEB deploy FALLÓ"); break
+              time.sleep(15)
+          print("web_ok=",web_ok)
 
-      - name: Ruff (format)
-        run: ruff format --check .
+          # --- 2. healthz ---
+          for host in ("https://findyourfoto.com/healthz/lite","https://findyourfoto.com/healthz"):
+              try:
+                  r=requests.get(host,timeout=20); print(f"  {host} -> {r.status_code}"); break
+              except Exception as ex:
+                  print(f"  {host} error {ex}")
 
-      - name: Black (check)
-        run: black --check .
+          # --- 3. verificar migración + backfill en la DB de prod ---
+          import psycopg
+          q_db='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          dv=gql(q_db,{"p":PROJ,"e":ENV,"s":PG})
+          dburl=(dv.get("data",{}).get("variables") or {}).get("DATABASE_PUBLIC_URL")
+          if dburl:
+              try:
+                  c=psycopg.connect(dburl,connect_timeout=25);cur=c.cursor()
+                  cur.execute("select to_regclass('public.events_eventmetric')")
+                  print("  tabla events_eventmetric:", cur.fetchone()[0])
+                  cur.execute("select metric,count(*),coalesce(sum(count),0) from events_eventmetric group by metric order by metric")
+                  for row in cur.fetchall(): print("   ",row)
+                  cur.execute("""select coalesce(sum(count),0) from events_eventmetric m
+                                 join events_event e on e.id=m.event_id
+                                 where e.slug='surf-city-2026' and m.metric='upload'""")
+                  print("  subidas backfill Surf City:", cur.fetchone()[0])
+                  c.close()
+              except Exception as ex:
+                  print("  DB check error:", ex)
+          else:
+              print("  (sin DATABASE_PUBLIC_URL, salto verificación DB)")
 
-      - name: Mypy
-        run: mypy .
-
-      - name: makemigrations --check (no pending)
-        run: python manage.py makemigrations --check --dry-run
-
-      - name: Migrate (aplica 0005_eventmetric + backfill)
-        run: python manage.py migrate
-
-      - name: Django check
-        run: python manage.py check --deploy --fail-level WARNING || python manage.py check
-
-      - name: Pytest (metrics + analytics + instrumentación + resto)
-        run: pytest -m "not slow and not e2e" -q
+          # --- 4. re-apagar worker / worker_fast / beat ---
+          print("\n== Re-apagando workers ==")
+          q_rm='mutation($id:String!){ deploymentRemove(id:$id) }'
+          targets=[n for n in ("worker","worker_fast","beat") if n in svcs]
+          done={}
+          for i in range(40):  # ~10 min: esperar que despierten y matarlos
+              pend=[n for n in targets if not done.get(n)]
+              if not pend: break
+              for n in pend:
+                  ld=latest(svcs[n]) or {}
+                  st=ld.get("status"); did=ld.get("id")
+                  if st in ("SUCCESS","DEPLOYING","BUILDING","INITIALIZING") and did:
+                      rm=gql(q_rm,{"id":did})
+                      ok=rm.get("data",{}).get("deploymentRemove")
+                      print(f"  {n}: status={st} remove-> {ok}")
+                      done[n]=True
+                  else:
+                      print(f"  {n}: status={st} (espero)")
+              if all(done.get(n) for n in targets): break
+              time.sleep(15)
+          print("workers apagados:", sorted(done))
+          # verificación final
+          for n in targets:
+              print("  final", n, "->", latest(svcs[n]))
+          print("FIN")
+          PY
