@@ -11,7 +11,10 @@ jobs:
       API: https://backboard.railway.app/graphql/v2
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
     steps:
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
       - name: count
         shell: bash +e {0}
         run: |
@@ -19,22 +22,30 @@ jobs:
           gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
           DID=$(gql '{"query":"query($p:String!,$e:String!){ deployments(first:60, input:{projectId:$p, environmentId:$e}){ edges { node { id status createdAt service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}' | jq -r '[.data.deployments.edges[].node|select(.service.name=="fotos" and .status=="SUCCESS")]|sort_by(.createdAt)|last|.id')
           SINCE=$(date -u -d '60 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
-          echo "Ahora(UTC): $(date -u +%FT%TZ) · contando desde: $SINCE (última hora)"
+          echo "Ahora(UTC): $(date -u +%FT%TZ)"
+
           echo
-          measure() { # $1 filtro  $2 substring exacto  $3 etiqueta
-            R=$(gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:1000){ timestamp message } }","variables":{"d":"'"$DID"'","f":"'"$1"'"}}')
-            OK=$(echo "$R" | jq -r 'if .data.deploymentLogs then "y" else "n" end')
-            if [ "$OK" != "y" ]; then printf "  %-30s (query falló)\n" "$3:"; return; fi
-            TOT=$(echo "$R" | jq '.data.deploymentLogs|length')
-            OLDEST=$(echo "$R" | jq -r '[.data.deploymentLogs[].timestamp]|min // "-"')
-            N=$(echo "$R" | jq --arg s "$SINCE" --arg p "$2" '[.data.deploymentLogs[]|select(.timestamp>=$s)|select(.message|contains($p))]|length')
-            NOTE=""; if [ "$TOT" -ge 1000 ] && [ "$OLDEST" \> "$SINCE" ]; then NOTE=" (⚠ piso: 1000 líneas sólo cubren desde $OLDEST)"; fi
-            printf "  %-30s %s%s\n" "$3:" "$N" "$NOTE"
+          echo "===== CONTADORES (exactos) — delta vs mi medición de las 02:29:11 UTC ====="
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          export DBURL=$(vars_of "$PG_ID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+          python3 - <<'PY'
+          import os, psycopg
+          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
+          cur.execute("select search_count, download_count from events_event where slug='surf-city-2026'"); sc,dc=cur.fetchone()
+          cur.execute("select coalesce(sum(view_count),0), coalesce(sum(download_count),0) from photos_photo where status='approved'"); v,d=cur.fetchone()
+          # baseline 02:29:11 UTC
+          b_sc,b_dc,b_v,b_d = 977,1121,70900,7456
+          print(f"  DESCARGAS (fotos):   total={d}   (+{d-b_d} en los últimos ~33 min)")
+          print(f"  DESCARGAS (evento):  total={dc}  (+{dc-b_dc})")
+          print(f"  BÚSQUEDAS (evento, dorsal+selfie juntas): total={sc}  (+{sc-b_sc})")
+          print(f"  VISTAS de fotos:     total={v}   (+{v-b_v})")
+          PY
+          echo
+          echo "===== DESGLOSE dorsal vs selfie (de logs, límite 600) ====="
+          split() {
+            R=$(gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:600){ timestamp message } }","variables":{"d":"'"$DID"'","f":"'"$1"'"}}')
+            echo "$R" | jq -r --arg s "$SINCE" --arg p "$2" --arg lbl "$3" 'if .data.deploymentLogs then ([.data.deploymentLogs[]|select(.timestamp>=$s)|select(.message|contains($p))]|length) as $n | ([.data.deploymentLogs[].timestamp]|min//"-") as $old | "  \($lbl): \($n)  (ventana de logs desde \($old))" else "  \($lbl): (query falló)" end'
           }
-          echo "===== ÚLTIMA HORA ====="
-          measure "descargas/foto" "/descargas/foto/" "DESCARGAS"
-          measure "buscar-selfie"  "/buscar-selfie/"  "BÚSQUEDAS por SELFIE"
-          measure "?bib="          "?bib="            "BÚSQUEDAS por DORSAL"
-          echo
-          echo "  (dorsal = requests con ?bib=, incluye clicks en chips de dorsal, no sólo el buscador)"
+          split "buscar-selfie" "/buscar-selfie/" "por SELFIE (última hora)"
+          split "?bib=" "?bib=" "por DORSAL (última hora)"
           echo "==================== FIN ===================="
