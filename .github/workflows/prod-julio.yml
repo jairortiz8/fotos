@@ -4,7 +4,7 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  report:
+  dl:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
@@ -12,42 +12,23 @@ jobs:
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
-      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
     steps:
       - name: deps
         run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
-      - name: report
+      - name: dl
         shell: bash +e {0}
         run: |
           set +e
           gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
-          echo "===== EGRESS total (últimas 14h ≈ desde el lanzamiento) ====="
-          START=$(date -u -d '14 hours ago' +%Y-%m-%dT%H:%M:%SZ)
-          gql '{"query":"query($m:MetricMeasurement!,$p:String!,$e:String!,$s:String!,$d:DateTime!){ metrics(measurements:[$m], projectId:$p, environmentId:$e, serviceId:$s, startDate:$d, sampleRateSeconds:1800){ values { value } } }","variables":{"m":"NETWORK_TX_GB","p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$WEB_ID"'","d":"'"$START"'"}}' \
-            | jq -r '"   egress (GB descargados aprox): " + (([.data.metrics[0].values[]?.value]|add)|.*100|floor/100|tostring)'
           vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
           export DBURL=$(vars_of "$PG_ID" | jq -r '.DATABASE_PUBLIC_URL // empty')
           python3 - <<'PY'
           import os, psycopg
           c=psycopg.connect(os.environ["DBURL"],connect_timeout=20);cur=c.cursor()
-          def one(s,a=()):cur.execute(s,a);return cur.fetchone()[0]
-          eid=one("select id from events_event where slug='surf-city-2026'")
-          print("===== EVENTO =====")
-          cur.execute("select name, date, location, search_count, download_count from events_event where id=%s",(eid,))
-          n,d,loc,sc,dc=cur.fetchone(); print(f"   {n} · {d} · {loc}")
-          print("\n===== FOTOS =====")
-          print("   fotos publicadas (aprobadas):", one("select count(*) from photos_photo where event_id=%s and status='approved'",(eid,)))
-          print("   fotógrafos que aportaron:", one("select count(distinct photographer_link_id) from photos_photo where event_id=%s and status='approved'",(eid,)))
-          print("\n===== OCR (dorsales) =====")
-          print("   fotos con dorsal detectado:", one("select count(distinct p.id) from photos_photo p join photos_bib b on b.photo_id=p.id where p.event_id=%s and p.status='approved'",(eid,)))
-          print("   dorsales ÚNICOS detectados:", one("select count(distinct b.number) from photos_photo p join photos_bib b on b.photo_id=p.id where p.event_id=%s and p.status='approved' and b.number ~ '^[0-9]{1,5}$'",(eid,)))
-          print("\n===== SELFIE (caras) =====")
-          print("   caras indexadas (búsqueda por selfie):", one("select count(*) from photos_faceembedding f join photos_photo p on p.id=f.photo_id where p.event_id=%s",(eid,)))
-          print("   fotos con caras:", one("select count(*) from photos_photo where event_id=%s and status='approved' and has_faces_detected",(eid,)))
-          print("\n===== USO DEL PÚBLICO =====")
-          print("   búsquedas (dorsal + selfie):", sc)
-          print("   descargas (evento):", dc)
-          print("   descargas (suma por foto):", one("select coalesce(sum(download_count),0) from photos_photo where event_id=%s",(eid,)))
-          print("   vistas de fotos:", one("select coalesce(sum(view_count),0) from photos_photo where event_id=%s",(eid,)))
+          eid=(cur.execute("select id from events_event where slug='surf-city-2026'"),cur.fetchone()[0])[1]
+          def one(s):cur.execute(s,(eid,));return cur.fetchone()[0]
+          print("total descargas (acciones):", one("select coalesce(sum(download_count),0) from photos_photo where event_id=%s"))
+          print("fotos distintas descargadas (>=1 vez):", one("select count(*) from photos_photo where event_id=%s and download_count>0"))
+          print("fotos publicadas:", one("select count(*) from photos_photo where event_id=%s and status='approved'"))
           PY
-          echo "==================== FIN ===================="
+          echo FIN
