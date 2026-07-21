@@ -4,7 +4,7 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  dl:
+  swap:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
@@ -15,7 +15,7 @@ jobs:
     steps:
       - name: deps
         run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
-      - name: dl
+      - name: swap
         shell: bash +e {0}
         run: |
           set +e
@@ -24,11 +24,27 @@ jobs:
           export DBURL=$(vars_of "$PG_ID" | jq -r '.DATABASE_PUBLIC_URL // empty')
           python3 - <<'PY'
           import os, psycopg
-          c=psycopg.connect(os.environ["DBURL"],connect_timeout=20);cur=c.cursor()
-          eid=(cur.execute("select id from events_event where slug='surf-city-2026'"),cur.fetchone()[0])[1]
-          def one(s):cur.execute(s,(eid,));return cur.fetchone()[0]
-          print("total descargas (acciones):", one("select coalesce(sum(download_count),0) from photos_photo where event_id=%s"))
-          print("fotos distintas descargadas (>=1 vez):", one("select count(*) from photos_photo where event_id=%s and download_count>0"))
-          print("fotos publicadas:", one("select count(*) from photos_photo where event_id=%s and status='approved'"))
+          c=psycopg.connect(os.environ["DBURL"],connect_timeout=20);c.autocommit=False;cur=c.cursor()
+          def find(pat):
+              cur.execute("""select l.id,l.photographer_name,
+                             (select count(*) from photos_photo p where p.photographer_link_id=l.id and p.status<>'deleted')
+                             from photographers_photographerlink l join events_event e on e.id=l.event_id
+                             where e.slug='surf-city-2026' and l.photographer_name ilike %s""",(pat,))
+              return cur.fetchall()
+          A=find('%gasolinera%'); B=find('%subida%by%pass%') or find('%subida%')
+          print("A (gasolinera):", A)
+          print("B (subida):", B)
+          if len(A)!=1 or len(B)!=1 or A[0][0]==B[0][0]:
+              print("!! no puedo identificar exactamente 2 links distintos — ABORTO, no cambio nada"); c.rollback(); raise SystemExit(0)
+          ida,na,_=A[0]; idb,nb,_=B[0]
+          print(f"\nANTES:\n   link {ida}: {na}\n   link {idb}: {nb}")
+          cur.execute("update photographers_photographerlink set name_tmp=%s where false",()) if False else None
+          # swap atómico
+          cur.execute("update photographers_photographerlink set photographer_name=%s where id=%s",(nb,ida))
+          cur.execute("update photographers_photographerlink set photographer_name=%s where id=%s",(na,idb))
+          c.commit()
+          cur.execute("select id,photographer_name from photographers_photographerlink where id in (%s,%s) order by id",(ida,idb))
+          print("\nDESPUÉS:")
+          for i,n in cur.fetchall(): print(f"   link {i}: {n}")
           PY
           echo FIN
