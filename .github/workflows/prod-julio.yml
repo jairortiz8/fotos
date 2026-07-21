@@ -4,7 +4,7 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  full:
+  up:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
@@ -12,65 +12,55 @@ jobs:
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
-      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
       SITE: https://findyourfoto.com
-      SLUG: surf-city-2026
+      TOKEN: iSEH4R7fXv5whK_44-JWkIsQGJMdm0-3
     steps:
       - name: deps
-        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
-      - name: full
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" pillow
+      - name: up
         shell: bash +e {0}
         run: |
           set +e
           gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
-          echo "Ahora(UTC): $(date -u +%FT%TZ)"
-          echo
-          echo "===== 1) SERVICIOS (último deploy por servicio) ====="
-          gql '{"query":"query($p:String!,$e:String!){ deployments(first:120, input:{projectId:$p, environmentId:$e}){ edges { node { status createdAt service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}' \
-            | jq -r '[.data.deployments.edges[].node]|group_by(.service.name)|map(sort_by(.createdAt)|last)|.[]|"   \(.service.name): \(.status)"'
-          echo
-          echo "===== 2) HEALTHZ + páginas ====="
-          curl -sS -m 20 "$SITE/healthz" | jq -c '{status,db:.checks.db.ok,redis:.checks.redis.ok,r2:.checks.r2.ok,workers:.checks.celery_workers.workers,beat:.checks.celery_beat.ok}'
-          echo "   home:$(curl -sS -o /dev/null -m20 -w '%{http_code}' "$SITE/") evento:$(curl -sS -o /dev/null -m20 -w '%{http_code}' "$SITE/eventos/$SLUG/") selfie:$(curl -sS -o /dev/null -m20 -w '%{http_code}' "$SITE/eventos/$SLUG/buscar-selfie/")"
-          echo
-          echo "===== 3) EGRESS del web últimas 12h (≈ descargas en bytes) ====="
-          START=$(date -u -d '12 hours ago' +%Y-%m-%dT%H:%M:%SZ)
-          R=$(gql '{"query":"query($m:MetricMeasurement!,$p:String!,$e:String!,$s:String!,$d:DateTime!){ metrics(measurements:[$m], projectId:$p, environmentId:$e, serviceId:$s, startDate:$d, sampleRateSeconds:1800){ values { value } } }","variables":{"m":"NETWORK_TX_GB","p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$WEB_ID"'","d":"'"$START"'"}}')
-          echo "$R" | jq -r '([.data.metrics[0].values[]?.value]|add) as $t | "   egress total 12h: \($t|.*100|floor/100) GB  (≈ \(($t*1024/3.5)|floor) descargas si ~3.5MB c/u)"'
           vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
           export DBURL=$(vars_of "$PG_ID" | jq -r '.DATABASE_PUBLIC_URL // empty')
-          echo
-          BIB=$(python3 - <<'PY'
-          import os, psycopg
-          c=psycopg.connect(os.environ["DBURL"],connect_timeout=20);cur=c.cursor()
-          cur.execute("""select b.number from photos_bib b join photos_photo p on p.id=b.photo_id join events_event e on e.id=p.event_id
-                         where e.slug='surf-city-2026' and p.status='approved' and b.source='ocr_gemini' and b.number ~ '^[0-9]{2,5}$'
-                         group by b.number having count(*)>=3 order by count(*) desc limit 1""")
-          r=cur.fetchone();print(r[0] if r else "")
-          PY
-          )
-          echo "===== 4) OCR — búsqueda por dorsal real ====="
-          echo "   dorsal '$BIB' -> HTTP $(curl -sS -o /dev/null -m25 -w '%{http_code}' "$SITE/eventos/$SLUG/?bib=$BIB") · fotos en pág: $(curl -sS -m25 "$SITE/eventos/$SLUG/?bib=$BIB" | grep -o "/eventos/$SLUG/foto/" | wc -l)"
-          echo
+
+          echo "===== ¿SUBIDA TRABADA? ====="
           python3 - <<'PY'
           import os, psycopg
           c=psycopg.connect(os.environ["DBURL"],connect_timeout=20);cur=c.cursor()
           def q(s,a=()):cur.execute(s,a);return cur.fetchall()
-          print("===== 5) OCR datos =====")
-          print("   fotos con dorsal:", q("select count(distinct photo_id) from photos_bib")[0][0])
-          print("   dorsales por fuente:", q("select source,count(*) from photos_bib group by source order by 2 desc"))
-          print("\n===== 6) SELFIE — match pgvector =====")
-          eid,pid,vec=q("select id,photo_id,embedding::text from photos_faceembedding order by id desc limit 1")[0]
-          rows=q("select photo_id,(embedding <=> %s::vector) from photos_faceembedding order by 2 asc limit 2",(vec,))
-          print(f"   match: foto {rows[0][0]} dist={rows[0][1]:.4f} (0=idéntico) ->", "OK" if rows[0][1]<0.01 else "REVISAR")
-          print("   embeddings totales:", q("select count(*) from photos_faceembedding")[0][0])
-          print("\n===== 7) DESCARGAS (contadores acumulados) =====")
-          dsum=q("select coalesce(sum(download_count),0) from photos_photo")[0][0]
-          edc=q("select download_count from events_event where slug='surf-city-2026'")[0][0]
-          print(f"   descargas por foto (sum): {dsum}   ·   delta desde mi medición 03:03 (9536): +{dsum-9536}")
-          print(f"   descargas evento (contador): {edc}")
-          print("   [el link se hizo público ~02:27 UTC de hoy → casi todo esto es de las últimas horas / dentro de 12h]")
-          print("\n===== 8) estados de fotos =====")
-          print("  ", dict(q("select status,count(*) from photos_photo group by status")))
+          print("   estados:", dict(q("select status,count(*) from photos_photo group by status")))
+          print("   en 'uploading':", q("select count(*) from photos_photo where status='uploading'")[0][0],
+                "· en 'processing':", q("select count(*) from photos_photo where status='processing'")[0][0])
+          print("   TRABADAS (uploading/processing sin moverse >10min):",
+                q("select count(*) from photos_photo where status in ('uploading','processing') and updated_at<now()-interval '10 minutes'")[0][0])
+          print("   filas original_key='' (subidas a medias):", q("select count(*) from photos_photo where original_key=''")[0][0])
+          uq=[r[0] for r in q("select indexname from pg_indexes where tablename='photos_photo' and indexname='uniq_original_key_nonempty'")]
+          full=[r[0] for r in q("select conname from pg_constraint where conrelid='photos_photo'::regclass and contype='u'")]
+          print("   FIX del índice: parcial presente =", bool(uq), "· constraint total (debe estar vacío) =", full)
+          PY
+          echo
+          echo "===== PRUEBA DE SUBIDA REAL (POST) ====="
+          python3 - <<'PY'
+          from PIL import Image
+          Image.new("RGB",(400,300),(0,120,200)).save("/tmp/t.jpg","JPEG",quality=80)
+          PY
+          CODE=$(curl -sS -o /tmp/r.json -m40 -w '%{http_code}' -F "file=@/tmp/t.jpg;type=image/jpeg" "$SITE/u/$TOKEN/upload/")
+          echo "   HTTP=$CODE  body=$(head -c 160 /tmp/r.json)"
+          NID=$(jq -r '.id // empty' /tmp/r.json 2>/dev/null)
+          python3 - <<PY
+          import os, psycopg
+          nid="${NID}"
+          if nid.isdigit():
+              c=psycopg.connect(os.environ["DBURL"],connect_timeout=20);c.autocommit=True;cur=c.cursor()
+              cur.execute("delete from core_auditlog where target_type='photo' and target_id=%s",(nid,))
+              cur.execute("delete from photos_bib where photo_id=%s",(nid,))
+              cur.execute("delete from photos_faceembedding where photo_id=%s",(nid,))
+              cur.execute("update photographers_photographerlink set photos_uploaded=greatest(photos_uploaded-1,0) where id=27")
+              cur.execute("delete from photos_photo where id=%s returning id",(nid,))
+              print("   foto de prueba borrada:", cur.fetchone())
+          else:
+              print("   (sin id — la subida NO devolvió 200)")
           PY
           echo "==================== FIN ===================="
