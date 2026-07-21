@@ -4,118 +4,108 @@ on:
   push:
     branches: ["run-julio"]
 
-# Post-deploy del panel de analíticas:
-#  1. espera a que el WEB termine de deployar + healthz 200
-#  2. verifica que la migración 0005_eventmetric aplicó (tabla + backfill de subidas)
-#  3. re-apaga worker / worker_fast / beat (el push a main los despertó)
+# Diagnóstico de servicios + stop de workers activos + auditoría de búsquedas.
 jobs:
-  postdeploy:
+  audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
-      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
+      SITE: https://findyourfoto.com
     steps:
       - name: deps
         run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" requests
 
-      - name: post-deploy ops
+      - name: diagnostico + stop workers + audit busquedas
         run: |
           python3 - <<'PY'
           import os, time, requests
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          ENV=os.environ["ENV_ID"]; PROJ=os.environ["PROJECT_ID"]; WEB=os.environ["WEB_ID"]; PG=os.environ["PG_ID"]
+          ENV=os.environ["ENV_ID"]; PROJ=os.environ["PROJECT_ID"]; PG=os.environ["PG_ID"]; SITE=os.environ["SITE"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
           def gql(q,v=None):
-              r=requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=40)
-              try: return r.json()
-              except Exception: return {"_raw":r.text[:400]}
+              return requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=40).json()
 
-          # --- servicios del proyecto (id -> nombre) ---
-          q_services='query($p:String!){ project(id:$p){ services{ edges{ node{ id name } } } } }'
-          d=gql(q_services,{"p":PROJ})
-          svcs={}
+          # === 1. Estado REAL de cada servicio (una sola query por environment) ===
+          print("== Servicios del environment production ==")
+          q='''query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
+                 serviceName serviceId latestDeployment{ id status } } } } } }'''
+          d=gql(q,{"e":ENV})
+          insts={}
           try:
-              for e in d["data"]["project"]["services"]["edges"]:
-                  svcs[e["node"]["name"]]=e["node"]["id"]
+              for e in d["data"]["environment"]["serviceInstances"]["edges"]:
+                  n=e["node"]; ld=n.get("latestDeployment") or {}
+                  insts[n["serviceName"]]=(n["serviceId"], ld.get("id"), ld.get("status"))
           except Exception:
-              print("ERROR listando servicios:", d); raise SystemExit(1)
-          print("Servicios:", svcs)
+              print("  ERROR:", str(d)[:500])
+          for name,(sid,did,st) in sorted(insts.items()):
+              print(f"  {name:14s} status={st}")
 
-          q_inst='query($s:String!,$e:String!){ serviceInstance(serviceId:$s,environmentId:$e){ latestDeployment{ id status } } }'
-          def latest(sid):
-              d=gql(q_inst,{"s":sid,"e":ENV})
-              try: return d["data"]["serviceInstance"]["latestDeployment"]
-              except Exception: return None
-
-          # --- 1. esperar el WEB (SUCCESS) ---
-          print("\n== Esperando deploy del WEB ==")
-          web_ok=False
-          for i in range(40):  # ~10 min
-              ld=latest(WEB) or {}
-              st=ld.get("status")
-              print(f"  web[{i}] status={st}")
-              if st=="SUCCESS": web_ok=True; break
-              if st in ("FAILED","CRASHED"): print("  WEB deploy FALLÓ"); break
-              time.sleep(15)
-          print("web_ok=",web_ok)
-
-          # --- 2. healthz ---
-          for host in ("https://findyourfoto.com/healthz/lite","https://findyourfoto.com/healthz"):
-              try:
-                  r=requests.get(host,timeout=20); print(f"  {host} -> {r.status_code}"); break
-              except Exception as ex:
-                  print(f"  {host} error {ex}")
-
-          # --- 3. verificar migración + backfill en la DB de prod ---
-          import psycopg
-          q_db='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          dv=gql(q_db,{"p":PROJ,"e":ENV,"s":PG})
-          dburl=(dv.get("data",{}).get("variables") or {}).get("DATABASE_PUBLIC_URL")
-          if dburl:
-              try:
-                  c=psycopg.connect(dburl,connect_timeout=25);cur=c.cursor()
-                  cur.execute("select to_regclass('public.events_eventmetric')")
-                  print("  tabla events_eventmetric:", cur.fetchone()[0])
-                  cur.execute("select metric,count(*),coalesce(sum(count),0) from events_eventmetric group by metric order by metric")
-                  for row in cur.fetchall(): print("   ",row)
-                  cur.execute("""select coalesce(sum(count),0) from events_eventmetric m
-                                 join events_event e on e.id=m.event_id
-                                 where e.slug='surf-city-2026' and m.metric='upload'""")
-                  print("  subidas backfill Surf City:", cur.fetchone()[0])
-                  c.close()
-              except Exception as ex:
-                  print("  DB check error:", ex)
-          else:
-              print("  (sin DATABASE_PUBLIC_URL, salto verificación DB)")
-
-          # --- 4. re-apagar worker / worker_fast / beat ---
-          print("\n== Re-apagando workers ==")
+          # === 2. Stop de workers que estén ACTIVOS ===
+          print("\n== Stop de workers activos ==")
           q_rm='mutation($id:String!){ deploymentRemove(id:$id) }'
-          targets=[n for n in ("worker","worker_fast","beat") if n in svcs]
-          done={}
-          for i in range(40):  # ~10 min: esperar que despierten y matarlos
-              pend=[n for n in targets if not done.get(n)]
-              if not pend: break
-              for n in pend:
-                  ld=latest(svcs[n]) or {}
-                  st=ld.get("status"); did=ld.get("id")
-                  if st in ("SUCCESS","DEPLOYING","BUILDING","INITIALIZING") and did:
-                      rm=gql(q_rm,{"id":did})
-                      ok=rm.get("data",{}).get("deploymentRemove")
-                      print(f"  {n}: status={st} remove-> {ok}")
-                      done[n]=True
-                  else:
-                      print(f"  {n}: status={st} (espero)")
-              if all(done.get(n) for n in targets): break
-              time.sleep(15)
-          print("workers apagados:", sorted(done))
-          # verificación final
-          for n in targets:
-              print("  final", n, "->", latest(svcs[n]))
-          print("FIN")
+          ACTIVE={"SUCCESS","DEPLOYING","BUILDING","INITIALIZING","WAITING","QUEUED"}
+          for name in ("worker","worker_fast","beat"):
+              if name not in insts:
+                  print(f"  {name}: no existe en el env"); continue
+              sid,did,st=insts[name]
+              if st in ACTIVE and did:
+                  r=gql(q_rm,{"id":did})
+                  print(f"  {name}: estaba {st} -> deploymentRemove={r.get('data',{}).get('deploymentRemove')}")
+              else:
+                  print(f"  {name}: status={st} -> ya apagado / nada que hacer")
+
+          # === 3. Auditoría de búsquedas contra prod ===
+          print("\n== Auditoría de búsquedas ==")
+          qv='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          dburl=(gql(qv,{"p":PROJ,"e":ENV,"s":PG}).get("data",{}).get("variables") or {}).get("DATABASE_PUBLIC_URL")
+          import psycopg
+          c=psycopg.connect(dburl,connect_timeout=25); c.autocommit=True; cur=c.cursor()
+          cur.execute("select id,slug from events_event where slug='surf-city-2026'")
+          eid,slug=cur.fetchone()
+
+          # tabla de métricas (confirma que la migración aplicó)
+          cur.execute("select to_regclass('public.events_eventmetric')")
+          print("  tabla events_eventmetric:", cur.fetchone()[0])
+          cur.execute("select metric,coalesce(sum(count),0) from events_eventmetric where event_id=%s group by metric order by metric",(eid,))
+          print("  métricas Surf City:", cur.fetchall())
+
+          # dorsal real con más fotos
+          cur.execute("""select b.number, count(distinct p.id) n from photos_bib b
+                         join photos_photo p on p.id=b.photo_id
+                         where p.event_id=%s and p.status='approved' and b.rejected=false and b.number ~ '^[0-9]{2,5}$'
+                         group by b.number order by n desc limit 1""",(eid,))
+          bib,nf=cur.fetchone()
+          cur.execute("select search_count from events_event where id=%s",(eid,)); sc0=cur.fetchone()[0]
+          cur.execute("select coalesce(sum(count),0) from events_eventmetric where event_id=%s and metric='search'",(eid,)); m0=cur.fetchone()[0]
+
+          url=f"{SITE}/eventos/{slug}/?bib={bib}"
+          r=requests.get(url,timeout=40); body=r.text
+          hits=("/foto/" in body) or ("descargar" in body.lower()) or ('img' in body and 'thumb' in body.lower())
+          print(f"\n  [DORSAL] '{bib}' ({nf} fotos) -> HTTP {r.status_code} · len={len(body)} · con_resultados={hits}")
+          time.sleep(3)
+          cur.execute("select search_count from events_event where id=%s",(eid,)); sc1=cur.fetchone()[0]
+          cur.execute("select coalesce(sum(count),0) from events_eventmetric where event_id=%s and metric='search'",(eid,)); m1=cur.fetchone()[0]
+          print(f"  [DORSAL] search_count {sc0}->{sc1} (+{sc1-sc0}) · metric_search {m0}->{m1} (+{m1-m0})")
+
+          rs=requests.get(f"{SITE}/eventos/{slug}/buscar-selfie/",timeout=40)
+          print(f"\n  [SELFIE] pagina -> HTTP {rs.status_code}  (200=FACE_SEARCH_ENABLED on, 503=off)")
+          cur.execute("""select f.id,f.photo_id from photos_faceembedding f join photos_photo p on p.id=f.photo_id
+                         where p.event_id=%s and p.status='approved' limit 1""",(eid,))
+          row=cur.fetchone()
+          if row:
+              fid,phid=row
+              cur.execute("""select p.id,(f.embedding <=> (select embedding from photos_faceembedding where id=%s)) d
+                             from photos_faceembedding f join photos_photo p on p.id=f.photo_id
+                             where p.event_id=%s and p.status='approved' order by d asc limit 3""",(fid,eid))
+              res=cur.fetchall()
+              print(f"  [SELFIE] self-match embedding {fid} (foto {phid}):", [(pid,round(float(dd),4)) for pid,dd in res])
+              print(f"  [SELFIE] top==origen? {res[0][0]==phid} dist={float(res[0][1]):.4f} (esperado ~0)")
+          cur.execute("select count(*) from photos_faceembedding f join photos_photo p on p.id=f.photo_id where p.event_id=%s",(eid,))
+          print("  [SELFIE] embeddings del evento:",cur.fetchone()[0])
+          c.close(); print("\nFIN")
           PY
