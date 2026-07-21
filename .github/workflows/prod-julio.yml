@@ -4,46 +4,39 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  clean:
+  count:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
-      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
     steps:
-      - name: deps
-        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
-      - name: clean
+      - name: count
         shell: bash +e {0}
         run: |
           set +e
           gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
-          DEP=$(gql '{"query":"query($p:String!,$e:String!){ deployments(first:60, input:{projectId:$p, environmentId:$e}){ edges { node { id status createdAt service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}')
-          DID=$(echo "$DEP" | jq -r '[.data.deployments.edges[].node|select(.service.name=="fotos" and .status=="SUCCESS")]|sort_by(.createdAt)|last|.id')
-
-          echo "===== ¿ERRORES 500 recientes? (timestamps reales, últimos que haya) ====="
-          gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$l){ timestamp message } }","variables":{"d":"'"$DID"'","f":"Internal Server Error","l":8}}' \
-            | jq -r '.data.deploymentLogs[]? | "  \(.timestamp)  \(.message[0:70])"'
-          echo "  (si los más nuevos son de las ~20:xx/incidente y NO de ahora ~02:xx, no hay errores nuevos)"
+          DID=$(gql '{"query":"query($p:String!,$e:String!){ deployments(first:60, input:{projectId:$p, environmentId:$e}){ edges { node { id status createdAt service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}' | jq -r '[.data.deployments.edges[].node|select(.service.name=="fotos" and .status=="SUCCESS")]|sort_by(.createdAt)|last|.id')
+          SINCE=$(date -u -d '60 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+          echo "Contando desde: $SINCE (UTC) — última hora"
           echo
 
-          echo "===== muestra REAL de descargas (líneas de acceso con código) ====="
-          gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$l){ timestamp message } }","variables":{"d":"'"$DID"'","f":"descargas/foto","l":12}}' \
-            | jq -r '.data.deploymentLogs[]? | "  \(.timestamp[11:19])  \(.message | capture("\"(?<r>[A-Z]+ [^\"]*)\" (?<c>[0-9]+)"; "x") | "\(.r)  -> \(.c)")? // .message[0:90]'
-          echo
+          # trae hasta 5000 líneas que matcheen el filtro, y del lado del cliente:
+          # (1) re-filtra por substring exacto (el filtro de Railway es difuso),
+          # (2) sólo cuenta las de la última hora, (3) reporta total traído (si topa 5000, es piso).
+          measure() { # $1 filtro Railway, $2 substring exacto, $3 etiqueta
+            R=$(gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:5000){ timestamp message } }","variables":{"d":"'"$DID"'","f":"'"$1"'"}}')
+            TOTraw=$(echo "$R" | jq '.data.deploymentLogs|length')
+            N=$(echo "$R" | jq --arg s "$SINCE" --arg p "$2" '[.data.deploymentLogs[] | select(.timestamp >= $s) | select(.message | contains($p))] | length')
+            CAP=""; [ "$TOTraw" -ge 5000 ] && CAP=" (⚠ tope 5000 traído, el real puede ser mayor)"
+            printf "  %-28s %s%s\n" "$3:" "$N" "$CAP"
+          }
 
-          PGID="$PG_ID"
-          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
-          export DBURL=$(vars_of "$PGID" | jq -r '.DATABASE_PUBLIC_URL // empty')
-          python3 - <<'PY'
-          import os, psycopg
-          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
-          cur.execute("select name, slug, search_count, download_count from events_event where slug='surf-city-2026'")
-          print("===== contadores del evento (acumulados) =====")
-          for n,s,sc,dc in cur.fetchall(): print(f"  {n}: búsquedas={sc}  descargas={dc}")
-          cur.execute("select coalesce(sum(view_count),0), coalesce(sum(download_count),0) from photos_photo where status='approved'")
-          v,d=cur.fetchone(); print(f"  sumatoria fotos: vistas={v}  descargas={d}")
-          PY
+          echo "===== ÚLTIMA HORA ====="
+          measure "descargas/foto"        "/descargas/foto/"            "DESCARGAS"
+          measure "buscar-selfie"         "/buscar-selfie/"            "BÚSQUEDAS por SELFIE"
+          measure "bib="                  "?bib="                      "BÚSQUEDAS por DORSAL (?bib=)"
+          echo
+          echo "  (nota: 'búsqueda por dorsal' cuenta requests con ?bib= — incluye clicks en chips de dorsal, no sólo el buscador)"
           echo "==================== FIN ===================="
