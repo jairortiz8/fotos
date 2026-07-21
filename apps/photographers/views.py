@@ -38,6 +38,7 @@ from django_ratelimit.decorators import ratelimit
 
 from apps.core.models import AuditLog, anonymize_ip
 from apps.core.utils import get_client_ip
+from apps.events.metrics import Metric, record_event_metric
 from apps.photographers.models import PhotographerLink
 from apps.photos.models import Photo, PhotoStatus
 from apps.photos.storage import (
@@ -304,6 +305,7 @@ class PhotographerUploadView(View):
             photos_uploaded=F("photos_uploaded") + 1,
             last_used_at=timezone.now(),
         )
+        record_event_metric(link.event_id, Metric.UPLOAD)
 
         AuditLog.log(
             "photo.uploaded",

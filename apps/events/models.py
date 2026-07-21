@@ -271,3 +271,45 @@ def _social_url(value: str, domain: str) -> str:
         return value
     handle = value.lstrip("@").strip("/")
     return f"https://{domain}/{handle}"
+
+
+class EventMetric(models.Model):
+    """Contador AGREGADO por hora, por evento y tipo de métrica.
+
+    Sirve para dibujar curvas (descargas/vistas/búsquedas/subidas por día/hora)
+    en el dashboard SIN romper la línea de privacidad del proyecto (CLAUDE.md §3):
+    NO guardamos un registro por evento individual — sin IP, sin qué se buscó, sin
+    quién. Es el MISMO contador denormalizado de siempre (`Event.download_count`,
+    `Photo.view_count`, …) pero partido en baldes de una hora. Cero PII.
+
+    `bucket` es el inicio de la hora en UTC (tz-aware). El dashboard lo convierte
+    a hora de El Salvador para mostrar.
+    """
+
+    class Metric(models.TextChoices):
+        VIEW = "view", _("Vistas")
+        SEARCH = "search", _("Búsquedas")
+        DOWNLOAD = "download", _("Descargas")
+        UPLOAD = "upload", _("Subidas")
+
+    event = models.ForeignKey(
+        "events.Event", on_delete=models.CASCADE, related_name="metric_buckets"
+    )
+    metric = models.CharField(_("métrica"), max_length=16, choices=Metric.choices)
+    bucket = models.DateTimeField(_("hora"))
+    count = models.PositiveIntegerField(_("cantidad"), default=0)
+
+    class Meta:
+        verbose_name = _("métrica de evento")
+        verbose_name_plural = _("métricas de evento")
+        # El UniqueConstraint (event, metric, bucket) ya crea el índice que usan
+        # todas las consultas (filtrar por evento+métrica y rango de `bucket`),
+        # así que no agregamos un Index aparte.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["event", "metric", "bucket"], name="uniq_event_metric_bucket"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.event_id}/{self.metric}@{self.bucket:%Y-%m-%d %H}:00 = {self.count}"

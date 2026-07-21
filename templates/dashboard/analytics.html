@@ -1,0 +1,111 @@
+{% extends "dashboard/base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Analíticas" %} · {{ site_name }}{% endblock %}
+
+{% block dashboard_content %}
+<div class="px-6 md:px-8 py-6">
+
+  {# Header #}
+  <div class="flex flex-wrap items-start justify-between gap-3 mb-6">
+    <div>
+      <h1 class="font-display font-bold text-2xl tracking-tight">{% trans "Analíticas" %}</h1>
+      <p class="text-[13px] text-text-2 mt-1">
+        {% if selected_event %}{{ selected_event.name }}{% else %}{% trans "Todos los eventos" %}{% endif %}
+        <span class="text-text-3">·
+          {% if granularity == "hour" %}{% trans "por hora" %}{% else %}{% trans "por día" %}{% endif %}
+        </span>
+      </p>
+    </div>
+  </div>
+
+  {# Controles: evento + rango #}
+  <div class="flex flex-wrap items-center gap-3 mb-6">
+    <form method="get" class="contents">
+      <input type="hidden" name="days" value="{{ days }}">
+      <select name="event" onchange="this.form.submit()" class="rf-input !w-auto !py-2 text-xs">
+        <option value="all" {% if is_all %}selected{% endif %}>{% trans "Todos los eventos" %}</option>
+        {% for e in events %}
+          <option value="{{ e.id }}" {% if selected_event and selected_event.id == e.id %}selected{% endif %}>{{ e.name }}</option>
+        {% endfor %}
+      </select>
+    </form>
+
+    <div class="flex items-center gap-1 ml-auto">
+      {% for d in days_options %}
+        <a href="?event={{ event_param }}&days={{ d }}"
+           class="rf-tab {% if d == days %}rf-tab--active{% endif %} !py-1.5 !px-3 text-xs">
+          {% if d == 1 %}24h{% else %}{{ d }}d{% endif %}
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# Stat cards: totales en el rango #}
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6">
+    {% for chart in charts %}
+      <div class="rf-statcard">
+        <div class="rf-statcard__label">
+          {% if chart.key == 'download' %}{% trans "Descargas" %}
+          {% elif chart.key == 'view' %}{% trans "Vistas" %}
+          {% elif chart.key == 'search' %}{% trans "Búsquedas" %}
+          {% elif chart.key == 'upload' %}{% trans "Subidas" %}{% endif %}
+        </div>
+        <div class="rf-statcard__value mt-1.5 text-data">{{ chart.total }}</div>
+        <div class="text-[11px] text-text-3 mt-1">{% trans "en el rango" %}</div>
+      </div>
+    {% endfor %}
+  </div>
+
+  {# Charts #}
+  <div class="grid lg:grid-cols-2 gap-4">
+    {% for chart in charts %}
+      <section class="rf-card p-5">
+        <div class="flex items-center justify-between mb-1">
+          <h2 class="font-display font-bold text-[15px]">
+            {% if chart.key == 'download' %}{% trans "Descargas de fotos" %}
+            {% elif chart.key == 'view' %}{% trans "Vistas de galería" %}
+            {% elif chart.key == 'search' %}{% trans "Búsquedas" %}
+            {% elif chart.key == 'upload' %}{% trans "Subidas" %}{% endif %}
+          </h2>
+          <span class="rf-num text-[12px] text-text-2">{{ chart.total }} {% trans "total" %}</span>
+        </div>
+        <p class="text-[11px] text-text-3 mb-4">
+          {% if chart.key == 'upload' %}{% trans "Histórico (desde que se subió cada foto)." %}
+          {% else %}{% trans "Desde que se activó el panel." %}{% endif %}
+        </p>
+
+        {% if chart.total %}
+          <div class="flex items-end gap-[2px] h-24">
+            {% for bar in chart.bars %}
+              <div class="flex-1 rounded-sm {% if bar.is_now %}bg-brand{% else %}bg-data{% endif %}"
+                   style="height: {{ bar.pct }}%; min-height: 2px;"
+                   title="{{ bar.label }} · {{ bar.count }}"></div>
+            {% endfor %}
+          </div>
+          <div class="flex justify-between rf-num text-[10px] text-text-3 mt-2">
+            <span>{{ chart.bars.0.label }}</span>
+            {% with chart.bars|last as lastbar %}<span>{{ lastbar.label }}</span>{% endwith %}
+          </div>
+        {% else %}
+          <div class="h-24 flex items-center justify-center text-center">
+            <p class="text-[12px] text-text-3 max-w-[26ch]">
+              {% if chart.key == 'upload' %}{% trans "Sin subidas en este rango." %}
+              {% else %}{% trans "Todavía sin datos en este rango. Se empieza a registrar desde ahora." %}{% endif %}
+            </p>
+          </div>
+        {% endif %}
+      </section>
+    {% endfor %}
+  </div>
+
+  {# Nota de privacidad / origen de los datos #}
+  <p class="text-[11px] text-text-3 mt-6 max-w-[70ch] leading-relaxed">
+    {% blocktrans trimmed %}
+      Los datos son contadores agregados por hora, sin información personal: no se guarda
+      IP, ni qué buscó cada visitante, ni quién descargó qué. La barra naranja es el
+      período en curso. Las descargas, vistas y búsquedas se registran desde que se activó
+      este panel; las subidas incluyen todo el historial del evento.
+    {% endblocktrans %}
+  </p>
+</div>
+{% endblock %}

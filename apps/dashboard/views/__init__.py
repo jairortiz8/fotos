@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from apps.dashboard.views.analytics import AnalyticsView
 from apps.dashboard.views.auth import DashboardLoginView, DashboardLogoutView
 from apps.dashboard.views.events import (
     EventCreateView,
@@ -34,6 +35,7 @@ from apps.dashboard.views.photos import (
 
 __all__ = [
     "AddBibView",
+    "AnalyticsView",
     "ApproveAllPendingView",
     "ApprovePhotoView",
     "AuditLogView",

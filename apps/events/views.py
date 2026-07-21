@@ -21,6 +21,7 @@ from apps.core.utils import (
     is_valid_bib_format,
     normalize_bib_query,
 )
+from apps.events.metrics import Metric, record_event_metric
 from apps.events.models import Event, EventStatus, EventVisibility
 from apps.photos.models import Bib, Photo, PhotoStatus
 
@@ -192,6 +193,7 @@ class EventGalleryView(View):
 
         # Incrementar contador del evento (no bloqueante para el usuario).
         Event.objects.filter(id=event.id).update(search_count=F("search_count") + 1)
+        record_event_metric(event.id, Metric.SEARCH)
 
         if not photo_ids:
             return self._render_no_results(request, event, bib_query)

@@ -35,6 +35,10 @@
       <span class="font-mono text-[10px] font-semibold bg-brand text-white rounded-full px-2 py-0.5">{{ nav_pending_count }}</span>
     {% endif %}
   </a>
+  <a href="{% url 'dashboard:analytics' %}" class="rf-side-item {% if active_nav == 'analytics' %}rf-side-item--active{% endif %}">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="8" rx="1"/><rect x="12.5" y="6" width="3" height="12" rx="1"/><rect x="18" y="13" width="3" height="5" rx="1"/></svg>
+    {% trans "Analíticas" %}
+  </a>
   <a href="{% url 'dashboard:stats' %}" class="rf-side-item {% if active_nav == 'stats' %}rf-side-item--active{% endif %}">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
     {% trans "Estadísticas" %}

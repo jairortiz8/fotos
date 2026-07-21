@@ -7,6 +7,7 @@ from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.views import View
 
+from apps.events.metrics import Metric, record_event_metric
 from apps.photos.models import Photo, PhotoStatus
 
 
@@ -28,6 +29,7 @@ class PhotoLightboxView(View):
 
         # view_count atómico.
         Photo.objects.filter(id=photo.id).update(view_count=F("view_count") + 1)
+        record_event_metric(event.id, Metric.VIEW)
 
         bib_filter = request.GET.get("bib", "").strip()
         prev_photo, next_photo = self._get_siblings(photo, bib_filter)

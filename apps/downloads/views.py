@@ -25,6 +25,7 @@ from apps.core.utils import (
     hash_ip,
 )
 from apps.downloads.models import MAX_PHOTOS_PER_ZIP, ZipDownload, ZipStatus
+from apps.events.metrics import Metric, record_event_metric
 from apps.events.models import Event, EventVisibility
 from apps.photos.models import Photo, PhotoStatus
 from apps.photos.storage import R2NotConfiguredError, R2UploadError, default_storage
@@ -144,6 +145,7 @@ class PhotoDownloadView(View):
         # carrera). Alimenta el contador por foto + el total por evento del dashboard.
         photo.increment_download_count()
         Event.objects.filter(pk=event.id).update(download_count=F("download_count") + 1)
+        record_event_metric(event.id, Metric.DOWNLOAD)
 
         return FileResponse(buf, as_attachment=True, filename=filename, content_type="image/jpeg")
 

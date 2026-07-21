@@ -20,6 +20,7 @@ from django.views.decorators.csrf import csrf_exempt
 from pgvector.django import CosineDistance
 
 from apps.core.utils import check_selfie_rate_limit, get_client_ip, hash_ip
+from apps.events.metrics import Metric, record_event_metric
 from apps.events.models import Event, EventVisibility
 from apps.photos.models import Photo, PhotoStatus
 
@@ -116,6 +117,7 @@ class SelfieSearchView(View):
                 match_count=F("match_count") + 1,
             )
             event.__class__.objects.filter(id=event.id).update(search_count=F("search_count") + 1)
+            record_event_metric(event.id, Metric.SEARCH)
 
         # Log anonimizado (sin el embedding ni la IP cruda).
         logger.info(

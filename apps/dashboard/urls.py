@@ -52,6 +52,7 @@ urlpatterns = [
         name="regenerate_link",
     ),
     # --- Sistema ---
+    path("analiticas/", views.AnalyticsView.as_view(), name="analytics"),
     path("estadisticas/", views.StatsView.as_view(), name="stats"),
     path("audit-log/", views.AuditLogView.as_view(), name="audit_log"),
     path("configuracion/", views.SettingsView.as_view(), name="settings"),
