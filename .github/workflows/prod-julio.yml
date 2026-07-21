@@ -4,37 +4,66 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  split:
+  verify:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      SITE: https://findyourfoto.com
+      SLUG: surf-city-2026
     steps:
-      - name: split
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3"
+      - name: verify
         shell: bash +e {0}
         run: |
           set +e
           gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
-          DID=$(gql '{"query":"query($p:String!,$e:String!){ deployments(first:60, input:{projectId:$p, environmentId:$e}){ edges { node { id status createdAt service { name } } } } }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'"}}' | jq -r '[.data.deployments.edges[].node|select(.service.name=="fotos" and .status=="SUCCESS")]|sort_by(.createdAt)|last|.id')
-          SINCE=$(date -u -d '60 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
-          echo "desde: $SINCE"
-          one() { # $1 filtro  $2 substring  $3 etiqueta
-            for try in 1 2 3; do
-              R=$(gql '{"query":"query($d:String!,$f:String,$l:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:800){ timestamp message } }","variables":{"d":"'"$DID"'","f":"'"$1"'"}}')
-              OK=$(echo "$R" | jq -r 'if .data.deploymentLogs then "y" else "n" end')
-              [ "$OK" = "y" ] && break
-              sleep 2
-            done
-            if [ "$OK" != "y" ]; then echo "  $3: (falló 3x)"; return; fi
-            TOT=$(echo "$R" | jq '.data.deploymentLogs|length')
-            OLD=$(echo "$R" | jq -r '[.data.deploymentLogs[].timestamp]|min//"-"')
-            N=$(echo "$R" | jq --arg s "$SINCE" --arg p "$2" '[.data.deploymentLogs[]|select(.timestamp>=$s)|select(.message|contains($p))]|length')
-            CAP=""; if [ "$TOT" -ge 800 ] && [ "$OLD" \> "$SINCE" ]; then CAP=" (piso; 800 líneas cubren sólo desde ${OLD:11:8})"; fi
-            echo "  $3: $N$CAP"
-          }
-          echo "===== DESGLOSE última hora ====="
-          one "buscar-selfie" "buscar-selfie" "SELFIE"
-          one "bib=" "bib=" "DORSAL"
+          vars_of() { gql '{"query":"query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }","variables":{"p":"'"$PROJECT_ID"'","e":"'"$ENV_ID"'","s":"'"$1"'"}}' | jq '.data.variables // {}'; }
+          export DBURL=$(vars_of "$PG_ID" | jq -r '.DATABASE_PUBLIC_URL // empty')
+
+          # elige un dorsal real (gemini) presente en una foto aprobada
+          BIB=$(python3 - <<'PY'
+          import os, psycopg
+          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
+          cur.execute("""select b.number from photos_bib b join photos_photo p on p.id=b.photo_id
+                         join events_event e on e.id=p.event_id
+                         where e.slug='surf-city-2026' and p.status='approved' and b.source='ocr_gemini'
+                         and b.number ~ '^[0-9]{2,5}$'
+                         group by b.number having count(*)>=3 order by count(*) desc limit 1""")
+          r=cur.fetchone(); print(r[0] if r else "")
+          PY
+          )
+          echo "===== OCR — búsqueda por dorsal REAL end-to-end ====="
+          echo "  dorsal de prueba: '$BIB'"
+          URL="$SITE/eventos/$SLUG/?bib=$BIB"
+          BODY=$(curl -sS -m 25 "$URL")
+          CODE=$(curl -sS -o /dev/null -m 25 -w '%{http_code}' "$URL")
+          NFOTOS=$(echo "$BODY" | grep -o "/eventos/$SLUG/foto/" | wc -l)
+          echo "  GET $URL -> HTTP $CODE · enlaces a fotos en la página: $NFOTOS"
+          echo "  (si HTTP 200 y hay >0 fotos => el OCR indexó dorsales y la búsqueda los encuentra)"
+          echo
+
+          echo "===== SELFIE — endpoint + match de pgvector (motor facial) ====="
+          echo "  página buscar-selfie: HTTP $(curl -sS -o /dev/null -m 25 -w '%{http_code}' "$SITE/eventos/$SLUG/buscar-selfie/")  (200=activa)"
+          python3 - <<'PY'
+          import os, psycopg
+          c=psycopg.connect(os.environ["DBURL"], connect_timeout=20); cur=c.cursor()
+          # toma un embedding real y busca el más cercano => debe devolverse a sí mismo (dist ~0)
+          cur.execute("select id, photo_id, embedding::text from photos_faceembedding order by id desc limit 1")
+          eid, pid, vec = cur.fetchone()
+          cur.execute("""select photo_id, (embedding <=> %s::vector) as dist
+                         from photos_faceembedding order by dist asc limit 3""",(vec,))
+          rows=cur.fetchall()
+          print(f"  embedding de prueba: id={eid} (foto {pid})")
+          print("  vecinos más cercanos (dist 0 = idéntico):")
+          for p,d in rows: print(f"     foto {p}  dist={d:.4f}")
+          ok = rows and rows[0][0]==pid and rows[0][1] < 0.01
+          print("  >> MATCH del motor facial:", "OK (se encontró a sí mismo)" if ok else "REVISAR")
+          cur.execute("select count(*) from photos_faceembedding")
+          print("  embeddings totales indexados:", cur.fetchone()[0])
+          PY
           echo "==================== FIN ===================="
