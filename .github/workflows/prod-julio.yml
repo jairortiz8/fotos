@@ -4,33 +4,34 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  off:
+  off2:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
     steps:
-      - name: off
+      - name: off2
         shell: bash +e {0}
         run: |
           set +e
           gql() { curl -sS "$API" -H "Authorization: Bearer ${RAILWAY_TOKEN}" -H "Project-Access-Token: ${RAILWAY_TOKEN}" -H "Content-Type: application/json" --data "$1"; }
-          apagar() { # $1 nombre  $2 serviceId
+          stop() { # $1 nombre  $2 serviceId
             NAME=$1; SID=$2
-            R=$(gql '{"query":"mutation($s:String!,$e:String!){ serviceInstanceUpdate(serviceId:$s, environmentId:$e, input:{ numReplicas: 0 }) }","variables":{"s":"'"$SID"'","e":"'"$ENV_ID"'"}}')
-            OK=$(echo "$R" | jq -r '.data.serviceInstanceUpdate // .errors[0].message')
-            echo "   $NAME -> serviceInstanceUpdate(numReplicas:0): $OK"
+            DID=$(gql '{"query":"query($s:String!,$e:String!){ serviceInstance(serviceId:$s, environmentId:$e){ latestDeployment{ id status } } }","variables":{"s":"'"$SID"'","e":"'"$ENV_ID"'"}}' | jq -r '.data.serviceInstance.latestDeployment.id')
+            echo "   $NAME deployment=$DID"
+            R=$(gql '{"query":"mutation($id:String!){ deploymentRemove(id:$id) }","variables":{"id":"'"$DID"'"}}')
+            echo "      deploymentRemove -> $(echo "$R" | jq -c '.data.deploymentRemove // .errors[0].message')"
           }
-          echo "===== APAGANDO (escalar a 0) ====="
-          apagar worker      1846c52a-57c3-4a8b-b4ec-1cc200a8e652
-          apagar worker_fast e4289c40-a254-436a-be02-35ec0e935363
-          apagar beat        0a364656-8700-4f69-bac0-b91c50cd722b
+          echo "===== DETENIENDO workers ====="
+          stop worker      1846c52a-57c3-4a8b-b4ec-1cc200a8e652
+          stop worker_fast e4289c40-a254-436a-be02-35ec0e935363
+          stop beat        0a364656-8700-4f69-bac0-b91c50cd722b
           echo
-          echo "===== verificación (numReplicas debe quedar 0) ====="
+          sleep 6
+          echo "===== estado tras detener ====="
           for pair in "worker:1846c52a-57c3-4a8b-b4ec-1cc200a8e652" "worker_fast:e4289c40-a254-436a-be02-35ec0e935363" "beat:0a364656-8700-4f69-bac0-b91c50cd722b" "fotos(web):5dec515d-7408-46ae-91ac-d2325d6d92ad"; do
             NAME=${pair%%:*}; SID=${pair##*:}
-            R=$(gql '{"query":"query($s:String!,$e:String!){ serviceInstance(serviceId:$s, environmentId:$e){ numReplicas latestDeployment{ status } } }","variables":{"s":"'"$SID"'","e":"'"$ENV_ID"'"}}')
-            echo "   $NAME: $(echo "$R" | jq -c '.data.serviceInstance')"
+            echo "   $NAME: $(gql '{"query":"query($s:String!,$e:String!){ serviceInstance(serviceId:$s, environmentId:$e){ latestDeployment{ status } } }","variables":{"s":"'"$SID"'","e":"'"$ENV_ID"'"}}' | jq -c '.data.serviceInstance.latestDeployment')"
           done
           echo FIN
