@@ -120,6 +120,17 @@ class Event(TimeStampedModel):
         ),
     )
 
+    # Expone este evento en el área de invitados (`/invitados/`) para que los
+    # community managers descarguen los originales limpios. Default False: un
+    # evento nuevo NO aparece para invitados hasta que se prende explícitamente.
+    reviewer_visible = models.BooleanField(
+        _("visible para invitados"),
+        default=False,
+        help_text=_(
+            "Si está activado, los invitados ven este evento y bajan sus originales sin logos."
+        ),
+    )
+
     # --- Política de retención (configurable por evento, defaults en save()) ---
     public_until = models.DateTimeField(
         _("público hasta"),

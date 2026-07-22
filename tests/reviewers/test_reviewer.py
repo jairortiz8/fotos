@@ -68,13 +68,26 @@ def test_index_redirects_normal_user() -> None:
 
 @pytest.mark.django_db
 def test_index_ok_for_reviewer() -> None:
-    event = EventFactory()
+    event = EventFactory(reviewer_visible=True)
     ApprovedPhotoFactory(event=event)
     c = Client()
     c.force_login(_reviewer())
     resp = c.get(reverse("reviewer:index"))
     assert resp.status_code == 200
     assert event.name.encode() in resp.content
+
+
+@pytest.mark.django_db
+def test_index_hides_non_visible_events() -> None:
+    visible = EventFactory(name="Surf City Visible", reviewer_visible=True)
+    hidden = EventFactory(name="Otro Evento Oculto", reviewer_visible=False)
+    ApprovedPhotoFactory(event=visible)
+    ApprovedPhotoFactory(event=hidden)
+    c = Client()
+    c.force_login(_reviewer())
+    resp = c.get(reverse("reviewer:index"))
+    assert visible.name.encode() in resp.content
+    assert hidden.name.encode() not in resp.content
 
 
 @pytest.mark.django_db
@@ -86,12 +99,23 @@ def test_index_ok_for_staff() -> None:
 
 @pytest.mark.django_db
 def test_gallery_ok_for_reviewer() -> None:
-    event = EventFactory(status=EventStatus.LIVE)
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=True)
     ApprovedPhotoFactory(event=event)
     c = Client()
     c.force_login(_reviewer())
     resp = c.get(reverse("reviewer:gallery", kwargs={"slug": event.slug}))
     assert resp.status_code == 200
+
+
+@pytest.mark.django_db
+def test_gallery_404_when_not_reviewer_visible() -> None:
+    """Un evento NO expuesto a invitados no se abre ni con la URL directa."""
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=False)
+    ApprovedPhotoFactory(event=event)
+    c = Client()
+    c.force_login(_reviewer())
+    resp = c.get(reverse("reviewer:gallery", kwargs={"slug": event.slug}))
+    assert resp.status_code == 404
 
 
 @pytest.mark.django_db
@@ -107,7 +131,10 @@ def test_download_serves_clean_original_even_when_branded(r2) -> None:  # type: 
     """El invitado baja el ORIGINAL LIMPIO aunque el evento tenga logos —
     a diferencia de la descarga pública que sirve el branded."""
     event = EventFactory(
-        status=EventStatus.LIVE, visibility=EventVisibility.PUBLIC, brand_overlay="surf_city"
+        status=EventStatus.LIVE,
+        visibility=EventVisibility.PUBLIC,
+        brand_overlay="surf_city",
+        reviewer_visible=True,
     )
     okey = "events/e/originals/foto.jpg"
     bkey = "events/e/branded/foto.jpg"
@@ -136,6 +163,20 @@ def test_download_redirects_anonymous(r2) -> None:  # type: ignore[no-untyped-de
     resp = Client().get(reverse("reviewer:download", kwargs={"photo_id": photo.id}))
     assert resp.status_code == 302
     assert "/invitados/entrar/" in resp.headers["Location"]
+
+
+@pytest.mark.django_db
+def test_download_404_when_event_not_reviewer_visible(r2) -> None:  # type: ignore[no-untyped-def]
+    """No se baja el original de un evento que no está expuesto a invitados,
+    aunque la foto esté aprobada (defensa contra adivinar el id)."""
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=False)
+    key = "events/e/originals/x.jpg"
+    r2.put_object(Bucket=BUCKET, Key=key, Body=synthetic_jpeg_bytes("1"))
+    photo = ApprovedPhotoFactory(event=event, original_key=key)
+    c = Client()
+    c.force_login(_reviewer())
+    resp = c.get(reverse("reviewer:download", kwargs={"photo_id": photo.id}))
+    assert resp.status_code == 404
 
 
 @pytest.mark.django_db

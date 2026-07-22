@@ -55,6 +55,7 @@ class EventForm(_DashMixin, forms.ModelForm):
             "visibility",
             "brand_overlay",
             "permanent_archive",
+            "reviewer_visible",
         ]
         # IMPORTANTE: el input HTML5 `type=date` SOLO entiende ISO (`YYYY-MM-DD`).
         # Sin un `format` explícito, Django lo renderiza con el locale `es`
@@ -111,6 +112,12 @@ class EventForm(_DashMixin, forms.ModelForm):
         self.fields["brand_overlay"].help_text = _(
             "Pega los logos del evento en las esquinas de abajo de cada foto "
             "(reemplaza la marca de agua). Solo para este evento."
+        )
+        self.fields["reviewer_visible"].required = False
+        self.fields["reviewer_visible"].label = _("Visible para invitados")
+        self.fields["reviewer_visible"].help_text = _(
+            "Deja que las cuentas invitado (community managers) vean este evento y "
+            "descarguen sus originales sin logos."
         )
         self._style_widgets()
 

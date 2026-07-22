@@ -90,8 +90,10 @@ class ReviewerIndexView(ReviewerRequiredMixin, TemplateView):
 
     def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
         ctx = super().get_context_data(**kwargs)
+        # Solo eventos marcados como visibles para invitados (y con fotos).
         ctx["events"] = list(
-            Event.objects.exclude(status=EventStatus.DELETED)
+            Event.objects.filter(reviewer_visible=True)
+            .exclude(status=EventStatus.DELETED)
             .annotate(n_aprobadas=Count("photos", filter=Q(photos__status=PhotoStatus.APPROVED)))
             .filter(n_aprobadas__gt=0)
             .order_by("-date", "name")
@@ -101,7 +103,11 @@ class ReviewerIndexView(ReviewerRequiredMixin, TemplateView):
 
 class ReviewerGalleryView(ReviewerRequiredMixin, View):
     def get(self, request: HttpRequest, slug: str) -> HttpResponse:
-        event = get_object_or_404(Event.objects.exclude(status=EventStatus.DELETED), slug=slug)
+        # 404 si el evento no está expuesto a invitados (no solo lo ocultamos
+        # del listado: bloqueamos el acceso directo por URL).
+        event = get_object_or_404(
+            Event.objects.exclude(status=EventStatus.DELETED), slug=slug, reviewer_visible=True
+        )
         qs = Photo.objects.filter(event=event, status=PhotoStatus.APPROVED).order_by(
             "capture_time", "created_at"
         )
@@ -122,7 +128,13 @@ class ReviewerPhotoDownloadView(ReviewerRequiredMixin, View):
         photo = get_object_or_404(
             Photo.objects.select_related("event"), id=photo_id, status=PhotoStatus.APPROVED
         )
-        if photo.event.status == EventStatus.DELETED or not photo.original_key:
+        # Solo se baja de eventos expuestos a invitados (evita bajar originales de
+        # otros eventos adivinando el id de la foto).
+        if (
+            photo.event.status == EventStatus.DELETED
+            or not photo.event.reviewer_visible
+            or not photo.original_key
+        ):
             raise Http404
         filename = photo.original_filename or f"foto_{photo.id}.jpg"
         if not filename.lower().endswith((".jpg", ".jpeg")):
