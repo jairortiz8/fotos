@@ -173,8 +173,9 @@ def test_reviewer_bib_search() -> None:
     c.force_login(_reviewer())
     resp = c.get(reverse("reviewer:gallery", kwargs={"slug": event.slug}) + "?bib=1234")
     assert resp.status_code == 200
-    # La foto encontrada expone su link de descarga limpia.
-    assert f"/invitados/foto/{photo.id}/descargar/".encode() in resp.content
+    # La foto encontrada aparece en la grilla (su miniatura limpia). La descarga
+    # se hace desde el lightbox (se arma en JS), no hay link por foto en el grid.
+    assert f"/invitados/img/{photo.id}/thumb/".encode() in resp.content
 
 
 @pytest.mark.django_db
