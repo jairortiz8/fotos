@@ -4,60 +4,96 @@ on:
   push:
     branches: ["run-julio"]
 
-# Export de métricas de TODOS los eventos (totales acumulados "hasta ahorita").
+# Valida la rama de feature (rol invitado) SIN deployar: lint + types + tests +
+# makemigrations/migrate contra un Postgres efímero.
 jobs:
-  export:
+  validate:
+    name: validate feature branch
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: runfoto
+          POSTGRES_PASSWORD: runfoto
+          POSTGRES_DB: runfoto
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U runfoto -d runfoto"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
     env:
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-      API: https://backboard.railway.app/graphql/v2
-      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
-      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
-      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      SECRET_KEY: ci-secret-key-not-real
+      DEBUG: "True"
+      ALLOWED_HOSTS: "*"
+      DATABASE_URL: postgres://runfoto:runfoto@localhost:5432/runfoto
+      REDIS_URL: redis://localhost:6379/0
+      CELERY_BROKER_URL: redis://localhost:6379/1
+      CELERY_RESULT_BACKEND: redis://localhost:6379/2
+      SITE_NAME: "find your foto"
+      SITE_DOMAIN: localhost:8000
+      NOTIFIER_BACKEND: whatsapp_manual
+      LANGUAGE_CODE: es
+      TIME_ZONE: America/El_Salvador
+
     steps:
-      - name: deps
-        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" requests
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/runfoto-security-audit-bknirm
 
-      - name: export csv
+      - name: Install system libs for OpenCV/onnxruntime
         run: |
-          python3 - <<'PY'
-          import os, requests, csv, io
-          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          ENV=os.environ["ENV_ID"]; PROJ=os.environ["PROJECT_ID"]; PG=os.environ["PG_ID"]
-          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
-          qv='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          dv=requests.post(API,headers=H,json={"query":qv,"variables":{"p":PROJ,"e":ENV,"s":PG}},timeout=40).json()
-          dburl=(dv.get("data",{}).get("variables") or {}).get("DATABASE_PUBLIC_URL")
-          import psycopg
-          c=psycopg.connect(dburl,connect_timeout=25); cur=c.cursor()
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libglib2.0-0 libgomp1 libxcb1 libsm6 libxext6 libxrender1
 
-          # Totales acumulados por evento (fuente de verdad: contadores denormalizados).
-          cur.execute("""
-            select e.slug, e.name, to_char(e.date,'YYYY-MM-DD') as fecha, e.status,
-                   (select count(*) from photos_photo p where p.event_id=e.id and p.status<>'deleted') as subidas,
-                   (select count(*) from photos_photo p where p.event_id=e.id and p.status='approved') as aprobadas,
-                   coalesce((select sum(p.view_count) from photos_photo p where p.event_id=e.id),0) as vistas,
-                   e.search_count as busquedas,
-                   coalesce((select sum(p.download_count) from photos_photo p where p.event_id=e.id),0) as descargas,
-                   coalesce((select count(*) from photos_photo p where p.event_id=e.id and p.download_count>0),0) as fotos_descargadas_distintas
-            from events_event e
-            order by e.date desc, e.name
-          """)
-          rows=cur.fetchall()
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
-          buf=io.StringIO(); w=csv.writer(buf)
-          w.writerow(["evento_slug","evento","fecha","estado","subidas","aprobadas","vistas","busquedas","descargas","fotos_distintas_descargadas"])
-          tot=[0,0,0,0,0,0]
-          for r in rows:
-              slug,name,fecha,status,sub,apr,vis,bus,des,dd=r
-              w.writerow([slug,name,fecha,status,sub,apr,vis,bus,des,dd])
-              tot=[tot[0]+sub,tot[1]+apr,tot[2]+vis,tot[3]+bus,tot[4]+des,tot[5]+dd]
-          w.writerow(["TOTAL","(todos los eventos)","","",tot[0],tot[1],tot[2],tot[3],tot[4],tot[5]])
-          c.close()
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
 
-          out=buf.getvalue()
-          print("CSV_START")
-          print(out)
-          print("CSV_END")
-          PY
+      - name: Ruff (lint)
+        run: ruff check .
+
+      - name: Ruff (format)
+        run: ruff format --check .
+
+      - name: Black (check)
+        run: black --check .
+
+      - name: Mypy
+        run: mypy .
+
+      - name: makemigrations --check (no pending)
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Migrate (aplica 0002_user_is_reviewer)
+        run: python manage.py migrate
+
+      - name: Django check
+        run: python manage.py check --deploy --fail-level WARNING || python manage.py check
+
+      - name: Pytest (reviewers + resto)
+        run: pytest -m "not slow and not e2e" -q
