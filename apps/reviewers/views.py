@@ -154,7 +154,7 @@ class ReviewerGalleryView(ReviewerRequiredMixin, View):
         qs = Photo.objects.filter(event=event, status=PhotoStatus.APPROVED)
         if photographer is not None:
             qs = qs.filter(photographer_link=photographer)
-        qs = qs.order_by("capture_time", "created_at")
+        qs = qs.prefetch_related("bibs").order_by("capture_time", "created_at")
         page = Paginator(qs, GALLERY_PAGE_SIZE).get_page(request.GET.get("page"))
         ctx = {
             "event": event,
@@ -180,6 +180,7 @@ class ReviewerGalleryView(ReviewerRequiredMixin, View):
                     bibs__rejected=False,
                 )
                 .distinct()
+                .prefetch_related("bibs")
                 .order_by("capture_time", "created_at")[:200]
             )
         return render(

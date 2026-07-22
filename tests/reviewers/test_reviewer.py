@@ -108,6 +108,21 @@ def test_gallery_ok_for_reviewer() -> None:
 
 
 @pytest.mark.django_db
+def test_gallery_shows_bib_chips() -> None:
+    """Cada foto muestra sus dorsales detectados como chip (#número)."""
+    from tests.factories import BibFactory
+
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=True)
+    photo = ApprovedPhotoFactory(event=event)
+    BibFactory(photo=photo, number="777")
+    c = Client()
+    c.force_login(_reviewer())
+    resp = c.get(reverse("reviewer:gallery", kwargs={"slug": event.slug}))
+    assert resp.status_code == 200
+    assert b"#777" in resp.content
+
+
+@pytest.mark.django_db
 def test_gallery_404_when_not_reviewer_visible() -> None:
     """Un evento NO expuesto a invitados no se abre ni con la URL directa."""
     event = EventFactory(status=EventStatus.LIVE, reviewer_visible=False)

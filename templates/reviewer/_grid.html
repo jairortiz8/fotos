@@ -1,10 +1,23 @@
 {% load i18n %}
-{% comment %}Contact-sheet del invitado: miniatura LIMPIA (sin logos) → abre el lightbox.{% endcomment %}
+{% comment %}Contact-sheet del invitado: miniatura LIMPIA (sin logos) → abre el lightbox.
+Los dorsales detectados van como chips abajo; tocar un chip busca ese dorsal.{% endcomment %}
 {% for photo in photos %}
-  <button type="button" @click="open({{ photo.id }})"
-          class="relative block aspect-square bg-ink-2 overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-brand">
-    <img src="{% url 'reviewer:clean_image' photo_id=photo.id size='thumb' %}" alt=""
-         loading="lazy" decoding="async"
-         class="w-full h-full object-cover hover:opacity-90 transition">
-  </button>
+  <div class="relative aspect-square bg-ink-2 overflow-hidden group">
+    <button type="button" @click="open({{ photo.id }})"
+            class="absolute inset-0 w-full h-full focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            aria-label="{% trans 'Ver foto' %} #{{ photo.id }}">
+      <img src="{% url 'reviewer:clean_image' photo_id=photo.id size='thumb' %}" alt=""
+           loading="lazy" decoding="async"
+           class="w-full h-full object-cover group-hover:opacity-90 transition">
+    </button>
+    {% comment %}Chips de dorsal: contenedor sin eventos, cada chip SÍ clickeable → no
+    tapa el click de la foto. Nunca {# #} multilínea.{% endcomment %}
+    <div class="absolute bottom-1.5 left-1.5 z-10 flex flex-wrap gap-1 max-w-[88%] max-h-[46%] overflow-hidden pointer-events-none">
+      {% for bib in photo.bibs.all|slice:":8" %}{% if not bib.rejected %}
+        <a href="?bib={{ bib.number|urlencode }}"
+           class="rf-bib pointer-events-auto hover:!border-brand transition"
+           aria-label="{% blocktrans with n=bib.number %}Ver fotos del dorsal {{ n }}{% endblocktrans %}">#{{ bib.number }}</a>
+      {% endif %}{% endfor %}
+    </div>
+  </div>
 {% endfor %}
