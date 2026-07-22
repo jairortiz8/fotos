@@ -15,6 +15,11 @@ urlpatterns = [
     path(
         "foto/<int:photo_id>/descargar/", views.ReviewerPhotoDownloadView.as_view(), name="download"
     ),
+    path(
+        "img/<int:photo_id>/<str:size>/",
+        views.ReviewerCleanImageView.as_view(),
+        name="clean_image",
+    ),
     path("<slug:slug>/selfie/", views.ReviewerSelfieSearchView.as_view(), name="selfie"),
     path("<slug:slug>/", views.ReviewerGalleryView.as_view(), name="gallery"),
 ]

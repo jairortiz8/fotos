@@ -228,6 +228,44 @@ def test_download_redirects_anonymous(r2) -> None:  # type: ignore[no-untyped-de
     assert "/invitados/entrar/" in resp.headers["Location"]
 
 
+# --- Imagen limpia on-demand (sin logos) ------------------------------------
+@pytest.mark.django_db
+def test_clean_image_generates_and_redirects(r2) -> None:  # type: ignore[no-untyped-def]
+    """La 1ª vez genera la versión limpia (sin logos) y la cachea en R2, luego
+    redirige a su URL firmada — incluso en un evento con logos."""
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=True, brand_overlay="surf_city")
+    key = "events/e/originals/foto.jpg"
+    r2.put_object(Bucket=BUCKET, Key=key, Body=synthetic_jpeg_bytes("123"))
+    photo = ApprovedPhotoFactory(event=event, original_key=key)
+    c = Client()
+    c.force_login(_reviewer())
+    resp = c.get(reverse("reviewer:clean_image", kwargs={"photo_id": photo.id, "size": "thumb"}))
+    assert resp.status_code == 302  # a la URL firmada de la versión limpia
+    from apps.photos.storage import default_storage
+
+    assert default_storage().exists(f"reviewer_clean/{event.slug}/{photo.id}_thumb.webp")
+
+
+@pytest.mark.django_db
+def test_clean_image_404_invalid_size(r2) -> None:  # type: ignore[no-untyped-def]
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=True)
+    photo = ApprovedPhotoFactory(event=event, original_key="events/e/originals/x.jpg")
+    c = Client()
+    c.force_login(_reviewer())
+    resp = c.get(reverse("reviewer:clean_image", kwargs={"photo_id": photo.id, "size": "gigante"}))
+    assert resp.status_code == 404
+
+
+@pytest.mark.django_db
+def test_clean_image_404_when_not_reviewer_visible(r2) -> None:  # type: ignore[no-untyped-def]
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=False)
+    photo = ApprovedPhotoFactory(event=event, original_key="events/e/originals/x.jpg")
+    c = Client()
+    c.force_login(_reviewer())
+    resp = c.get(reverse("reviewer:clean_image", kwargs={"photo_id": photo.id, "size": "thumb"}))
+    assert resp.status_code == 404
+
+
 @pytest.mark.django_db
 def test_download_404_when_event_not_reviewer_visible(r2) -> None:  # type: ignore[no-untyped-def]
     """No se baja el original de un evento que no está expuesto a invitados,

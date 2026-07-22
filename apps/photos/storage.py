@@ -121,6 +121,19 @@ class R2Storage:
             logger.exception("R2 download failed for key %s", key)
             raise R2UploadError(str(exc)) from exc
 
+    def exists(self, key: str) -> bool:
+        """True si el objeto existe en el bucket (HEAD, sin descargarlo)."""
+        try:
+            self.client.head_object(Bucket=self.bucket, Key=key)
+            return True
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in ("404", "NoSuchKey", "NotFound"):
+                return False
+            raise R2UploadError(str(exc)) from exc
+        except BotoCoreError as exc:
+            raise R2UploadError(str(exc)) from exc
+
     def get_signed_url(
         self,
         key: str,

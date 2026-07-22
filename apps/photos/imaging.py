@@ -282,6 +282,32 @@ def generate_thumbnail(
 
 
 # ---------------------------------------------------------------------------
+# Render LIMPIO (sin logos ni watermark) — para el área de invitados
+# ---------------------------------------------------------------------------
+# (size_key -> (lado_largo_px, calidad_webp))
+REVIEWER_CLEAN_SIZES: dict[str, tuple[int, int]] = {
+    "thumb": (640, 80),
+    "preview": (1600, 82),
+}
+
+
+def generate_clean_render(original_bytes: bytes, long_edge: int, quality: int) -> bytes:
+    """Versión SIN logos ni watermark del original, a `long_edge` px, WebP.
+
+    Toma los bytes del original (JPEG en alta) y devuelve los bytes de un WebP
+    reducido y limpio (honra la orientación EXIF). NO aplica logos de marca — es
+    para el área de invitados, donde se ve y se baja todo sin marca.
+    """
+    img = Image.open(BytesIO(original_bytes))
+    img = ImageOps.exif_transpose(img) or img
+    img.thumbnail((long_edge, long_edge), Image.Resampling.LANCZOS)
+    buf = BytesIO()
+    img.convert("RGB").save(buf, format="WEBP", quality=quality, method=6)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
 # Original con logos de marca (lo que se DESCARGA en eventos brandeados)
 # ---------------------------------------------------------------------------
 BRANDED_QUALITY = 92

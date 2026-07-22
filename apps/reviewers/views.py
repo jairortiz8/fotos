@@ -12,6 +12,7 @@ común se redirige al login del invitado (no a un 403 que revele la galería).
 
 from __future__ import annotations
 
+import json
 from io import BytesIO
 from typing import Any
 
@@ -21,7 +22,14 @@ from django.contrib.auth.mixins import AccessMixin
 from django.contrib.auth.views import LoginView, LogoutView, redirect_to_login
 from django.core.paginator import Paginator
 from django.db.models import Count, Q
-from django.http import FileResponse, Http404, HttpRequest, HttpResponse, HttpResponseBase
+from django.http import (
+    FileResponse,
+    Http404,
+    HttpRequest,
+    HttpResponse,
+    HttpResponseBase,
+    HttpResponseRedirect,
+)
 from django.shortcuts import get_object_or_404, render
 from django.urls import reverse_lazy
 from django.utils.translation import gettext_lazy as _
@@ -30,10 +38,16 @@ from django.views.generic import TemplateView
 from django_ratelimit.core import is_ratelimited
 
 from apps.events.models import Event, EventStatus
+from apps.photos.imaging import REVIEWER_CLEAN_SIZES, generate_clean_render
 from apps.photos.models import Photo, PhotoStatus
 from apps.photos.storage import R2NotConfiguredError, R2UploadError, default_storage
 
 GALLERY_PAGE_SIZE = 60
+
+
+def _photo_ids_json(photos: Any) -> str:
+    """IDs de las fotos (en orden) para el lightbox Alpine (prev/siguiente)."""
+    return json.dumps([p.id for p in photos])
 
 
 def is_reviewer(user: Any) -> bool:
@@ -147,11 +161,9 @@ class ReviewerGalleryView(ReviewerRequiredMixin, View):
             "page_obj": page,
             "photos": page.object_list,
             "photographer": photographer,
+            "photo_ids_json": _photo_ids_json(page.object_list),
         }
-        template = (
-            "reviewer/_grid.html" if getattr(request, "htmx", False) else "reviewer/gallery.html"
-        )
-        return render(request, template, ctx)
+        return render(request, "reviewer/gallery.html", ctx)
 
     def _bib_search(self, request: HttpRequest, event: Event, raw: str) -> HttpResponse:
         from apps.core.utils import bib_query_variants, is_valid_bib_format, normalize_bib_query
@@ -179,6 +191,7 @@ class ReviewerGalleryView(ReviewerRequiredMixin, View):
                 "is_search": True,
                 "bib_query": bib,
                 "invalid_bib": invalid,
+                "photo_ids_json": _photo_ids_json(photos),
             },
         )
 
@@ -239,8 +252,53 @@ class ReviewerSelfieSearchView(ReviewerRequiredMixin, View):
                 "is_search": True,
                 "selfie_search": True,
                 "match_count": len(matches),
+                "photo_ids_json": _photo_ids_json(matches),
             },
         )
+
+
+class ReviewerCleanImageView(ReviewerRequiredMixin, View):
+    """Sirve una versión LIMPIA (sin logos) de la foto, a `thumb`/`preview`.
+
+    On-demand + caché: la 1ª vez baja el original de R2, genera el WebP limpio y
+    lo guarda en R2 bajo `reviewer_clean/<slug>/<id>_<size>.webp`; después solo
+    redirige a la URL firmada de esa versión cacheada. Así el invitado ve TODO
+    sin logos sin tener que reprocesar el evento entero de antemano.
+    """
+
+    http_method_names = ["get"]
+
+    def get(self, request: HttpRequest, photo_id: int, size: str) -> HttpResponseBase:
+        if size not in REVIEWER_CLEAN_SIZES:
+            raise Http404
+        photo = get_object_or_404(
+            Photo.objects.select_related("event"), id=photo_id, status=PhotoStatus.APPROVED
+        )
+        if (
+            photo.event.status == EventStatus.DELETED
+            or not photo.event.reviewer_visible
+            or not photo.original_key
+        ):
+            raise Http404
+
+        long_edge, quality = REVIEWER_CLEAN_SIZES[size]
+        clean_key = f"reviewer_clean/{photo.event.slug}/{photo.id}_{size}.webp"
+        storage = default_storage()
+        try:
+            if not storage.exists(clean_key):
+                buf = BytesIO()
+                storage.download_fileobj(photo.original_key, buf)
+                data = generate_clean_render(buf.getvalue(), long_edge, quality)
+                storage.upload(
+                    BytesIO(data),
+                    clean_key,
+                    content_type="image/webp",
+                    cache_control="private, max-age=604800",
+                )
+            url = storage.get_signed_url(clean_key, expires_in=3600)
+        except (R2NotConfiguredError, R2UploadError) as exc:
+            raise Http404 from exc
+        return HttpResponseRedirect(url)
 
 
 class ReviewerPhotoDownloadView(ReviewerRequiredMixin, View):
