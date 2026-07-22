@@ -3,69 +3,55 @@ on:
   workflow_dispatch:
   push:
     branches: ["run-julio"]
+
+# Post-deploy: espera el web (migra reviewer_visible) y PRENDE el flag solo en Surf City.
 jobs:
-  validate:
-    name: validate feature branch
+  flag:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: runfoto
-          POSTGRES_PASSWORD: runfoto
-          POSTGRES_DB: runfoto
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U runfoto -d runfoto"
-          --health-interval 5s --health-timeout 3s --health-retries 10
-      redis:
-        image: redis:7-alpine
-        ports: ["6379:6379"]
-        options: >-
-          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    timeout-minutes: 20
     env:
-      DJANGO_SETTINGS_MODULE: config.settings.dev
-      SECRET_KEY: ci-secret-key-not-real
-      DEBUG: "True"
-      ALLOWED_HOSTS: "*"
-      DATABASE_URL: postgres://runfoto:runfoto@localhost:5432/runfoto
-      REDIS_URL: redis://localhost:6379/0
-      CELERY_BROKER_URL: redis://localhost:6379/1
-      CELERY_RESULT_BACKEND: redis://localhost:6379/2
-      SITE_NAME: "find your foto"
-      SITE_DOMAIN: localhost:8000
-      NOTIFIER_BACKEND: whatsapp_manual
-      LANGUAGE_CODE: es
-      TIME_ZONE: America/El_Salvador
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
+      SITE: https://findyourfoto.com
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: claude/runfoto-security-audit-bknirm
-      - name: system libs
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgl1 libglib2.0-0 libgomp1 libxcb1 libsm6 libxext6 libxrender1
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
       - name: deps
-        run: python -m pip install --upgrade pip && pip install -e ".[dev]"
-      - name: ruff
-        run: ruff check .
-      - name: ruff format
-        run: ruff format --check .
-      - name: black
-        run: black --check .
-      - name: mypy
-        run: mypy .
-      - name: makemigrations --check
-        run: python manage.py makemigrations --check --dry-run
-      - name: migrate
-        run: python manage.py migrate
-      - name: django check
-        run: python manage.py check --deploy --fail-level WARNING || python manage.py check
-      - name: pytest
-        run: pytest -m "not slow and not e2e" -q
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" requests
+      - name: esperar web + prender flag Surf City
+        run: |
+          python3 - <<'PY'
+          import os, time, requests
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]; ENV=os.environ["ENV_ID"]
+          PROJ=os.environ["PROJECT_ID"]; PG=os.environ["PG_ID"]; WEB=os.environ["WEB_ID"]; SITE=os.environ["SITE"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          def gql(q,v=None): return requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=40).json()
+          q='query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{ serviceId latestDeployment{ status } } } } } }'
+          print("== esperando WEB ==")
+          for i in range(40):
+              d=gql(q,{"e":ENV}); st=None
+              for e in d.get("data",{}).get("environment",{}).get("serviceInstances",{}).get("edges",[]):
+                  if e["node"]["serviceId"]==WEB: st=(e["node"].get("latestDeployment") or {}).get("status")
+              print(f"  web[{i}] {st}")
+              if st=="SUCCESS": break
+              if st in ("FAILED","CRASHED"): print("  WEB FALLO"); break
+              time.sleep(15)
+          qv='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          dburl=(gql(qv,{"p":PROJ,"e":ENV,"s":PG}).get("data",{}).get("variables") or {}).get("DATABASE_PUBLIC_URL")
+          import psycopg
+          c=psycopg.connect(dburl,connect_timeout=25); c.autocommit=True; cur=c.cursor()
+          cur.execute("select column_name from information_schema.columns where table_name='events_event' and column_name='reviewer_visible'")
+          if cur.fetchone() is None:
+              print("  ABORTO: columna reviewer_visible aún no existe"); raise SystemExit(1)
+          cur.execute("update events_event set reviewer_visible=true where slug='surf-city-2026'")
+          print("  filas actualizadas:", cur.rowcount)
+          cur.execute("select slug,name,reviewer_visible from events_event where reviewer_visible=true order by slug")
+          print("  eventos visibles para invitados:")
+          for r in cur.fetchall(): print("   ", r)
+          c.close()
+          r=requests.get(f"{SITE}/invitados/entrar/",timeout=30)
+          print(f"  /invitados/entrar/ -> {r.status_code}")
+          print("FIN")
+          PY
