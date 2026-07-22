@@ -4,87 +4,35 @@ on:
   push:
     branches: ["run-julio"]
 
-# Post-deploy del rol invitado: espera el web, verifica la migración + páginas,
-# crea (UPSERT) los 2 usuarios invitado. NO imprime contraseñas (repo público);
-# solo los HASHES (seguros) se usan acá; el plaintext lo pasa Claude por chat.
+# Chequeo final: estado de los servicios; apaga worker/worker_fast/beat si el
+# deploy los despertó (el evento terminó, deben quedar apagados).
 jobs:
-  createusers:
+  workers:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 8
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
-      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
-      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
-      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
-      SITE: https://findyourfoto.com
     steps:
       - name: deps
-        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" requests
-
-      - name: verificar + crear invitados
+        run: python3 -m pip install --quiet requests
+      - name: check + stop workers
         run: |
           python3 - <<'PY'
-          import os, time, requests
-          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          ENV=os.environ["ENV_ID"]; PROJ=os.environ["PROJECT_ID"]; PG=os.environ["PG_ID"]; WEB=os.environ["WEB_ID"]; SITE=os.environ["SITE"]
+          import os, requests
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]; ENV=os.environ["ENV_ID"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
-          def gql(q,v=None):
-              return requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=40).json()
-
-          # 1. esperar el WEB (migrate agrega is_reviewer)
-          q='''query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{ serviceId serviceName latestDeployment{ id status } } } } } }'''
-          print("== esperando WEB ==")
-          for i in range(40):
-              d=gql(q,{"e":ENV}); st=None
-              for e in d.get("data",{}).get("environment",{}).get("serviceInstances",{}).get("edges",[]):
-                  n=e["node"]
-                  if n["serviceId"]==WEB: st=(n.get("latestDeployment") or {}).get("status")
-              print(f"  web[{i}] {st}")
-              if st=="SUCCESS": break
-              if st in ("FAILED","CRASHED"): print("  WEB deploy FALLO"); break
-              time.sleep(15)
-
-          # 2. DB
-          qv='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          dburl=(gql(qv,{"p":PROJ,"e":ENV,"s":PG}).get("data",{}).get("variables") or {}).get("DATABASE_PUBLIC_URL")
-          import psycopg
-          c=psycopg.connect(dburl,connect_timeout=25); c.autocommit=True; cur=c.cursor()
-          cur.execute("select column_name from information_schema.columns where table_name='core_user' and column_name='is_reviewer'")
-          has_col=cur.fetchone() is not None
-          print("  columna is_reviewer:", has_col)
-          if not has_col:
-              print("  ABORTO: la migración todavía no aplicó (is_reviewer no existe)"); raise SystemExit(1)
-
-          USERS=[
-            ("info@monomonosv.com","info@monomonosv.com","Rigoberto","Zaldaña",
-             "pbkdf2_sha256$1000000$WmTYSI64kSQRfAh1R1EZkZ$8vMvheG9WRWDp8Ebx5sTQkq9pBNR9q2/u4aQ2pqzAb4="),
-            ("cayaguancaoe@gmail.com","cayaguancaoe@gmail.com","Invitado","Prueba",
-             "pbkdf2_sha256$1000000$6f4HhuxkvgTHV8glR1gVAV$6VdlSuMAkFDERXRYnq+LH3nkfx6tG4JTPmkR4b1Mgu0="),
-          ]
-          for username,email,first,last,pwhash in USERS:
-              cur.execute("""
-                insert into core_user
-                  (password,is_superuser,username,first_name,last_name,email,is_staff,is_active,date_joined,created_at,updated_at,is_reviewer)
-                values (%s,false,%s,%s,%s,%s,false,true,now(),now(),now(),true)
-                on conflict (username) do update set
-                  is_reviewer=true, is_staff=false, is_active=true,
-                  email=excluded.email, first_name=excluded.first_name,
-                  last_name=excluded.last_name, password=excluded.password, updated_at=now()
-              """,(pwhash,username,first,last,email))
-              print(f"  upsert OK: {username}")
-
-          cur.execute("select username,is_staff,is_reviewer,is_active from core_user where username in ('info@monomonosv.com','cayaguancaoe@gmail.com') order by username")
-          print("  usuarios:")
-          for r in cur.fetchall(): print("   ",r)
-          c.close()
-
-          # 3. páginas de prod
-          r1=requests.get(f"{SITE}/invitados/entrar/",timeout=30)
-          print(f"\n  /invitados/entrar/ -> {r1.status_code} (200=login OK)")
-          r2=requests.get(f"{SITE}/invitados/",timeout=30,allow_redirects=False)
-          loc=r2.headers.get("Location","")
-          print(f"  /invitados/ (anon) -> {r2.status_code} -> {loc} (debe redirigir al login)")
+          def gql(q,v=None): return requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=40).json()
+          q='query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{ serviceName serviceId latestDeployment{ id status } } } } } }'
+          d=gql(q,{"e":ENV})
+          rm='mutation($id:String!){ deploymentRemove(id:$id) }'
+          ACTIVE={"SUCCESS","DEPLOYING","BUILDING","INITIALIZING","WAITING","QUEUED"}
+          for e in d["data"]["environment"]["serviceInstances"]["edges"]:
+              n=e["node"]; ld=n.get("latestDeployment") or {}; name=n["serviceName"]; st=ld.get("status")
+              print(f"  {name:14s} {st}")
+              if name in ("worker","worker_fast","beat") and st in ACTIVE and ld.get("id"):
+                  r=gql(rm,{"id":ld["id"]})
+                  print(f"    -> apagado: {r.get('data',{}).get('deploymentRemove')}")
           print("FIN")
           PY
