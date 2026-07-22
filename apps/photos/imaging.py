@@ -298,7 +298,7 @@ def generate_clean_render(original_bytes: bytes, long_edge: int, quality: int) -
     reducido y limpio (honra la orientación EXIF). NO aplica logos de marca — es
     para el área de invitados, donde se ve y se baja todo sin marca.
     """
-    img = Image.open(BytesIO(original_bytes))
+    img: Image.Image = Image.open(BytesIO(original_bytes))
     img = ImageOps.exif_transpose(img) or img
     img.thumbnail((long_edge, long_edge), Image.Resampling.LANCZOS)
     buf = BytesIO()
