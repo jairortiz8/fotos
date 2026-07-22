@@ -119,6 +119,27 @@ def test_gallery_404_when_not_reviewer_visible() -> None:
 
 
 @pytest.mark.django_db
+def test_gallery_photographer_folders() -> None:
+    """Carpetas por fotógrafo: vista de carpetas + filtrar por un fotógrafo."""
+    from tests.factories import PhotographerLinkFactory
+
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=True)
+    link = PhotographerLinkFactory(event=event, photographer_name="Carlos Milan")
+    ApprovedPhotoFactory(event=event, photographer_link=link)
+    c = Client()
+    c.force_login(_reviewer())
+
+    folders = c.get(reverse("reviewer:gallery", kwargs={"slug": event.slug}) + "?vista=fotografos")
+    assert folders.status_code == 200
+    assert b"Carlos Milan" in folders.content
+
+    filtered = c.get(
+        reverse("reviewer:gallery", kwargs={"slug": event.slug}) + f"?fotografo={link.id}"
+    )
+    assert filtered.status_code == 200
+
+
+@pytest.mark.django_db
 def test_gallery_redirects_anonymous() -> None:
     event = EventFactory()
     resp = Client().get(reverse("reviewer:gallery", kwargs={"slug": event.slug}))

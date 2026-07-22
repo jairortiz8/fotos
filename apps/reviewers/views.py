@@ -108,11 +108,40 @@ class ReviewerGalleryView(ReviewerRequiredMixin, View):
         event = get_object_or_404(
             Event.objects.exclude(status=EventStatus.DELETED), slug=slug, reviewer_visible=True
         )
-        qs = Photo.objects.filter(event=event, status=PhotoStatus.APPROVED).order_by(
-            "capture_time", "created_at"
-        )
+
+        # Vista "carpetas por fotógrafo".
+        if request.GET.get("vista") == "fotografos":
+            folders = list(
+                event.photographer_links.annotate(
+                    approved_count=Count("photos", filter=Q(photos__status=PhotoStatus.APPROVED))
+                )
+                .filter(approved_count__gt=0)
+                .order_by("-approved_count", "photographer_name")
+            )
+            return render(
+                request,
+                "reviewer/gallery.html",
+                {"event": event, "folders": folders, "vista": "fotografos"},
+            )
+
+        # Foto grid (todas, o filtradas por un fotógrafo).
+        photographer = None
+        fid = request.GET.get("fotografo", "")
+        if fid.isdigit():
+            photographer = event.photographer_links.filter(id=int(fid)).first()
+            if photographer is None:
+                raise Http404
+        qs = Photo.objects.filter(event=event, status=PhotoStatus.APPROVED)
+        if photographer is not None:
+            qs = qs.filter(photographer_link=photographer)
+        qs = qs.order_by("capture_time", "created_at")
         page = Paginator(qs, GALLERY_PAGE_SIZE).get_page(request.GET.get("page"))
-        ctx = {"event": event, "page_obj": page, "photos": page.object_list}
+        ctx = {
+            "event": event,
+            "page_obj": page,
+            "photos": page.object_list,
+            "photographer": photographer,
+        }
         template = (
             "reviewer/_grid.html" if getattr(request, "htmx", False) else "reviewer/gallery.html"
         )

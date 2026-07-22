@@ -5,11 +5,21 @@
 
 {% block body %}
 <div class="max-w-6xl mx-auto px-4 md:px-8 py-6">
-  <header class="flex flex-wrap items-center justify-between gap-3 mb-5">
+  <header class="flex flex-wrap items-center justify-between gap-3 mb-4">
     <div class="min-w-0">
       <a href="{% url 'reviewer:index' %}" class="text-[12px] text-text-3 hover:text-text-1">← {% trans "Galerías" %}</a>
       <h1 class="font-display font-bold text-xl md:text-2xl tracking-tight truncate">{{ event.name }}</h1>
-      <p class="font-mono text-[10px] text-text-3 uppercase tracking-wider">{{ event.date|date:"d M Y" }} · {{ page_obj.paginator.count }} {% trans "fotos" %}</p>
+      {% if vista == 'fotografos' %}
+        <p class="font-mono text-[10px] text-text-3 uppercase tracking-wider">{% trans "Carpetas por fotógrafo" %}</p>
+      {% elif photographer %}
+        <p class="font-mono text-[11px] text-text-3">
+          <a href="?vista=fotografos" class="hover:text-text-1">{% trans "Fotógrafos" %}</a>
+          <span class="text-text-2"> / {{ photographer.photographer_name }}</span>
+          · {{ page_obj.paginator.count }} {% trans "fotos" %}
+        </p>
+      {% else %}
+        <p class="font-mono text-[10px] text-text-3 uppercase tracking-wider">{{ event.date|date:"d M Y" }} · {{ page_obj.paginator.count }} {% trans "fotos" %}</p>
+      {% endif %}
     </div>
     <form method="post" action="{% url 'reviewer:logout' %}">
       {% csrf_token %}
@@ -17,18 +27,55 @@
     </form>
   </header>
 
-  <p class="text-[12px] text-text-3 mb-4">
-    {% trans "Tocá una foto para verla en grande sin logos. El botón la descarga en alta resolución, original y sin marca de agua." %}
-  </p>
-
-  <div id="grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
-    {% include "reviewer/_grid.html" %}
+  {# Toggle: Todas (por hora) | Por fotógrafo #}
+  <div class="flex items-center gap-1.5 text-[13px] mb-4">
+    <a href="{% url 'reviewer:gallery' slug=event.slug %}"
+       class="px-3 py-1.5 rounded-full font-medium transition {% if vista != 'fotografos' %}bg-ink-1 text-text-1 border border-border{% else %}text-text-2 hover:text-text-1{% endif %}">{% trans "Todas" %}</a>
+    <a href="{% url 'reviewer:gallery' slug=event.slug %}?vista=fotografos"
+       class="px-3 py-1.5 rounded-full font-medium transition {% if vista == 'fotografos' %}bg-ink-1 text-text-1 border border-border{% else %}text-text-2 hover:text-text-1{% endif %}">{% trans "Por fotógrafo" %}</a>
   </div>
 
-  {% if page_obj.has_next %}
-    <div class="text-center mt-6">
-      <a href="?page={{ page_obj.next_page_number }}" class="rf-cta">{% trans "Ver más fotos" %}</a>
+  {% if vista == 'fotografos' %}
+    {# ===== Carpetas por fotógrafo ===== #}
+    {% if folders %}
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      {% for f in folders %}
+      <a href="?fotografo={{ f.id }}"
+         class="group relative block aspect-[16/10] rounded-xl overflow-hidden border border-border hover:border-text-3 transition-colors">
+        {% if f.featured_url %}
+          <img src="{{ f.featured_url }}" alt="{{ f.photographer_name }}" loading="lazy" decoding="async"
+               class="absolute inset-0 w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.06]">
+        {% else %}
+          <div class="absolute inset-0" style="background: radial-gradient(130% 130% at 112% -12%, rgba(252,82,0,0.20), transparent 56%), linear-gradient(135deg, #1b1519 0%, #0d0d0f 100%);"></div>
+        {% endif %}
+        <div class="absolute inset-0 pointer-events-none" style="background: linear-gradient(180deg, rgba(10,10,11,0.45) 0%, rgba(10,10,11,0) 34%, rgba(10,10,11,0.92) 100%);"></div>
+        <div class="absolute top-3 right-3">
+          <span class="font-mono text-[11px] text-data px-2 py-1 rounded-md backdrop-blur-sm" style="background: rgba(0,0,0,0.45);">{{ f.approved_count }} {% trans "FOTOS" %}</span>
+        </div>
+        <div class="absolute inset-x-0 bottom-0 p-4">
+          <div class="font-mono text-[9px] text-text-3 tracking-[0.12em] uppercase mb-1">{% trans "Fotógrafo" %}</div>
+          <h3 class="font-display font-bold text-text-1 text-[16px] leading-tight truncate">{{ f.photographer_name }}</h3>
+        </div>
+      </a>
+      {% endfor %}
     </div>
+    {% else %}
+    <p class="text-center py-16 text-text-3 font-mono text-sm">{% trans "Todavía no hay carpetas de fotógrafos en este evento." %}</p>
+    {% endif %}
+
+  {% else %}
+    {# ===== Grid de fotos (todas o de un fotógrafo) ===== #}
+    <p class="text-[12px] text-text-3 mb-4">
+      {% trans "Tocá una foto para verla en grande sin logos. El botón la descarga en alta resolución, original y sin marca de agua." %}
+    </p>
+    <div id="grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+      {% include "reviewer/_grid.html" %}
+    </div>
+    {% if page_obj.has_next %}
+      <div class="text-center mt-6">
+        <a href="?page={{ page_obj.next_page_number }}{% if photographer %}&fotografo={{ photographer.id }}{% endif %}" class="rf-cta">{% trans "Ver más fotos" %}</a>
+      </div>
+    {% endif %}
   {% endif %}
 </div>
 {% endblock %}
