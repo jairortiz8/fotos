@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}{{ event.name }} · {% trans "Invitado" %} · {{ site_name }}{% endblock %}
+{% block privacy_banner %}{% endblock %}
+
+{% block body %}
+<div class="max-w-6xl mx-auto px-4 md:px-8 py-6">
+  <header class="flex flex-wrap items-center justify-between gap-3 mb-5">
+    <div class="min-w-0">
+      <a href="{% url 'reviewer:index' %}" class="text-[12px] text-text-3 hover:text-text-1">← {% trans "Galerías" %}</a>
+      <h1 class="font-display font-bold text-xl md:text-2xl tracking-tight truncate">{{ event.name }}</h1>
+      <p class="font-mono text-[10px] text-text-3 uppercase tracking-wider">{{ event.date|date:"d M Y" }} · {{ page_obj.paginator.count }} {% trans "fotos" %}</p>
+    </div>
+    <form method="post" action="{% url 'reviewer:logout' %}">
+      {% csrf_token %}
+      <button type="submit" class="rf-ghost text-[12px]" style="padding:.4rem .8rem">{% trans "Salir" %}</button>
+    </form>
+  </header>
+
+  <p class="text-[12px] text-text-3 mb-4">
+    {% trans "Tocá una foto para verla en grande sin logos. El botón la descarga en alta resolución, original y sin marca de agua." %}
+  </p>
+
+  <div id="grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+    {% include "reviewer/_grid.html" %}
+  </div>
+
+  {% if page_obj.has_next %}
+    <div class="text-center mt-6">
+      <a href="?page={{ page_obj.next_page_number }}" class="rf-cta">{% trans "Ver más fotos" %}</a>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

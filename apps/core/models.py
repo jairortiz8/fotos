@@ -44,6 +44,18 @@ class User(AbstractUser):
     created_at = models.DateTimeField(_("creado en"), auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(_("actualizado en"), auto_now=True)
 
+    # Rol "invitado": puede entrar a las galerías privadas (`/invitados/`) y
+    # descargar los ORIGINALES LIMPIOS (sin logos), pero NO tiene acceso al panel
+    # admin (`is_staff=False`). Pensado para community managers del organizador.
+    is_reviewer = models.BooleanField(
+        _("invitado (solo ver/descargar)"),
+        default=False,
+        help_text=_(
+            "Ve las galerías privadas y baja los originales sin logos. "
+            "No entra al panel de administración."
+        ),
+    )
+
     class Meta(AbstractUser.Meta):
         verbose_name = _("usuario")  # type: ignore[assignment]
         verbose_name_plural = _("usuarios")  # type: ignore[assignment]

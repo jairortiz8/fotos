@@ -27,6 +27,8 @@ urlpatterns = [
         name="django.contrib.sitemaps.views.sitemap",
     ),
     path("u/", include("apps.photographers.urls", namespace="photographer")),
+    # Rol invitado (community managers): ver galerías + descargar originales limpios.
+    path("invitados/", include("apps.reviewers.urls", namespace="reviewer")),
     path("eventos/", include("apps.events.urls", namespace="events")),
     path("descargas/", include("apps.downloads.urls", namespace="downloads")),
     path("privacidad/", include("apps.privacy.urls", namespace="privacy")),

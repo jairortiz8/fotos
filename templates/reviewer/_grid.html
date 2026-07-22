@@ -1,0 +1,17 @@
+{% load i18n %}
+{% comment %}Grid de fotos del invitado: thumbnail → ver original limpio; botón → descarga limpia.{% endcomment %}
+{% for photo in photos %}
+  <div class="relative group bg-ink-2 aspect-square overflow-hidden rounded">
+    <a href="{{ photo.get_original_url }}" target="_blank" rel="noopener"
+       title="{% trans 'Ver en grande, sin logos' %}">
+      <img src="{{ photo.get_thumbnail_url }}" alt=""
+           class="w-full h-full object-cover group-hover:opacity-90 transition"
+           loading="lazy" decoding="async">
+    </a>
+    <a href="{% url 'reviewer:download' photo_id=photo.id %}" download
+       class="absolute bottom-1.5 right-1.5 rf-cta !py-1 !px-2.5 text-[11px] shadow"
+       title="{% trans 'Descargar original sin logos' %}">
+      ↓ {% trans "Bajar" %}
+    </a>
+  </div>
+{% endfor %}

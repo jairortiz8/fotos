@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Galerías" %} · {{ site_name }}{% endblock %}
+{% block privacy_banner %}{% endblock %}
+
+{% block body %}
+<div class="max-w-5xl mx-auto px-5 md:px-8 py-8">
+  <header class="flex flex-wrap items-center justify-between gap-3 mb-7">
+    <div class="flex items-center gap-2">
+      {% include "_partials/wordmark.html" with size="20px" %}
+      <span class="font-mono text-[10px] tracking-[0.16em] text-text-3 uppercase">{% trans "Invitado" %}</span>
+    </div>
+    <form method="post" action="{% url 'reviewer:logout' %}">
+      {% csrf_token %}
+      <button type="submit" class="rf-ghost text-[12px]" style="padding:.4rem .8rem">{% trans "Salir" %}</button>
+    </form>
+  </header>
+
+  <h1 class="font-display font-bold text-2xl tracking-tight mb-1">{% trans "Galerías del evento" %}</h1>
+  <p class="text-text-3 text-[13px] mb-6">{% trans "Elegí un evento para ver y descargar las fotos en alta resolución, sin logos ni marca de agua." %}</p>
+
+  <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+    {% for e in events %}
+      <a href="{% url 'reviewer:gallery' slug=e.slug %}" class="rf-card overflow-hidden group">
+        <div class="aspect-[16/10] bg-ink-2 overflow-hidden">
+          {% if e.cover_url %}
+            <img src="{{ e.cover_url }}" alt="" class="w-full h-full object-cover group-hover:scale-[1.03] transition" loading="lazy">
+          {% endif %}
+        </div>
+        <div class="p-4">
+          <div class="text-[14px] font-semibold truncate">{{ e.name }}</div>
+          <div class="font-mono text-[10px] text-text-3 uppercase tracking-wider mt-0.5">
+            {{ e.date|date:"d M Y" }}{% if e.location %} · {{ e.location }}{% endif %}
+          </div>
+          <div class="mt-2 text-[12px] text-data rf-num">{{ e.n_aprobadas }} {% trans "fotos" %}</div>
+        </div>
+      </a>
+    {% empty %}
+      <p class="text-text-3 text-sm col-span-full py-10 text-center">{% trans "Todavía no hay eventos con fotos aprobadas." %}</p>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
