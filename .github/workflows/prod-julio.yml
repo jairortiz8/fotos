@@ -4,9 +4,10 @@ on:
   push:
     branches: ["run-julio"]
 
-# Post-deploy: espera el web (migra reviewer_visible) y PRENDE el flag solo en Surf City.
+# Post-deploy: espera el web, verifica head_object de R2 (que exists() maneja el
+# 404 real) + un roundtrip de imagen limpia, y liveness del login invitado.
 jobs:
-  flag:
+  verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -19,39 +20,65 @@ jobs:
       SITE: https://findyourfoto.com
     steps:
       - name: deps
-        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" requests
-      - name: esperar web + prender flag Surf City
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" requests boto3 pillow
+      - name: verify
         run: |
           python3 - <<'PY'
-          import os, time, requests
+          import os, time, io, requests
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]; ENV=os.environ["ENV_ID"]
           PROJ=os.environ["PROJECT_ID"]; PG=os.environ["PG_ID"]; WEB=os.environ["WEB_ID"]; SITE=os.environ["SITE"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
           def gql(q,v=None): return requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=40).json()
+          def vars_of(sid):
+              q='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+              return gql(q,{"p":PROJ,"e":ENV,"s":sid}).get("data",{}).get("variables") or {}
+          # 1. esperar web
           q='query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{ serviceId latestDeployment{ status } } } } } }'
-          print("== esperando WEB ==")
           for i in range(40):
               d=gql(q,{"e":ENV}); st=None
               for e in d.get("data",{}).get("environment",{}).get("serviceInstances",{}).get("edges",[]):
                   if e["node"]["serviceId"]==WEB: st=(e["node"].get("latestDeployment") or {}).get("status")
-              print(f"  web[{i}] {st}")
+              print("web",i,st)
               if st=="SUCCESS": break
-              if st in ("FAILED","CRASHED"): print("  WEB FALLO"); break
+              if st in ("FAILED","CRASHED"): raise SystemExit("web deploy FALLO")
               time.sleep(15)
-          qv='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          dburl=(gql(qv,{"p":PROJ,"e":ENV,"s":PG}).get("data",{}).get("variables") or {}).get("DATABASE_PUBLIC_URL")
+          wv=vars_of(WEB)
+          # 2. R2: head_object en key inexistente -> ver el código de error
+          import boto3
+          from botocore.exceptions import ClientError
+          s3=boto3.client("s3", endpoint_url=wv.get("R2_ENDPOINT_URL"),
+                          aws_access_key_id=wv.get("R2_ACCESS_KEY_ID"),
+                          aws_secret_access_key=wv.get("R2_SECRET_ACCESS_KEY"), region_name="auto")
+          bucket=wv.get("R2_BUCKET_NAME")
+          try:
+              s3.head_object(Bucket=bucket, Key="reviewer_clean/__no_existe__.webp")
+              print("head_object missing -> NO error (raro)")
+          except ClientError as ex:
+              code=str(ex.response.get("Error",{}).get("Code"))
+              handled = code in ("404","NoSuchKey","NotFound")
+              print(f"head_object missing -> code={code!r} · exists() lo maneja={handled}")
+          # 3. roundtrip real: una foto aprobada de Surf City
+          dburl=vars_of(PG).get("DATABASE_PUBLIC_URL")
           import psycopg
-          c=psycopg.connect(dburl,connect_timeout=25); c.autocommit=True; cur=c.cursor()
-          cur.execute("select column_name from information_schema.columns where table_name='events_event' and column_name='reviewer_visible'")
-          if cur.fetchone() is None:
-              print("  ABORTO: columna reviewer_visible aún no existe"); raise SystemExit(1)
-          cur.execute("update events_event set reviewer_visible=true where slug='surf-city-2026'")
-          print("  filas actualizadas:", cur.rowcount)
-          cur.execute("select slug,name,reviewer_visible from events_event where reviewer_visible=true order by slug")
-          print("  eventos visibles para invitados:")
-          for r in cur.fetchall(): print("   ", r)
-          c.close()
-          r=requests.get(f"{SITE}/invitados/entrar/",timeout=30)
-          print(f"  /invitados/entrar/ -> {r.status_code}")
+          c=psycopg.connect(dburl,connect_timeout=25);cur=c.cursor()
+          cur.execute("""select p.id,p.original_key from photos_photo p join events_event e on e.id=p.event_id
+                         where e.slug='surf-city-2026' and p.status='approved' and p.original_key<>'' limit 1""")
+          pid,okey=cur.fetchone(); c.close()
+          buf=io.BytesIO(); s3.download_fileobj(bucket,okey,buf); buf.seek(0)
+          from PIL import Image, ImageOps
+          img=Image.open(buf); img=ImageOps.exif_transpose(img) or img
+          img.thumbnail((640,640)); out=io.BytesIO(); img.convert("RGB").save(out,format="WEBP",quality=80); out.seek(0)
+          tkey=f"reviewer_clean/surf-city-2026/{pid}_thumb.webp"
+          s3.upload_fileobj(out,bucket,tkey,ExtraArgs={"ContentType":"image/webp"})
+          exists = True
+          try: s3.head_object(Bucket=bucket,Key=tkey)
+          except ClientError: exists=False
+          url=s3.generate_presigned_url("get_object",Params={"Bucket":bucket,"Key":tkey},ExpiresIn=600)
+          g=requests.get(url,timeout=30)
+          print(f"roundtrip foto {pid}: subida+head={exists} · GET firmado={g.status_code} · ctype={g.headers.get('Content-Type')} · bytes={len(g.content)}")
+          # limpiar la key de prueba
+          s3.delete_object(Bucket=bucket,Key=tkey); print("  key de prueba borrada")
+          # 4. liveness login
+          print("/invitados/entrar/ ->", requests.get(f"{SITE}/invitados/entrar/",timeout=30).status_code)
           print("FIN")
           PY
