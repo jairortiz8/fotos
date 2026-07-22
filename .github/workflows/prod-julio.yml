@@ -4,49 +4,44 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  validate:
+  rep:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env: { POSTGRES_USER: runfoto, POSTGRES_PASSWORD: runfoto, POSTGRES_DB: runfoto }
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U runfoto -d runfoto" --health-interval 5s --health-timeout 3s --health-retries 10
-      redis:
-        image: redis:7-alpine
-        ports: ["6379:6379"]
-        options: >-
-          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    timeout-minutes: 10
     env:
-      DJANGO_SETTINGS_MODULE: config.settings.dev
-      SECRET_KEY: ci-secret-key-not-real
-      DEBUG: "True"
-      ALLOWED_HOSTS: "*"
-      DATABASE_URL: postgres://runfoto:runfoto@localhost:5432/runfoto
-      REDIS_URL: redis://localhost:6379/0
-      CELERY_BROKER_URL: redis://localhost:6379/1
-      CELERY_RESULT_BACKEND: redis://localhost:6379/2
-      SITE_NAME: "find your foto"
-      SITE_DOMAIN: localhost:8000
-      NOTIFIER_BACKEND: whatsapp_manual
-      LANGUAGE_CODE: es
-      TIME_ZONE: America/El_Salvador
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: claude/runfoto-security-audit-bknirm }
-      - name: system libs
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgl1 libglib2.0-0 libgomp1 libxcb1 libsm6 libxext6 libxrender1
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12", cache: pip, cache-dependency-path: pyproject.toml }
       - name: deps
-        run: python -m pip install --upgrade pip && pip install -e ".[dev]"
-      - run: ruff check .
-      - run: ruff format --check .
-      - run: black --check .
-      - run: mypy .
-      - run: python manage.py makemigrations --check --dry-run
-      - run: python manage.py migrate
-      - run: python manage.py check --deploy --fail-level WARNING || python manage.py check
-      - run: pytest -m "not slow and not e2e" -q
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" requests
+      - name: reporte
+        run: |
+          python3 - <<'PY'
+          import os, requests
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          q='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          v={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":os.environ["PG_ID"]}
+          dburl=(requests.post(API,headers=H,json={"query":q,"variables":v},timeout=40).json().get("data",{}).get("variables") or {}).get("DATABASE_PUBLIC_URL")
+          import psycopg
+          c=psycopg.connect(dburl,connect_timeout=25);cur=c.cursor()
+          cur.execute("select id from events_event where slug='surf-city-2026'"); eid=cur.fetchone()[0]
+          def one(s):cur.execute(s,(eid,));return cur.fetchone()[0]
+          print("subidas_aprobadas", one("select count(*) from photos_photo where event_id=%s and status='approved'"))
+          print("subidas_total", one("select count(*) from photos_photo where event_id=%s and status<>'deleted'"))
+          print("fotografos", one("select count(distinct photographer_link_id) from photos_photo where event_id=%s and status='approved'"))
+          print("fotos_con_dorsal", one("select count(distinct p.id) from photos_photo p join photos_bib b on b.photo_id=p.id where p.event_id=%s and p.status='approved' and b.rejected=false"))
+          print("dorsales_unicos", one("select count(distinct b.number) from photos_photo p join photos_bib b on b.photo_id=p.id where p.event_id=%s and p.status='approved' and b.rejected=false and b.number ~ '^[0-9]{1,5}$'"))
+          print("caras_indexadas", one("select count(*) from photos_faceembedding f join photos_photo p on p.id=f.photo_id where p.event_id=%s"))
+          print("fotos_con_cara", one("select count(*) from photos_photo where event_id=%s and status='approved' and has_faces_detected"))
+          cur.execute("select search_count, download_count from events_event where id=%s",(eid,)); sc,dc=cur.fetchone()
+          print("busquedas_total", sc)
+          # selfie searches ~= timestamps distintos de last_matched_at en los embeddings del evento
+          print("selfie_busquedas_aprox", one("select count(distinct f.last_matched_at) from photos_faceembedding f join photos_photo p on p.id=f.photo_id where p.event_id=%s and f.last_matched_at is not null"))
+          print("descargas", one("select coalesce(sum(download_count),0) from photos_photo where event_id=%s"))
+          print("fotos_distintas_descargadas", one("select count(*) from photos_photo where event_id=%s and download_count>0"))
+          print("vistas", one("select coalesce(sum(view_count),0) from photos_photo where event_id=%s"))
+          print("FIN")
+          PY
