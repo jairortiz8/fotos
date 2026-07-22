@@ -82,7 +82,7 @@ class ReviewerLoginView(LoginView):
 
 
 class ReviewerLogoutView(LogoutView):
-    next_page = reverse_lazy("reviewer:login")
+    next_page = reverse_lazy("reviewer:login")  # type: ignore[assignment]
 
 
 class ReviewerIndexView(ReviewerRequiredMixin, TemplateView):
