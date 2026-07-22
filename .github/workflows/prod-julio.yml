@@ -4,96 +4,87 @@ on:
   push:
     branches: ["run-julio"]
 
-# Valida la rama de feature (rol invitado) SIN deployar: lint + types + tests +
-# makemigrations/migrate contra un Postgres efímero.
+# Post-deploy del rol invitado: espera el web, verifica la migración + páginas,
+# crea (UPSERT) los 2 usuarios invitado. NO imprime contraseñas (repo público);
+# solo los HASHES (seguros) se usan acá; el plaintext lo pasa Claude por chat.
 jobs:
-  validate:
-    name: validate feature branch
+  createusers:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: runfoto
-          POSTGRES_PASSWORD: runfoto
-          POSTGRES_DB: runfoto
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U runfoto -d runfoto"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-
+    timeout-minutes: 20
     env:
-      DJANGO_SETTINGS_MODULE: config.settings.dev
-      SECRET_KEY: ci-secret-key-not-real
-      DEBUG: "True"
-      ALLOWED_HOSTS: "*"
-      DATABASE_URL: postgres://runfoto:runfoto@localhost:5432/runfoto
-      REDIS_URL: redis://localhost:6379/0
-      CELERY_BROKER_URL: redis://localhost:6379/1
-      CELERY_RESULT_BACKEND: redis://localhost:6379/2
-      SITE_NAME: "find your foto"
-      SITE_DOMAIN: localhost:8000
-      NOTIFIER_BACKEND: whatsapp_manual
-      LANGUAGE_CODE: es
-      TIME_ZONE: America/El_Salvador
-
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
+      SITE: https://findyourfoto.com
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: claude/runfoto-security-audit-bknirm
+      - name: deps
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.3" requests
 
-      - name: Install system libs for OpenCV/onnxruntime
+      - name: verificar + crear invitados
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libgl1 libglib2.0-0 libgomp1 libxcb1 libsm6 libxext6 libxrender1
+          python3 - <<'PY'
+          import os, time, requests
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          ENV=os.environ["ENV_ID"]; PROJ=os.environ["PROJECT_ID"]; PG=os.environ["PG_ID"]; WEB=os.environ["WEB_ID"]; SITE=os.environ["SITE"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          def gql(q,v=None):
+              return requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=40).json()
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
+          # 1. esperar el WEB (migrate agrega is_reviewer)
+          q='''query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{ serviceId serviceName latestDeployment{ id status } } } } } }'''
+          print("== esperando WEB ==")
+          for i in range(40):
+              d=gql(q,{"e":ENV}); st=None
+              for e in d.get("data",{}).get("environment",{}).get("serviceInstances",{}).get("edges",[]):
+                  n=e["node"]
+                  if n["serviceId"]==WEB: st=(n.get("latestDeployment") or {}).get("status")
+              print(f"  web[{i}] {st}")
+              if st=="SUCCESS": break
+              if st in ("FAILED","CRASHED"): print("  WEB deploy FALLO"); break
+              time.sleep(15)
 
-      - name: Install Python deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          # 2. DB
+          qv='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          dburl=(gql(qv,{"p":PROJ,"e":ENV,"s":PG}).get("data",{}).get("variables") or {}).get("DATABASE_PUBLIC_URL")
+          import psycopg
+          c=psycopg.connect(dburl,connect_timeout=25); c.autocommit=True; cur=c.cursor()
+          cur.execute("select column_name from information_schema.columns where table_name='core_user' and column_name='is_reviewer'")
+          has_col=cur.fetchone() is not None
+          print("  columna is_reviewer:", has_col)
+          if not has_col:
+              print("  ABORTO: la migración todavía no aplicó (is_reviewer no existe)"); raise SystemExit(1)
 
-      - name: Ruff (lint)
-        run: ruff check .
+          USERS=[
+            ("info@monomonosv.com","info@monomonosv.com","Rigoberto","Zaldaña",
+             "pbkdf2_sha256$1000000$WmTYSI64kSQRfAh1R1EZkZ$8vMvheG9WRWDp8Ebx5sTQkq9pBNR9q2/u4aQ2pqzAb4="),
+            ("cayaguancaoe@gmail.com","cayaguancaoe@gmail.com","Invitado","Prueba",
+             "pbkdf2_sha256$1000000$6f4HhuxkvgTHV8glR1gVAV$6VdlSuMAkFDERXRYnq+LH3nkfx6tG4JTPmkR4b1Mgu0="),
+          ]
+          for username,email,first,last,pwhash in USERS:
+              cur.execute("""
+                insert into core_user
+                  (password,is_superuser,username,first_name,last_name,email,is_staff,is_active,date_joined,created_at,updated_at,is_reviewer)
+                values (%s,false,%s,%s,%s,%s,false,true,now(),now(),now(),true)
+                on conflict (username) do update set
+                  is_reviewer=true, is_staff=false, is_active=true,
+                  email=excluded.email, first_name=excluded.first_name,
+                  last_name=excluded.last_name, password=excluded.password, updated_at=now()
+              """,(pwhash,username,first,last,email))
+              print(f"  upsert OK: {username}")
 
-      - name: Ruff (format)
-        run: ruff format --check .
+          cur.execute("select username,is_staff,is_reviewer,is_active from core_user where username in ('info@monomonosv.com','cayaguancaoe@gmail.com') order by username")
+          print("  usuarios:")
+          for r in cur.fetchall(): print("   ",r)
+          c.close()
 
-      - name: Black (check)
-        run: black --check .
-
-      - name: Mypy
-        run: mypy .
-
-      - name: makemigrations --check (no pending)
-        run: python manage.py makemigrations --check --dry-run
-
-      - name: Migrate (aplica 0002_user_is_reviewer)
-        run: python manage.py migrate
-
-      - name: Django check
-        run: python manage.py check --deploy --fail-level WARNING || python manage.py check
-
-      - name: Pytest (reviewers + resto)
-        run: pytest -m "not slow and not e2e" -q
+          # 3. páginas de prod
+          r1=requests.get(f"{SITE}/invitados/entrar/",timeout=30)
+          print(f"\n  /invitados/entrar/ -> {r1.status_code} (200=login OK)")
+          r2=requests.get(f"{SITE}/invitados/",timeout=30,allow_redirects=False)
+          loc=r2.headers.get("Location","")
+          print(f"  /invitados/ (anon) -> {r2.status_code} -> {loc} (debe redirigir al login)")
+          print("FIN")
+          PY
