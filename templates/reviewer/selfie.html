@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Buscar por selfie" %} · {{ event.name }} · {{ site_name }}{% endblock %}
+{% block privacy_banner %}{% endblock %}
+
+{% block body %}
+<div class="max-w-md mx-auto px-5 py-8">
+  <a href="{% url 'reviewer:gallery' slug=event.slug %}" class="text-[12px] text-text-3 hover:text-text-1">← {{ event.name }}</a>
+  <h1 class="font-display font-bold text-2xl tracking-tight mt-1 mb-1">{% trans "Buscar por selfie" %}</h1>
+  <p class="text-text-3 text-[13px] mb-6">{% trans "Subí una foto de la cara y encontramos las fotos donde aparece. La descarga es el original sin logos." %}</p>
+
+  {% if disabled %}
+    <div class="rf-card p-6 text-center">
+      <p class="text-text-2 text-sm">{% trans "La búsqueda por selfie no está disponible en este momento." %}</p>
+      <a href="{% url 'reviewer:gallery' slug=event.slug %}" class="rf-cta mt-4 inline-flex">{% trans "Volver a la galería" %}</a>
+    </div>
+  {% else %}
+    {% if error %}
+      <div class="rf-pill rf-pill--red !text-xs mb-4 w-full justify-center">
+        {% if error == 'no_face' %}{% trans "No detectamos una cara. Probá con una foto de frente y bien iluminada." %}
+        {% elif error == 'multiple' %}{% trans "Detectamos varias caras. Subí una foto con una sola persona." %}
+        {% elif error == 'too_large' %}{% trans "La imagen es muy grande (máx. 10 MB)." %}
+        {% elif error == 'invalid' %}{% trans "No se pudo leer la imagen. Probá con otra." %}
+        {% else %}{% trans "Subí una foto para buscar." %}{% endif %}
+      </div>
+    {% endif %}
+
+    <form method="post" enctype="multipart/form-data" action="{% url 'reviewer:selfie' slug=event.slug %}"
+          class="rf-card p-6 space-y-4">
+      {% csrf_token %}
+      <label class="rf-label" for="id_selfie">{% trans "Foto (selfie)" %}</label>
+      <input type="file" id="id_selfie" name="selfie" accept="image/*" required
+             class="rf-input !py-2 text-sm">
+      <button type="submit" class="rf-cta rf-cta--full rf-cta--lg">{% trans "Buscar mis fotos" %}</button>
+    </form>
+
+    <p class="text-[11px] text-text-3 mt-4 leading-relaxed">
+      {% trans "El selfie se procesa en el momento y no se guarda: se usa solo para encontrar las coincidencias y se descarta." %}
+    </p>
+  {% endif %}
+</div>
+{% endblock %}

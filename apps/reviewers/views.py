@@ -15,6 +15,7 @@ from __future__ import annotations
 from io import BytesIO
 from typing import Any
 
+from django.conf import settings
 from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth.mixins import AccessMixin
 from django.contrib.auth.views import LoginView, LogoutView, redirect_to_login
@@ -109,6 +110,11 @@ class ReviewerGalleryView(ReviewerRequiredMixin, View):
             Event.objects.exclude(status=EventStatus.DELETED), slug=slug, reviewer_visible=True
         )
 
+        # Búsqueda por dorsal (OCR) dentro del evento.
+        bib_query = request.GET.get("bib", "").strip()
+        if bib_query:
+            return self._bib_search(request, event, bib_query)
+
         # Vista "carpetas por fotógrafo".
         if request.GET.get("vista") == "fotografos":
             folders = list(
@@ -146,6 +152,95 @@ class ReviewerGalleryView(ReviewerRequiredMixin, View):
             "reviewer/_grid.html" if getattr(request, "htmx", False) else "reviewer/gallery.html"
         )
         return render(request, template, ctx)
+
+    def _bib_search(self, request: HttpRequest, event: Event, raw: str) -> HttpResponse:
+        from apps.core.utils import bib_query_variants, is_valid_bib_format, normalize_bib_query
+
+        bib = normalize_bib_query(raw)
+        photos: list[Photo] = []
+        invalid = not is_valid_bib_format(bib)
+        if not invalid:
+            photos = list(
+                Photo.objects.filter(
+                    event=event,
+                    status=PhotoStatus.APPROVED,
+                    bibs__number__in=bib_query_variants(bib),
+                    bibs__rejected=False,
+                )
+                .distinct()
+                .order_by("capture_time", "created_at")[:200]
+            )
+        return render(
+            request,
+            "reviewer/gallery.html",
+            {
+                "event": event,
+                "photos": photos,
+                "is_search": True,
+                "bib_query": bib,
+                "invalid_bib": invalid,
+            },
+        )
+
+
+class ReviewerSelfieSearchView(ReviewerRequiredMixin, View):
+    """Búsqueda por selfie para invitados. Procesa el selfie EN MEMORIA (nunca lo
+    persiste — igual que la búsqueda pública, ADR 0006) y muestra los matches con
+    descarga del original limpio."""
+
+    MAX_SELFIE_BYTES = 10 * 1024 * 1024
+
+    def _event(self, slug: str) -> Event:
+        return get_object_or_404(
+            Event.objects.exclude(status=EventStatus.DELETED), slug=slug, reviewer_visible=True
+        )
+
+    def get(self, request: HttpRequest, slug: str) -> HttpResponse:
+        event = self._event(slug)
+        ctx = {"event": event, "disabled": not settings.FACE_SEARCH_ENABLED}
+        return render(request, "reviewer/selfie.html", ctx)
+
+    def post(self, request: HttpRequest, slug: str) -> HttpResponse:
+        event = self._event(slug)
+        if not settings.FACE_SEARCH_ENABLED:
+            return render(request, "reviewer/selfie.html", {"event": event, "disabled": True})
+
+        selfie = request.FILES.get("selfie")
+        if not selfie:
+            return render(request, "reviewer/selfie.html", {"event": event, "error": "no_selfie"})
+        if selfie.size and selfie.size > self.MAX_SELFIE_BYTES:
+            return render(request, "reviewer/selfie.html", {"event": event, "error": "too_large"})
+
+        # Procesamiento EN MEMORIA — el embedding del selfie se descarta al terminar.
+        from apps.ml.face_recognition import (
+            InvalidImageError,
+            MultipleFacesDetectedError,
+            NoFaceDetectedError,
+            embedding_from_bytes,
+        )
+        from apps.search.views import search_faces_by_similarity
+
+        try:
+            query_embedding = embedding_from_bytes(selfie.read())
+        except NoFaceDetectedError:
+            return render(request, "reviewer/selfie.html", {"event": event, "error": "no_face"})
+        except MultipleFacesDetectedError:
+            return render(request, "reviewer/selfie.html", {"event": event, "error": "multiple"})
+        except InvalidImageError:
+            return render(request, "reviewer/selfie.html", {"event": event, "error": "invalid"})
+
+        matches = search_faces_by_similarity(event, query_embedding.tolist())
+        return render(
+            request,
+            "reviewer/gallery.html",
+            {
+                "event": event,
+                "photos": matches,
+                "is_search": True,
+                "selfie_search": True,
+                "match_count": len(matches),
+            },
+        )
 
 
 class ReviewerPhotoDownloadView(ReviewerRequiredMixin, View):

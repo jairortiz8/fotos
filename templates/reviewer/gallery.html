@@ -17,7 +17,7 @@
           <span class="text-text-2"> / {{ photographer.photographer_name }}</span>
           · {{ page_obj.paginator.count }} {% trans "fotos" %}
         </p>
-      {% else %}
+      {% elif not is_search %}
         <p class="font-mono text-[10px] text-text-3 uppercase tracking-wider">{{ event.date|date:"d M Y" }} · {{ page_obj.paginator.count }} {% trans "fotos" %}</p>
       {% endif %}
     </div>
@@ -27,16 +27,46 @@
     </form>
   </header>
 
-  {# Toggle: Todas (por hora) | Por fotógrafo #}
-  <div class="flex items-center gap-1.5 text-[13px] mb-4">
-    <a href="{% url 'reviewer:gallery' slug=event.slug %}"
-       class="px-3 py-1.5 rounded-full font-medium transition {% if vista != 'fotografos' %}bg-ink-1 text-text-1 border border-border{% else %}text-text-2 hover:text-text-1{% endif %}">{% trans "Todas" %}</a>
-    <a href="{% url 'reviewer:gallery' slug=event.slug %}?vista=fotografos"
-       class="px-3 py-1.5 rounded-full font-medium transition {% if vista == 'fotografos' %}bg-ink-1 text-text-1 border border-border{% else %}text-text-2 hover:text-text-1{% endif %}">{% trans "Por fotógrafo" %}</a>
+  {# ===== Barra de búsqueda: dorsal + selfie ===== #}
+  <div class="flex flex-wrap items-center gap-2 mb-4">
+    <form method="get" action="{% url 'reviewer:gallery' slug=event.slug %}" class="flex items-center gap-2">
+      <input type="text" name="bib" value="{{ bib_query|default:'' }}" inputmode="numeric"
+             placeholder="{% trans 'Buscar por dorsal…' %}" aria-label="{% trans 'Número de dorsal' %}"
+             class="rf-input !py-2 !w-auto text-sm" style="min-width:180px">
+      <button type="submit" class="rf-cta" style="padding:.5rem .9rem">{% trans "Buscar" %}</button>
+    </form>
+    <a href="{% url 'reviewer:selfie' slug=event.slug %}" class="rf-ghost text-[13px]" style="padding:.5rem .9rem">
+      {% trans "Buscar por selfie" %}
+    </a>
+    {% if is_search %}
+      <a href="{% url 'reviewer:gallery' slug=event.slug %}" class="text-[12px] text-text-3 hover:text-text-1 ml-1">✕ {% trans "Limpiar" %}</a>
+    {% endif %}
   </div>
 
-  {% if vista == 'fotografos' %}
+  {% if is_search %}
+    {# ===== Resultados de búsqueda (dorsal o selfie) ===== #}
+    {% if selfie_search %}
+      <p class="text-[13px] text-text-2 mb-3">{% blocktrans count n=match_count %}{{ n }} coincidencia por selfie.{% plural %}{{ n }} coincidencias por selfie.{% endblocktrans %}</p>
+    {% elif invalid_bib %}
+      <p class="text-[13px] text-danger mb-3">{% trans "Dorsal inválido. Probá solo con números." %}</p>
+    {% else %}
+      <p class="text-[13px] text-text-2 mb-3">{% blocktrans count n=photos|length with bib=bib_query %}{{ n }} foto con el dorsal {{ bib }}.{% plural %}{{ n }} fotos con el dorsal {{ bib }}.{% endblocktrans %}</p>
+    {% endif %}
+    {% if photos %}
+      <p class="text-[12px] text-text-3 mb-4">{% trans "El botón descarga el original sin logos." %}</p>
+      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+        {% include "reviewer/_grid.html" %}
+      </div>
+    {% elif not invalid_bib %}
+      <p class="text-center py-14 text-text-3 text-sm">{% trans "Sin resultados. Probá otro dorsal o buscá por selfie." %}</p>
+    {% endif %}
+
+  {% elif vista == 'fotografos' %}
     {# ===== Carpetas por fotógrafo ===== #}
+    <div class="flex items-center gap-1.5 text-[13px] mb-4">
+      <a href="{% url 'reviewer:gallery' slug=event.slug %}" class="px-3 py-1.5 rounded-full font-medium text-text-2 hover:text-text-1 transition">{% trans "Todas" %}</a>
+      <a href="?vista=fotografos" class="px-3 py-1.5 rounded-full font-medium bg-ink-1 text-text-1 border border-border">{% trans "Por fotógrafo" %}</a>
+    </div>
     {% if folders %}
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
       {% for f in folders %}
@@ -65,10 +95,14 @@
 
   {% else %}
     {# ===== Grid de fotos (todas o de un fotógrafo) ===== #}
+    <div class="flex items-center gap-1.5 text-[13px] mb-4">
+      <a href="{% url 'reviewer:gallery' slug=event.slug %}" class="px-3 py-1.5 rounded-full font-medium bg-ink-1 text-text-1 border border-border">{% trans "Todas" %}</a>
+      <a href="?vista=fotografos" class="px-3 py-1.5 rounded-full font-medium text-text-2 hover:text-text-1 transition">{% trans "Por fotógrafo" %}</a>
+    </div>
     <p class="text-[12px] text-text-3 mb-4">
       {% trans "Tocá una foto para verla en grande sin logos. El botón la descarga en alta resolución, original y sin marca de agua." %}
     </p>
-    <div id="grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
       {% include "reviewer/_grid.html" %}
     </div>
     {% if page_obj.has_next %}

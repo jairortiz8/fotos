@@ -146,6 +146,48 @@ def test_gallery_redirects_anonymous() -> None:
     assert resp.status_code == 302
 
 
+# --- Búsqueda por dorsal / selfie -------------------------------------------
+@pytest.mark.django_db
+def test_reviewer_bib_search() -> None:
+    from tests.factories import BibFactory
+
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=True)
+    photo = ApprovedPhotoFactory(event=event)
+    BibFactory(photo=photo, number="1234")
+    c = Client()
+    c.force_login(_reviewer())
+    resp = c.get(reverse("reviewer:gallery", kwargs={"slug": event.slug}) + "?bib=1234")
+    assert resp.status_code == 200
+    # La foto encontrada expone su link de descarga limpia.
+    assert f"/invitados/foto/{photo.id}/descargar/".encode() in resp.content
+
+
+@pytest.mark.django_db
+def test_reviewer_selfie_page_ok() -> None:
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=True)
+    c = Client()
+    c.force_login(_reviewer())
+    assert c.get(reverse("reviewer:selfie", kwargs={"slug": event.slug})).status_code == 200
+
+
+@pytest.mark.django_db
+def test_reviewer_selfie_404_when_not_visible() -> None:
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=False)
+    c = Client()
+    c.force_login(_reviewer())
+    assert c.get(reverse("reviewer:selfie", kwargs={"slug": event.slug})).status_code == 404
+
+
+@pytest.mark.django_db
+def test_reviewer_selfie_post_without_file_returns_error(settings) -> None:  # type: ignore[no-untyped-def]
+    settings.FACE_SEARCH_ENABLED = True
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=True)
+    c = Client()
+    c.force_login(_reviewer())
+    resp = c.post(reverse("reviewer:selfie", kwargs={"slug": event.slug}))
+    assert resp.status_code == 200  # vuelve al form con error, no procesa modelo
+
+
 # --- Descarga del original LIMPIO (sin logos) -------------------------------
 @pytest.mark.django_db
 def test_download_serves_clean_original_even_when_branded(r2) -> None:  # type: ignore[no-untyped-def]
