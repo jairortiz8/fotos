@@ -381,10 +381,8 @@ def test_gallery_first_page_has_infinite_scroll_sentinel(r2) -> None:  # type: i
     from apps.reviewers.views import GALLERY_PAGE_SIZE
 
     event = EventFactory(status=EventStatus.LIVE, reviewer_visible=True)
-    okey = "events/e/originals/foto.jpg"
-    r2.put_object(Bucket=BUCKET, Key=okey, Body=synthetic_jpeg_bytes("55"))
-    for _ in range(GALLERY_PAGE_SIZE + 5):
-        ApprovedPhotoFactory(event=event, original_key=okey)
+    for i in range(GALLERY_PAGE_SIZE + 5):
+        ApprovedPhotoFactory(event=event, original_key=f"events/e/originals/foto{i}.jpg")
 
     c = Client()
     c.force_login(_reviewer())
@@ -404,10 +402,8 @@ def test_gallery_htmx_page_returns_grid_chunk_with_ids(r2) -> None:  # type: ign
     from apps.reviewers.views import GALLERY_PAGE_SIZE
 
     event = EventFactory(status=EventStatus.LIVE, reviewer_visible=True)
-    okey = "events/e/originals/foto.jpg"
-    r2.put_object(Bucket=BUCKET, Key=okey, Body=synthetic_jpeg_bytes("55"))
-    for _ in range(GALLERY_PAGE_SIZE + 5):
-        ApprovedPhotoFactory(event=event, original_key=okey)
+    for i in range(GALLERY_PAGE_SIZE + 5):
+        ApprovedPhotoFactory(event=event, original_key=f"events/e/originals/foto{i}.jpg")
 
     c = Client()
     c.force_login(_reviewer())
