@@ -90,4 +90,26 @@ jobs:
 
       - name: Warm Surf City thumbnails (limpias, sin logos)
         run: |
-          python manage.py warm_reviewer_clean surf-city-2026 --sizes thumb
+          python manage.py shell <<'PY'
+          from apps.events.models import Event, EventStatus
+          from apps.reviewers.services import warm_event_clean_renders
+
+          vis = list(
+              Event.objects.filter(reviewer_visible=True)
+              .exclude(status=EventStatus.DELETED)
+              .values_list("slug", flat=True)
+          )
+          print("EVENTOS_REVIEWER_VISIBLE:", vis)
+
+          ev = (
+              Event.objects.filter(slug="surf-city-2026")
+              .exclude(status=EventStatus.DELETED)
+              .first()
+          )
+          if ev is None:
+              raise SystemExit("No se encontró el evento surf-city-2026")
+          print("evento:", ev.slug, "reviewer_visible:", ev.reviewer_visible, "status:", ev.status)
+
+          stats = warm_event_clean_renders(ev, sizes=("thumb",))
+          print("WARM_STATS", stats)
+          PY
