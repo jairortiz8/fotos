@@ -47,7 +47,7 @@ def _existing_clean_keys(event: Event) -> set[str]:
     cache_k = f"rvclean_keys:{event.slug}"
     cached = cache.get(cache_k)
     if cached is not None:
-        return cached  # type: ignore[no-any-return]
+        return cached
     try:
         keys = set(default_storage().list_keys(f"{CLEAN_PREFIX}/{event.slug}/"))
     except (R2NotConfiguredError, R2UploadError):
