@@ -88,18 +88,18 @@ jobs:
           print("credenciales cargadas OK")
           PY
 
-      - name: Warm Surf City thumbnails (limpias, sin logos)
+      - name: Warm Surf City thumbnails (limpias, sin logos) — paralelo
         run: |
           python manage.py shell <<'PY'
-          from apps.events.models import Event, EventStatus
-          from apps.reviewers.services import warm_event_clean_renders
+          import io, os, threading
+          import boto3
+          from botocore.config import Config
+          from concurrent.futures import ThreadPoolExecutor
 
-          vis = list(
-              Event.objects.filter(reviewer_visible=True)
-              .exclude(status=EventStatus.DELETED)
-              .values_list("slug", flat=True)
-          )
-          print("EVENTOS_REVIEWER_VISIBLE:", vis)
+          from apps.events.models import Event, EventStatus
+          from apps.photos.imaging import REVIEWER_CLEAN_SIZES, generate_clean_render
+          from apps.photos.models import Photo, PhotoStatus
+          from apps.reviewers.services import clean_key
 
           ev = (
               Event.objects.filter(slug="surf-city-2026")
@@ -108,8 +108,62 @@ jobs:
           )
           if ev is None:
               raise SystemExit("No se encontró el evento surf-city-2026")
-          print("evento:", ev.slug, "reviewer_visible:", ev.reviewer_visible, "status:", ev.status)
+          print("evento:", ev.slug, "reviewer_visible:", ev.reviewer_visible, flush=True)
 
-          stats = warm_event_clean_renders(ev, sizes=("thumb",))
-          print("WARM_STATS", stats)
+          bucket = os.environ["R2_BUCKET_NAME"]
+          s3 = boto3.client(
+              "s3",
+              endpoint_url=os.environ["R2_ENDPOINT_URL"],
+              aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+              aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+              region_name="auto",
+              config=Config(signature_version="s3v4", max_pool_connections=48,
+                            retries={"max_attempts": 3}),
+          )
+          long_edge, quality = REVIEWER_CLEAN_SIZES["thumb"]
+
+          # Qué thumbs limpios ya existen (para reanudar sin re-generar).
+          existing = set()
+          for page in s3.get_paginator("list_objects_v2").paginate(
+              Bucket=bucket, Prefix=f"reviewer_clean/{ev.slug}/"
+          ):
+              for o in page.get("Contents", []):
+                  existing.add(o["Key"])
+
+          photos = list(
+              Photo.objects.filter(event=ev, status=PhotoStatus.APPROVED)
+              .exclude(original_key="")
+              .values_list("id", "original_key")
+          )
+          todo = [(pid, ok) for pid, ok in photos if clean_key(ev.slug, pid, "thumb") not in existing]
+          print(f"APPROVED={len(photos)} "
+                f"EXISTING_THUMBS={sum(1 for k in existing if k.endswith('_thumb.webp'))} "
+                f"TODO={len(todo)}", flush=True)
+
+          lock = threading.Lock()
+          done = {"ok": 0, "err": 0}
+
+          def work(item):
+              pid, okey = item
+              try:
+                  buf = io.BytesIO()
+                  s3.download_fileobj(bucket, okey, buf)
+                  data = generate_clean_render(buf.getvalue(), long_edge, quality)
+                  s3.put_object(
+                      Bucket=bucket, Key=clean_key(ev.slug, pid, "thumb"), Body=data,
+                      ContentType="image/webp", CacheControl="private, max-age=604800",
+                  )
+                  r = "ok"
+              except Exception:
+                  r = "err"
+              with lock:
+                  done[r] += 1
+                  n = done["ok"] + done["err"]
+                  if n % 500 == 0:
+                      print(f"progress {n}/{len(todo)} ok={done['ok']} err={done['err']}", flush=True)
+              return r
+
+          with ThreadPoolExecutor(max_workers=24) as ex:
+              list(ex.map(work, todo))
+          print(f"WARM_DONE ok={done['ok']} err={done['err']} todo={len(todo)}", flush=True)
           PY
