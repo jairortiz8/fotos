@@ -372,3 +372,53 @@ def test_warm_event_clean_renders_is_idempotent(r2) -> None:  # type: ignore[no-
     second = warm_event_clean_renders(event, sizes=("thumb", "preview"))
     assert second["generated"] == 0
     assert second["skipped"] == 2
+
+
+# --- Scroll infinito (como la galería pública) ------------------------------
+@pytest.mark.django_db
+def test_gallery_first_page_has_infinite_scroll_sentinel(r2) -> None:  # type: ignore[no-untyped-def]
+    """Con más de una página, la primera trae el centinela HTMX (no un botón)."""
+    from apps.reviewers.views import GALLERY_PAGE_SIZE
+
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=True)
+    okey = "events/e/originals/foto.jpg"
+    r2.put_object(Bucket=BUCKET, Key=okey, Body=synthetic_jpeg_bytes("55"))
+    for _ in range(GALLERY_PAGE_SIZE + 5):
+        ApprovedPhotoFactory(event=event, original_key=okey)
+
+    c = Client()
+    c.force_login(_reviewer())
+    resp = c.get(reverse("reviewer:gallery", kwargs={"slug": event.slug}))
+    assert resp.status_code == 200
+    body = resp.content.decode()
+    assert 'hx-trigger="revealed"' in body
+    assert "?page=2" in body
+    # Ya no existe el botón manual "Ver más fotos".
+    assert "Ver más fotos" not in body
+
+
+@pytest.mark.django_db
+def test_gallery_htmx_page_returns_grid_chunk_with_ids(r2) -> None:  # type: ignore[no-untyped-def]
+    """Un GET de HTMX a ?page=2 devuelve SOLO el chunk de la grilla, con el
+    x-init que suma los IDs de esas fotos al lightbox (no la página entera)."""
+    from apps.reviewers.views import GALLERY_PAGE_SIZE
+
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=True)
+    okey = "events/e/originals/foto.jpg"
+    r2.put_object(Bucket=BUCKET, Key=okey, Body=synthetic_jpeg_bytes("55"))
+    for _ in range(GALLERY_PAGE_SIZE + 5):
+        ApprovedPhotoFactory(event=event, original_key=okey)
+
+    c = Client()
+    c.force_login(_reviewer())
+    resp = c.get(
+        reverse("reviewer:gallery", kwargs={"slug": event.slug}),
+        {"page": "2"},
+        HTTP_HX_REQUEST="true",
+    )
+    assert resp.status_code == 200
+    body = resp.content.decode()
+    # Es el chunk, no la página completa (sin hero ni barra de búsqueda).
+    assert "reviewerLightbox(" not in body
+    # Suma los IDs de la página al array del lightbox.
+    assert "ids.push(" in body

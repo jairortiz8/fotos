@@ -110,11 +110,6 @@
       <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-6 gap-[2px]">
         {% include "reviewer/_grid.html" %}
       </div>
-      {% if page_obj.has_next %}
-        <div class="text-center mt-6">
-          <a href="?page={{ page_obj.next_page_number }}{% if photographer %}&fotografo={{ photographer.id }}{% endif %}" class="rf-cta">{% trans "Ver más fotos" %}</a>
-        </div>
-      {% endif %}
     {% endif %}
   </div>
 

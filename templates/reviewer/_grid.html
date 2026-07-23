@@ -1,6 +1,12 @@
 {% load i18n %}
 {% comment %}Contact-sheet del invitado: miniatura LIMPIA (sin logos) → abre el lightbox.
 Los dorsales detectados van como chips abajo; tocar un chip busca ese dorsal.{% endcomment %}
+{% if append_ids %}
+  {% comment %}Chunk traído por scroll infinito: sumamos sus IDs al lightbox para
+  que prev/next funcione con las fotos recién cargadas. Nunca {# #} multilínea.{% endcomment %}
+  <div class="hidden" aria-hidden="true"
+       x-init="ids.push({% for photo in photos %}{{ photo.id }}{% if not forloop.last %},{% endif %}{% endfor %})"></div>
+{% endif %}
 {% for photo in photos %}
   <div class="relative aspect-square bg-ink-2 overflow-hidden group">
     <button type="button" @click="open({{ photo.id }})"
@@ -21,3 +27,11 @@ Los dorsales detectados van como chips abajo; tocar un chip busca ese dorsal.{% 
     </div>
   </div>
 {% endfor %}
+{% if page_obj.has_next %}
+  {% comment %}Centinela de scroll infinito: al entrar en viewport, HTMX trae la
+  próxima página y se reemplaza a sí mismo por el siguiente chunk. Nunca {# #} multilínea.{% endcomment %}
+  <div class="col-span-full h-px"
+       hx-get="{% url 'reviewer:gallery' slug=event.slug %}?page={{ page_obj.next_page_number }}{% if photographer %}&fotografo={{ photographer.id }}{% endif %}"
+       hx-trigger="revealed"
+       hx-swap="outerHTML"></div>
+{% endif %}
