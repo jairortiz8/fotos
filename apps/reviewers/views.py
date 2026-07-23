@@ -165,6 +165,10 @@ class ReviewerGalleryView(ReviewerRequiredMixin, View):
             "photographer": photographer,
             "photo_ids_json": _photo_ids_json(page.object_list),
         }
+        # Scroll infinito: en un request de HTMX devolvemos solo el chunk de la
+        # grilla (con centinela + IDs para el lightbox), no la página entera.
+        if getattr(request, "htmx", False):
+            return render(request, "reviewer/_grid.html", {**ctx, "append_ids": True})
         return render(request, "reviewer/gallery.html", ctx)
 
     def _bib_search(self, request: HttpRequest, event: Event, raw: str) -> HttpResponse:
