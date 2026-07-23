@@ -72,7 +72,12 @@ dev = [
     # `warn_unused_ignores=true`, rompía el CI sin tocar el código (pasó en Fase
     # 3 y 4). Pinear el type-checker hace el CI determinístico. Para subir la
     # versión: bumpear acá a propósito y correr mypy local antes de pushear.
-    "ruff>=0.6",
+    # ruff PINEADO por la misma razón que mypy/django-stubs: un release nuevo de
+    # ruff empezó a reformatear los bloques de código Python dentro de los .md
+    # (README/runbook/troubleshooting) → `ruff format --check .` rompía el CI sin
+    # tocar código. Pinear lo hace determinístico. Para subir: bumpear a propósito
+    # y correr `ruff format` local antes de pushear.
+    "ruff==0.15.8",
     "black>=24.8",
     "mypy==2.1.0",
     "django-stubs[compatible-mypy]==6.0.5",

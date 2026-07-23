@@ -317,3 +317,58 @@ def test_login_rejects_non_reviewer() -> None:
     # Se queda en la página con error (no redirige a la galería).
     assert resp.status_code == 200
     assert b"no tiene acceso" in resp.content
+
+
+# --- Rendimiento: miniaturas directas de R2 + warm --------------------------
+@pytest.mark.django_db
+def test_gallery_serves_thumb_direct_from_r2_when_warmed(r2) -> None:  # type: ignore[no-untyped-def]
+    """Si el render limpio ya existe en R2, el grid pone la URL firmada DIRECTA
+    (el navegador baja de R2, sin pegarle a Django foto por foto)."""
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=True)
+    okey = "events/e/originals/foto.jpg"
+    r2.put_object(Bucket=BUCKET, Key=okey, Body=synthetic_jpeg_bytes("55"))
+    photo = ApprovedPhotoFactory(event=event, original_key=okey)
+    # Pre-generamos la miniatura limpia.
+    from apps.reviewers.services import clean_key, warm_event_clean_renders
+
+    warm_event_clean_renders(event, sizes=("thumb",))
+    assert storage_module.default_storage().exists(clean_key(event.slug, photo.id, "thumb"))
+
+    c = Client()
+    c.force_login(_reviewer())
+    resp = c.get(reverse("reviewer:gallery", kwargs={"slug": event.slug}))
+    assert resp.status_code == 200
+    # La miniatura apunta directo a R2 (URL firmada), NO a la ruta on-demand.
+    assert b"X-Amz-Signature" in resp.content
+    assert f"/invitados/img/{photo.id}/thumb/".encode() not in resp.content
+
+
+@pytest.mark.django_db
+def test_gallery_falls_back_to_ondemand_when_not_warmed(r2) -> None:  # type: ignore[no-untyped-def]
+    """Sin render pre-generado, el grid cae a la ruta on-demand (que lo genera)."""
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=True)
+    okey = "events/e/originals/foto.jpg"
+    r2.put_object(Bucket=BUCKET, Key=okey, Body=synthetic_jpeg_bytes("55"))
+    photo = ApprovedPhotoFactory(event=event, original_key=okey)
+    c = Client()
+    c.force_login(_reviewer())
+    resp = c.get(reverse("reviewer:gallery", kwargs={"slug": event.slug}))
+    assert resp.status_code == 200
+    assert f"/invitados/img/{photo.id}/thumb/".encode() in resp.content
+
+
+@pytest.mark.django_db
+def test_warm_event_clean_renders_is_idempotent(r2) -> None:  # type: ignore[no-untyped-def]
+    """El warm genera lo que falta y saltea lo ya generado."""
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=True)
+    okey = "events/e/originals/foto.jpg"
+    r2.put_object(Bucket=BUCKET, Key=okey, Body=synthetic_jpeg_bytes("55"))
+    ApprovedPhotoFactory(event=event, original_key=okey)
+    from apps.reviewers.services import warm_event_clean_renders
+
+    first = warm_event_clean_renders(event, sizes=("thumb", "preview"))
+    assert first["generated"] == 2  # thumb + preview
+    assert first["errors"] == 0
+    second = warm_event_clean_renders(event, sizes=("thumb", "preview"))
+    assert second["generated"] == 0
+    assert second["skipped"] == 2

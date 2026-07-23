@@ -41,6 +41,7 @@ from apps.events.models import Event, EventStatus
 from apps.photos.imaging import REVIEWER_CLEAN_SIZES, generate_clean_render
 from apps.photos.models import Photo, PhotoStatus
 from apps.photos.storage import R2NotConfiguredError, R2UploadError, default_storage
+from apps.reviewers.services import attach_clean_thumb_urls
 
 GALLERY_PAGE_SIZE = 60
 
@@ -156,6 +157,7 @@ class ReviewerGalleryView(ReviewerRequiredMixin, View):
             qs = qs.filter(photographer_link=photographer)
         qs = qs.prefetch_related("bibs").order_by("capture_time", "created_at")
         page = Paginator(qs, GALLERY_PAGE_SIZE).get_page(request.GET.get("page"))
+        attach_clean_thumb_urls(page.object_list, event)
         ctx = {
             "event": event,
             "page_obj": page,
@@ -183,6 +185,7 @@ class ReviewerGalleryView(ReviewerRequiredMixin, View):
                 .prefetch_related("bibs")
                 .order_by("capture_time", "created_at")[:200]
             )
+        attach_clean_thumb_urls(photos, event)
         return render(
             request,
             "reviewer/gallery.html",
@@ -244,6 +247,7 @@ class ReviewerSelfieSearchView(ReviewerRequiredMixin, View):
             return render(request, "reviewer/selfie.html", {"event": event, "error": "invalid"})
 
         matches = search_faces_by_similarity(event, query_embedding.tolist())
+        attach_clean_thumb_urls(matches, event)
         return render(
             request,
             "reviewer/gallery.html",
