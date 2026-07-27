@@ -524,9 +524,13 @@ FACE_AVATAR_QUALITY = 82
 # el mentón y se lee mal a 52px.
 FACE_AVATAR_MARGIN = 0.45
 # Umbral de nitidez (varianza del Laplaciano sobre el recorte en gris). Las
-# caras del fondo de la foto salen movidas/desenfocadas; con esto no se
-# convierten en avatar. Calibrado para dejar pasar caras de foreground.
-FACE_SHARPNESS_MIN = 42.0
+# caras del fondo salen movidas/desenfocadas; con esto no se vuelven avatar.
+# MEDIDO en prod: con 42.0 se descartaban 6.925 de 29.294 caras (24%) y 3.201
+# fotos quedaban SIN visor — demasiado exigente. Bajado a 15.0, que sigue
+# cortando los recortes realmente ilegibles. Además, `faces.py` garantiza al
+# menos una cara por foto (la más grande) aunque no llegue al umbral, así que
+# este número ya no decide la cobertura, sólo cuántas caras EXTRA se muestran.
+FACE_SHARPNESS_MIN = 15.0
 
 
 class FaceTooBlurryError(Exception):

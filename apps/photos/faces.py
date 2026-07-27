@@ -108,8 +108,14 @@ def generate_avatars_for_photo(
     store = storage or default_storage()
     faces = list(photo.face_embeddings.filter(avatar_key=""))
     candidates = [f for f in faces if is_avatar_sized(f.bbox)]
-    stats = {"generated": 0, "too_small": len(faces) - len(candidates), "blurry": 0, "errors": 0}
-    if not candidates:
+    stats = {
+        "generated": 0,
+        "too_small": len(faces) - len(candidates),
+        "blurry": 0,
+        "errors": 0,
+        "fallback": 0,
+    }
+    if not faces:
         return stats
 
     if image_bytes is None:
@@ -121,6 +127,17 @@ def generate_avatars_for_photo(
             return stats
         image_bytes = buf.getvalue()
 
+    def _persist(face: FaceEmbedding, data: bytes) -> bool:
+        key = key_for_face_avatar(photo.event.slug, face.id)
+        try:
+            store.upload(BytesIO(data), key, content_type="image/webp")
+        except (R2NotConfiguredError, R2UploadError):
+            stats["errors"] += 1
+            return False
+        face.avatar_key = key
+        face.save(update_fields=["avatar_key"])
+        return True
+
     for face in candidates:
         try:
             data = generate_face_avatar(image_bytes, face.bbox)
@@ -131,16 +148,25 @@ def generate_avatars_for_photo(
             logger.warning("avatar de cara falló", extra={"face_id": face.id})
             stats["errors"] += 1
             continue
+        if _persist(face, data):
+            stats["generated"] += 1
 
-        key = key_for_face_avatar(photo.event.slug, face.id)
-        try:
-            store.upload(BytesIO(data), key, content_type="image/webp")
-        except (R2NotConfiguredError, R2UploadError):
-            stats["errors"] += 1
-            continue
-
-        face.avatar_key = key
-        face.save(update_fields=["avatar_key"])
-        stats["generated"] += 1
+    # Garantía de cobertura: si NINGUNA cara pasó los filtros, igual mostramos
+    # la más grande de la foto. Sin esto, una foto donde todas las caras son
+    # chicas o están algo movidas quedaba sin visor — y para el corredor eso
+    # se ve como que la función "no anda" en esa foto. El filtro sigue
+    # decidiendo qué caras EXTRA se muestran; acá sólo aseguramos que no haya
+    # fotos con gente y sin ninguna cara ofrecida.
+    if stats["generated"] == 0:
+        biggest = max(faces, key=lambda f: face_size_px(f.bbox))
+        if face_size_px(biggest.bbox) > 0:
+            try:
+                data = generate_face_avatar(image_bytes, biggest.bbox, min_sharpness=0.0)
+            except Exception:
+                logger.warning("avatar de respaldo falló", extra={"photo_id": photo.id})
+            else:
+                if _persist(biggest, data):
+                    stats["generated"] += 1
+                    stats["fallback"] += 1
 
     return stats
