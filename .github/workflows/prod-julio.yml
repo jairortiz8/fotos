@@ -4,110 +4,73 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  diag:
-    name: diagnostico de cobertura (surf-city)
+  validate:
+    name: validate feature branch
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: runfoto
+          POSTGRES_PASSWORD: runfoto
+          POSTGRES_DB: runfoto
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 10s
+          --health-timeout 5s --health-retries 5
     env:
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-      API: https://backboard.railway.app/graphql/v2
-      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
-      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
-      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      DATABASE_URL: postgres://runfoto:runfoto@localhost:5432/runfoto
+      REDIS_URL: redis://localhost:6379/0
+      CELERY_BROKER_URL: redis://localhost:6379/1
+      CELERY_RESULT_BACKEND: redis://localhost:6379/2
+      SITE_NAME: "find your foto"
+      SITE_DOMAIN: localhost:8000
+      NOTIFIER_BACKEND: whatsapp_manual
+      LANGUAGE_CODE: es
+      TIME_ZONE: America/El_Salvador
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: claude/runfoto-security-audit-bknirm
+
+      - name: Install system libs for OpenCV/onnxruntime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libglib2.0-0 libgomp1 libxcb1 libsm6 libxext6 libxrender1
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
-      - name: Install psycopg + requests
-        run: pip install "psycopg[binary]" requests
-
-      - name: Diagnostico
+      - name: Install Python deps
         run: |
-          python3 - <<'PY'
-          import os, requests, psycopg
-          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
-          q='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          v={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":os.environ["PG_ID"]}
-          r=requests.post(API,headers=H,json={"query":q,"variables":v},timeout=40)
-          dburl=((r.json().get("data",{}) or {}).get("variables") or {}).get("DATABASE_PUBLIC_URL")
-          if not dburl: raise SystemExit("sin DATABASE_PUBLIC_URL")
-          print("::add-mask::"+dburl)
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
 
-          SQL = {
-            "1_cobertura_global": """
-              SELECT e.slug,
-                     COUNT(*) FILTER (WHERE p.status='approved') AS aprobadas,
-                     COUNT(*) FILTER (WHERE p.status='approved' AND b.n>0) AS con_dorsal,
-                     COUNT(*) FILTER (WHERE p.status='approved' AND f.n>0) AS con_cara,
-                     COUNT(*) FILTER (WHERE p.status='approved' AND b.n>0 AND f.n>0) AS ambos,
-                     COUNT(*) FILTER (WHERE p.status='approved' AND COALESCE(b.n,0)=0 AND COALESCE(f.n,0)=0) AS invisibles
-              FROM photos_photo p
-              JOIN events_event e ON e.id=p.event_id
-              LEFT JOIN LATERAL (SELECT COUNT(*) n FROM photos_bib x WHERE x.photo_id=p.id AND NOT x.rejected) b ON TRUE
-              LEFT JOIN LATERAL (SELECT COUNT(*) n FROM photos_faceembedding y WHERE y.photo_id=p.id) f ON TRUE
-              WHERE e.slug='surf-city-2026'
-              GROUP BY e.slug;
-            """,
-            "2_dorsales_por_fuente": """
-              SELECT b.source, COUNT(*) AS dorsales,
-                     COUNT(DISTINCT b.photo_id) AS fotos,
-                     ROUND(AVG(b.confidence)::numeric,3) AS conf_prom
-              FROM photos_bib b
-              JOIN photos_photo p ON p.id=b.photo_id
-              JOIN events_event e ON e.id=p.event_id
-              WHERE e.slug='surf-city-2026' AND NOT b.rejected
-              GROUP BY b.source ORDER BY dorsales DESC;
-            """,
-            "3_dorsales_por_foto": """
-              SELECT n_dorsales, COUNT(*) AS fotos FROM (
-                SELECT p.id, COUNT(b.id) AS n_dorsales
-                FROM photos_photo p
-                JOIN events_event e ON e.id=p.event_id
-                LEFT JOIN photos_bib b ON b.photo_id=p.id AND NOT b.rejected
-                WHERE e.slug='surf-city-2026' AND p.status='approved'
-                GROUP BY p.id
-              ) t GROUP BY n_dorsales ORDER BY n_dorsales;
-            """,
-            "4_caras_por_foto": """
-              SELECT n_caras, COUNT(*) AS fotos FROM (
-                SELECT p.id, COUNT(f.id) AS n_caras
-                FROM photos_photo p
-                JOIN events_event e ON e.id=p.event_id
-                LEFT JOIN photos_faceembedding f ON f.photo_id=p.id
-                WHERE e.slug='surf-city-2026' AND p.status='approved'
-                GROUP BY p.id
-              ) t GROUP BY n_caras ORDER BY n_caras LIMIT 30;
-            """,
-            "5_dorsales_unicos": """
-              SELECT COUNT(DISTINCT b.number) AS dorsales_distintos
-              FROM photos_bib b
-              JOIN photos_photo p ON p.id=b.photo_id
-              JOIN events_event e ON e.id=p.event_id
-              WHERE e.slug='surf-city-2026' AND NOT b.rejected;
-            """,
-            "6_dorsales_mas_repetidos": """
-              SELECT b.number, COUNT(*) AS veces
-              FROM photos_bib b
-              JOIN photos_photo p ON p.id=b.photo_id
-              JOIN events_event e ON e.id=p.event_id
-              WHERE e.slug='surf-city-2026' AND NOT b.rejected
-              GROUP BY b.number ORDER BY veces DESC LIMIT 15;
-            """,
-          }
-          with psycopg.connect(dburl, connect_timeout=30) as conn:
-              for name, sql in SQL.items():
-                  print(f"\n########## {name} ##########", flush=True)
-                  with conn.cursor() as cur:
-                      cur.execute(sql)
-                      cols=[d[0] for d in cur.description]
-                      print(" | ".join(cols))
-                      for row in cur.fetchall():
-                          print(" | ".join(str(x) for x in row))
-          PY
+      - name: Ruff (lint)
+        run: ruff check .
+
+      - name: Ruff (format)
+        run: ruff format --check .
+
+      - name: Mypy
+        run: mypy .
+
+      - name: Django check
+        run: python manage.py check
+
+      - name: Pytest (reviewers + events + dashboard)
+        run: pytest -m "not slow and not e2e" tests/reviewers tests/events tests/dashboard tests/photos -q
