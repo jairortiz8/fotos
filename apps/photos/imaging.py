@@ -577,7 +577,7 @@ def generate_face_avatar(
     Lanza `FaceTooBlurryError` si el recorte no llega al umbral de nitidez
     (caras del fondo, movidas o fuera de foco). El caller decide qué hacer.
     """
-    img = Image.open(BytesIO(image_bytes))
+    img: Image.Image = Image.open(BytesIO(image_bytes))
     img = ImageOps.exif_transpose(img) or img
     img = img.convert("RGB")
 
