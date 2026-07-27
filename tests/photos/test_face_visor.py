@@ -74,8 +74,8 @@ def test_face_size_px_uses_larger_side() -> None:
 
 def test_is_avatar_sized_rejects_small_faces() -> None:
     """Una cara del fondo (chiquita) no se convierte en avatar."""
-    big = {"x1": 0, "y1": 0, "x2": 200, "y2": 200}
-    small = {"x1": 0, "y1": 0, "x2": 30, "y2": 30}
+    big = {"x1": 0, "y1": 0, "x2": 200, "y2": 200}  # > 130px -> entra
+    small = {"x1": 0, "y1": 0, "x2": 100, "y2": 100}  # < 130px (fondo) -> fuera
     assert is_avatar_sized(big) is True
     assert is_avatar_sized(small) is False
 

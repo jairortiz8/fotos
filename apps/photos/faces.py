@@ -38,9 +38,20 @@ from apps.photos.storage import (
 logger = logging.getLogger(__name__)
 
 
+# Lado mínimo (px sobre el original) para que una cara entre al visor.
+# CALIBRADO con las 38,783 caras reales de Surf City (2026-07):
+#   mín 20 · p25 132 · mediana 213 · p75 330 · p90 464 · máx 2251
+# Las caras de foto profesional de carrera son grandes; un umbral de 90px
+# dejaba pasar el 88% (no filtraba nada). 130px ≈ p25: corta el cuartil más
+# chico, que es donde viven los espectadores del fondo, y deja visor en el
+# 94% de las fotos. Con el margen del recorte (45%) tampoco hay que agrandar
+# la imagen, así que el avatar sale nítido.
+FACE_AVATAR_MIN_PX_DEFAULT = 130
+
+
 def _min_px() -> int:
     """Lado mínimo (px sobre el original) para que una cara sea avatar."""
-    return int(getattr(settings, "FACE_AVATAR_MIN_PX", 90))
+    return int(getattr(settings, "FACE_AVATAR_MIN_PX", FACE_AVATAR_MIN_PX_DEFAULT))
 
 
 def face_size_px(bbox: dict[str, float] | None) -> float:
