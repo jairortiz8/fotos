@@ -237,3 +237,62 @@ def test_gallery_face_search_returns_that_person(r2) -> None:  # type: ignore[no
     ids = {p.id for p in resp.context["search_photos"]}
     assert {photo.id, other.id} <= ids
     assert third.id not in ids
+
+
+# --- Garantía de cobertura --------------------------------------------------
+@pytest.mark.django_db
+def test_photo_with_only_small_faces_still_gets_one_avatar(r2) -> None:  # type: ignore[no-untyped-def]
+    """Si NINGUNA cara pasa los filtros, igual se muestra la más grande.
+
+    Sin esto, una foto donde todas las caras son chicas quedaba sin visor y
+    para el usuario parecía que la función no anda en esa foto.
+    """
+    event = EventFactory(status=EventStatus.LIVE)
+    okey = "events/e/originals/foto.jpg"
+    r2.put_object(Bucket=BUCKET, Key=okey, Body=_sharp_photo_bytes())
+    photo = ApprovedPhotoFactory(event=event, original_key=okey)
+
+    # Las dos por debajo del umbral de tamaño (130px).
+    chica = FaceEmbedding.objects.create(
+        photo=photo, embedding=[0.1] * 512, bbox={"x1": 10, "y1": 10, "x2": 60, "y2": 60}
+    )
+    mas_grande = FaceEmbedding.objects.create(
+        photo=photo, embedding=[0.2] * 512, bbox={"x1": 100, "y1": 100, "x2": 220, "y2": 220}
+    )
+
+    stats = generate_avatars_for_photo(photo)
+    assert stats["generated"] == 1
+    assert stats["fallback"] == 1
+
+    chica.refresh_from_db()
+    mas_grande.refresh_from_db()
+    assert mas_grande.avatar_key != ""  # la más grande es la elegida
+    assert chica.avatar_key == ""
+
+
+@pytest.mark.django_db
+def test_blurry_only_photo_still_gets_one_avatar(r2) -> None:  # type: ignore[no-untyped-def]
+    """Idem cuando la cara es grande pero no llega al umbral de nitidez."""
+    event = EventFactory(status=EventStatus.LIVE)
+    okey = "events/e/originals/foto.jpg"
+    r2.put_object(Bucket=BUCKET, Key=okey, Body=_flat_photo_bytes())  # sin detalle
+    photo = ApprovedPhotoFactory(event=event, original_key=okey)
+    face = FaceEmbedding.objects.create(
+        photo=photo, embedding=[0.1] * 512, bbox={"x1": 100, "y1": 100, "x2": 300, "y2": 300}
+    )
+
+    stats = generate_avatars_for_photo(photo)
+    assert stats["blurry"] == 1  # falló el filtro...
+    assert stats["fallback"] == 1  # ...pero el respaldo la rescató
+    face.refresh_from_db()
+    assert face.avatar_key != ""
+
+
+@pytest.mark.django_db
+def test_photo_without_faces_generates_nothing(r2) -> None:  # type: ignore[no-untyped-def]
+    """Una foto sin caras detectadas no genera avatar ni rompe."""
+    event = EventFactory(status=EventStatus.LIVE)
+    photo = ApprovedPhotoFactory(event=event, original_key="events/e/originals/vacia.jpg")
+    stats = generate_avatars_for_photo(photo)
+    assert stats["generated"] == 0
+    assert stats["fallback"] == 0
