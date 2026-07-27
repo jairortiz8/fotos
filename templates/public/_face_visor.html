@@ -1,0 +1,24 @@
+{% load i18n %}
+{% comment %}Visor de caras (opción A del design system): las personas detectadas en
+la foto, como cuadrados con esquinas de enfoque. Tocar una lleva a "las fotos de
+esa persona". Requiere `faces` (lista de FaceEmbedding con avatar) y `event`.
+Nunca usar {# #} multilínea acá — se renderiza como texto.{% endcomment %}
+{% if faces %}
+<div class="rf-visor">
+  <span class="rf-visor__label">{% trans "Personas en esta foto" %}</span>
+  <div class="rf-visor__row">
+    {% for face in faces %}
+      <a href="{% url 'events:gallery' slug=event.slug %}?cara={{ face.id }}"
+         class="rf-visor__tile"
+         aria-label="{% trans 'Ver todas las fotos de esta persona' %}">
+        <img src="{% url 'events:face_avatar' slug=event.slug face_id=face.id %}"
+             alt="" loading="lazy" decoding="async" class="rf-visor__face">
+        <span class="rf-visor__brk" aria-hidden="true">
+          <i class="rf-br rf-br--tl"></i><i class="rf-br rf-br--tr"></i>
+          <i class="rf-br rf-br--bl"></i><i class="rf-br rf-br--br"></i>
+        </span>
+      </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}

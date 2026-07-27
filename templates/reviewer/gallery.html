@@ -56,7 +56,9 @@
 
     {% if is_search %}
       {# ===== Resultados de búsqueda ===== #}
-      {% if selfie_search %}
+      {% if face_search %}
+        <p class="text-[13px] text-text-2 mb-3">{% blocktrans count n=match_count %}{{ n }} foto de esta persona.{% plural %}{{ n }} fotos de esta persona.{% endblocktrans %}</p>
+      {% elif selfie_search %}
         <p class="text-[13px] text-text-2 mb-3">{% blocktrans count n=match_count %}{{ n }} coincidencia por selfie.{% plural %}{{ n }} coincidencias por selfie.{% endblocktrans %}</p>
       {% elif invalid_bib %}
         <p class="text-[13px] text-danger mb-3">{% trans "Dorsal inválido. Probá solo con números." %}</p>
@@ -127,10 +129,29 @@
     <button @click="next()" x-show="i < ids.length - 1" class="absolute right-3 md:right-5 z-10 w-11 h-11 grid place-items-center rounded-full bg-white/10 text-white hover:bg-white/20" aria-label="{% trans 'Siguiente' %}">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
     </button>
-    <a :href="downloadUrl" download class="rf-cta rf-cta--lg absolute bottom-5 left-1/2 -translate-x-1/2">
+    <div class="absolute bottom-5 left-1/2 -translate-x-1/2 flex flex-col items-center gap-3">
+      <template x-if="faces.length">
+        <div class="rf-visor">
+          <span class="rf-visor__label">{% trans "Personas" %}</span>
+          <div class="rf-visor__row">
+            <template x-for="f in faces" :key="f.id">
+              <a :href="'?cara=' + f.id" class="rf-visor__tile"
+                 :aria-label="'{% trans "Ver todas las fotos de esta persona" %}'">
+                <img :src="f.url" alt="" class="rf-visor__face" loading="lazy" decoding="async">
+                <span class="rf-visor__brk" aria-hidden="true">
+                  <i class="rf-br rf-br--tl"></i><i class="rf-br rf-br--tr"></i>
+                  <i class="rf-br rf-br--bl"></i><i class="rf-br rf-br--br"></i>
+                </span>
+              </a>
+            </template>
+          </div>
+        </div>
+      </template>
+    <a :href="downloadUrl" download class="rf-cta rf-cta--lg">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
       {% trans "Descargar sin marca de agua" %}
     </a>
+    </div>
   </div>
 </div>
 {% endblock %}
@@ -142,13 +163,26 @@
       ids: ids || [],
       i: -1,
       isOpen: false,
-      open(id){ this.i = this.ids.indexOf(id); if (this.i >= 0) this.isOpen = true; },
-      close(){ this.isOpen = false; },
+      faces: [],
+      open(id){ this.i = this.ids.indexOf(id); if (this.i >= 0) { this.isOpen = true; this.loadFaces(); } },
+      close(){ this.isOpen = false; this.faces = []; },
       get cur(){ return this.i >= 0 ? this.ids[this.i] : null; },
       get previewUrl(){ return this.cur !== null ? '/invitados/img/' + this.cur + '/preview/' : ''; },
       get downloadUrl(){ return this.cur !== null ? '/invitados/foto/' + this.cur + '/descargar/' : ''; },
-      prev(){ if (this.i > 0) this.i--; },
-      next(){ if (this.i < this.ids.length - 1) this.i++; },
+      prev(){ if (this.i > 0) { this.i--; this.loadFaces(); } },
+      next(){ if (this.i < this.ids.length - 1) { this.i++; this.loadFaces(); } },
+      // Las caras del visor se piden por foto. Guardamos el id pedido para
+      // descartar respuestas que llegan tarde si el usuario pasó de foto.
+      loadFaces(){
+        var id = this.cur;
+        this.faces = [];
+        if (id === null) return;
+        var self = this;
+        fetch('/invitados/foto/' + id + '/caras/', {headers: {'Accept': 'application/json'}})
+          .then(function(r){ return r.ok ? r.json() : {faces: []}; })
+          .then(function(d){ if (self.cur === id) self.faces = d.faces || []; })
+          .catch(function(){ /* el visor es opcional: si falla, no se muestra */ });
+      },
     }
   }
 </script>

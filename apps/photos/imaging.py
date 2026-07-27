@@ -510,3 +510,85 @@ def _load_watermark_font(font_size: int) -> Any:
                 continue
     # Default PIL font (no incluye los pesos del design system pero funciona).
     return ImageFont.load_default(size=font_size)
+
+
+# ---------------------------------------------------------------------------
+# Avatares de caras (visor del lightbox)
+# ---------------------------------------------------------------------------
+# Lado del recorte cuadrado. En la UI el tile se ve a ~52px; 160 cubre retina
+# (2x) y deja margen para el drawer del dashboard, que lo muestra más grande.
+FACE_AVATAR_SIZE = 160
+FACE_AVATAR_QUALITY = 82
+# Cuánto se agranda el bbox de la cara para el recorte. InsightFace devuelve
+# la caja justa de la cara; sin aire, el avatar queda cortado en la frente y
+# el mentón y se lee mal a 52px.
+FACE_AVATAR_MARGIN = 0.45
+# Umbral de nitidez (varianza del Laplaciano sobre el recorte en gris). Las
+# caras del fondo de la foto salen movidas/desenfocadas; con esto no se
+# convierten en avatar. Calibrado para dejar pasar caras de foreground.
+FACE_SHARPNESS_MIN = 42.0
+
+
+class FaceTooBlurryError(Exception):
+    """El recorte no pasa el umbral de nitidez → no se genera avatar."""
+
+
+def _square_face_box(
+    bbox: dict[str, float], img_w: int, img_h: int, *, margin: float = FACE_AVATAR_MARGIN
+) -> tuple[int, int, int, int]:
+    """Convierte el bbox de la cara en una caja CUADRADA con aire, clampeada a
+    los bordes de la imagen. `bbox` viene en píxeles absolutos {x1,y1,x2,y2}."""
+    x1, y1 = float(bbox.get("x1", 0)), float(bbox.get("y1", 0))
+    x2, y2 = float(bbox.get("x2", 0)), float(bbox.get("y2", 0))
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    side = max(x2 - x1, y2 - y1) * (1 + margin)
+    # Clampear el lado antes de centrar evita pedir un recorte más grande que
+    # la imagen (pasa con caras muy cerca del borde en fotos verticales).
+    side = min(side, float(min(img_w, img_h)))
+    half = side / 2
+    left = round(min(max(cx - half, 0), img_w - side))
+    top = round(min(max(cy - half, 0), img_h - side))
+    return left, top, left + round(side), top + round(side)
+
+
+def _sharpness(img: Image.Image) -> float:
+    """Varianza del Laplaciano en escala de grises: proxy estándar de nitidez."""
+    import numpy as np
+
+    gray = np.asarray(img.convert("L"), dtype=np.float64)
+    if gray.size == 0:
+        return 0.0
+    # Kernel Laplaciano 3x3 aplicado con slicing (sin scipy).
+    lap = (
+        -4 * gray[1:-1, 1:-1] + gray[:-2, 1:-1] + gray[2:, 1:-1] + gray[1:-1, :-2] + gray[1:-1, 2:]
+    )
+    return float(lap.var()) if lap.size else 0.0
+
+
+def generate_face_avatar(
+    image_bytes: bytes,
+    bbox: dict[str, float],
+    *,
+    size: int = FACE_AVATAR_SIZE,
+    min_sharpness: float = FACE_SHARPNESS_MIN,
+) -> bytes:
+    """Recorta la cara de `image_bytes` y devuelve un WebP cuadrado.
+
+    Lanza `FaceTooBlurryError` si el recorte no llega al umbral de nitidez
+    (caras del fondo, movidas o fuera de foco). El caller decide qué hacer.
+    """
+    img = Image.open(BytesIO(image_bytes))
+    img = ImageOps.exif_transpose(img) or img
+    img = img.convert("RGB")
+
+    box = _square_face_box(bbox, img.width, img.height)
+    face = img.crop(box)
+
+    if _sharpness(face) < min_sharpness:
+        raise FaceTooBlurryError(f"nitidez < {min_sharpness}")
+
+    face = face.resize((size, size), Image.Resampling.LANCZOS)
+    buf = BytesIO()
+    face.save(buf, format="WEBP", quality=FACE_AVATAR_QUALITY, method=6)
+    buf.seek(0)
+    return buf.getvalue()

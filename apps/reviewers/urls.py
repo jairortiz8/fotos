@@ -20,6 +20,16 @@ urlpatterns = [
         views.ReviewerCleanImageView.as_view(),
         name="clean_image",
     ),
+    path(
+        "foto/<int:photo_id>/caras/",
+        views.ReviewerPhotoFacesView.as_view(),
+        name="photo_faces",
+    ),
+    path(
+        "cara/<int:face_id>.webp",
+        views.ReviewerFaceAvatarView.as_view(),
+        name="face_avatar",
+    ),
     path("<slug:slug>/selfie/", views.ReviewerSelfieSearchView.as_view(), name="selfie"),
     path("<slug:slug>/", views.ReviewerGalleryView.as_view(), name="gallery"),
 ]

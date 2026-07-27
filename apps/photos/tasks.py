@@ -344,12 +344,36 @@ def run_face_recognition_on_photo(self, photo_id: int) -> dict[str, object]:
     if minors > 0 and settings.MINOR_BLUR_ENABLED:
         regenerate_preview_with_minor_blur.delay(photo.id)
 
+    # Avatares del visor (caras grandes y nítidas). Va aparte para que un fallo
+    # acá nunca tire el indexado facial, que es lo importante: sin avatar la
+    # foto sigue siendo buscable por selfie, sólo no aparece en el visor.
+    generate_face_avatars.delay(photo.id)
+
     return {
         "photo_id": photo.id,
         "faces": len(detections),
         "minors": minors,
         "needs_review": needs_review,
     }
+
+
+@shared_task(
+    name="photos.generate_face_avatars",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=90,
+    autoretry_for=(Exception,),
+)
+def generate_face_avatars(self, photo_id: int) -> dict[str, object]:
+    """Recorta las caras grandes/nítidas de la foto para el visor del lightbox."""
+    from apps.photos.faces import generate_avatars_for_photo
+
+    photo = Photo.objects.select_related("event").filter(id=photo_id).first()
+    if photo is None or photo.status in {PhotoStatus.DELETED, PhotoStatus.REJECTED}:
+        return {"photo_id": photo_id, "skipped": True}
+
+    stats = generate_avatars_for_photo(photo)
+    return {"photo_id": photo_id, **stats}
 
 
 @shared_task(

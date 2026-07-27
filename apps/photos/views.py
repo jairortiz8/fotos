@@ -1,14 +1,17 @@
-"""Vista pública del lightbox de una foto."""
+"""Vista pública del lightbox de una foto + avatares de caras (visor)."""
 
 from __future__ import annotations
 
+from io import BytesIO
+
 from django.db.models import F
-from django.http import Http404, HttpRequest, HttpResponse
+from django.http import FileResponse, Http404, HttpRequest, HttpResponse, HttpResponseBase
 from django.shortcuts import get_object_or_404, render
 from django.views import View
 
 from apps.events.metrics import Metric, record_event_metric
-from apps.photos.models import Photo, PhotoStatus
+from apps.photos.faces import avatar_faces_for_photo
+from apps.photos.models import FaceEmbedding, Photo, PhotoStatus
 
 
 class PhotoLightboxView(View):
@@ -47,6 +50,8 @@ class PhotoLightboxView(View):
             "bib_filter": bib_filter,
             "photographer_name": photographer_name,
             "bibs": list(photo.bibs.filter(rejected=False)),
+            # Visor: caras grandes/nítidas de ESTA foto, con avatar ya generado.
+            "faces": avatar_faces_for_photo(photo),
         }
 
         template = (
@@ -78,3 +83,45 @@ class PhotoLightboxView(View):
         prev_photo = Photo.objects.filter(id=prev_id).first() if prev_id else None
         next_photo = Photo.objects.filter(id=next_id).first() if next_id else None
         return prev_photo, next_photo
+
+
+class FaceAvatarView(View):
+    """Sirve el recorte (webp) de una cara desde R2, con cache largo.
+
+    Mismo patrón que la portada del evento: el bucket es privado, así que en
+    vez de exponer una URL firmada (que expira y no cachea) lo servimos por
+    acá. El key es inmutable por cara, así que el cache puede ser agresivo.
+    """
+
+    http_method_names = ["get"]
+
+    def get(self, request: HttpRequest, slug: str, face_id: int) -> HttpResponseBase:
+        face = get_object_or_404(
+            FaceEmbedding.objects.select_related("photo__event").only(
+                "id", "avatar_key", "photo__status", "photo__event__slug"
+            ),
+            id=face_id,
+            photo__event__slug=slug,
+            photo__status=PhotoStatus.APPROVED,
+        )
+        if not face.avatar_key:
+            raise Http404
+
+        event = face.photo.event
+        # Mismo criterio de visibilidad que el lightbox; los invitados entran
+        # por su propia vista, que valida la sesión del reviewer.
+        if not (event.is_public() or event.is_searchable()):
+            raise Http404
+
+        from apps.photos.storage import R2NotConfiguredError, R2UploadError, default_storage
+
+        buf = BytesIO()
+        try:
+            default_storage().download_fileobj(face.avatar_key, buf)
+        except (R2NotConfiguredError, R2UploadError) as exc:
+            raise Http404 from exc
+        buf.seek(0)
+
+        resp = FileResponse(buf, content_type="image/webp")
+        resp["Cache-Control"] = "public, max-age=2592000"  # 30 días (key inmutable)
+        return resp

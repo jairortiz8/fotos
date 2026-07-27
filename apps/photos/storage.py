@@ -226,6 +226,11 @@ def key_for_photographer_cover(link_id: int) -> str:
     return f"photographer_covers/{link_id}.webp"
 
 
+def key_for_face_avatar(event_slug: str, face_id: int) -> str:
+    """Recorte cuadrado de una cara (avatar del visor)."""
+    return f"face_avatars/{event_slug}/{face_id}.webp"
+
+
 def photo_uuid_from_key(key: str) -> str:
     """Extrae el UUID del filename de un key cualquiera del evento."""
     return key.rsplit("/", 1)[-1].rsplit(".", 1)[0]

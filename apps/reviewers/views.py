@@ -31,7 +31,7 @@ from django.http import (
     HttpResponseRedirect,
 )
 from django.shortcuts import get_object_or_404, render
-from django.urls import reverse_lazy
+from django.urls import reverse, reverse_lazy
 from django.utils.translation import gettext_lazy as _
 from django.views import View
 from django.views.generic import TemplateView
@@ -130,6 +130,11 @@ class ReviewerGalleryView(ReviewerRequiredMixin, View):
         if bib_query:
             return self._bib_search(request, event, bib_query)
 
+        # ?cara=<id> → fotos de esa persona (click en el visor del lightbox).
+        face_query = request.GET.get("cara", "").strip()
+        if face_query.isdigit():
+            return self._face_search(request, event, int(face_query))
+
         # Vista "carpetas por fotógrafo".
         if request.GET.get("vista") == "fotografos":
             folders = list(
@@ -170,6 +175,39 @@ class ReviewerGalleryView(ReviewerRequiredMixin, View):
         if getattr(request, "htmx", False):
             return render(request, "reviewer/_grid.html", {**ctx, "append_ids": True})
         return render(request, "reviewer/gallery.html", ctx)
+
+    def _face_search(self, request: HttpRequest, event: Event, face_id: int) -> HttpResponse:
+        """Fotos de la persona de esa cara. Usa el embedding ya guardado — no
+        procesa ninguna imagen nueva."""
+        from apps.photos.models import FaceEmbedding
+        from apps.search.views import FACE_CLICK_THRESHOLD, search_faces_by_similarity
+
+        face = (
+            FaceEmbedding.objects.filter(
+                id=face_id, photo__event=event, photo__status=PhotoStatus.APPROVED
+            )
+            .only("id", "embedding")
+            .first()
+        )
+        if face is None:
+            raise Http404
+
+        photos = search_faces_by_similarity(
+            event, list(face.embedding), threshold=FACE_CLICK_THRESHOLD
+        )
+        attach_clean_thumb_urls(photos, event)
+        return render(
+            request,
+            "reviewer/gallery.html",
+            {
+                "event": event,
+                "photos": photos,
+                "is_search": True,
+                "face_search": True,
+                "match_count": len(photos),
+                "photo_ids_json": _photo_ids_json(photos),
+            },
+        )
 
     def _bib_search(self, request: HttpRequest, event: Event, raw: str) -> HttpResponse:
         from apps.core.utils import bib_query_variants, is_valid_bib_format, normalize_bib_query
@@ -337,3 +375,68 @@ class ReviewerPhotoDownloadView(ReviewerRequiredMixin, View):
             raise Http404 from exc
         buf.seek(0)
         return FileResponse(buf, as_attachment=True, filename=filename, content_type="image/jpeg")
+
+
+class ReviewerPhotoFacesView(ReviewerRequiredMixin, View):
+    """JSON con las caras (avatar) de una foto, para el visor del lightbox.
+
+    El lightbox del invitado es client-side (Alpine navega por un array de IDs),
+    así que no puede renderizar el visor en el server como la galería pública:
+    lo pide por acá cada vez que cambia de foto.
+    """
+
+    http_method_names = ["get"]
+
+    def get(self, request: HttpRequest, photo_id: int) -> HttpResponse:
+        from django.http import JsonResponse
+
+        from apps.photos.faces import avatar_faces_for_photo
+
+        photo = get_object_or_404(
+            Photo.objects.select_related("event"),
+            id=photo_id,
+            status=PhotoStatus.APPROVED,
+            event__reviewer_visible=True,
+        )
+        faces = [
+            {
+                "id": face.id,
+                "url": reverse("reviewers:face_avatar", kwargs={"face_id": face.id}),
+            }
+            for face in avatar_faces_for_photo(photo)
+        ]
+        return JsonResponse({"faces": faces})
+
+
+class ReviewerFaceAvatarView(ReviewerRequiredMixin, View):
+    """Sirve el recorte de una cara para el visor del invitado.
+
+    Existe aparte de la vista pública porque un evento puede ser
+    `reviewer_visible` sin ser público: ahí la URL pública daría 404.
+    """
+
+    http_method_names = ["get"]
+
+    def get(self, request: HttpRequest, face_id: int) -> HttpResponseBase:
+        from apps.photos.models import FaceEmbedding
+
+        face = get_object_or_404(
+            FaceEmbedding.objects.select_related("photo__event").only(
+                "id", "avatar_key", "photo__status", "photo__event__reviewer_visible"
+            ),
+            id=face_id,
+            photo__status=PhotoStatus.APPROVED,
+            photo__event__reviewer_visible=True,
+        )
+        if not face.avatar_key:
+            raise Http404
+
+        buf = BytesIO()
+        try:
+            default_storage().download_fileobj(face.avatar_key, buf)
+        except (R2NotConfiguredError, R2UploadError) as exc:
+            raise Http404 from exc
+        buf.seek(0)
+        resp = FileResponse(buf, content_type="image/webp")
+        resp["Cache-Control"] = "private, max-age=2592000"  # key inmutable
+        return resp
