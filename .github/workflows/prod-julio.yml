@@ -4,45 +4,40 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  validate:
-    name: validate feature branch
+  avatars:
+    name: generar avatares de caras (surf-city)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 90
     services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: runfoto
-          POSTGRES_PASSWORD: runfoto
-          POSTGRES_DB: runfoto
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready --health-interval 10s
-          --health-timeout 5s --health-retries 5
       redis:
         image: redis:7-alpine
-        ports:
-          - 6379:6379
+        ports: ["6379:6379"]
         options: >-
           --health-cmd "redis-cli ping" --health-interval 10s
           --health-timeout 5s --health-retries 5
     env:
-      DATABASE_URL: postgres://runfoto:runfoto@localhost:5432/runfoto
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
+      DJANGO_SETTINGS_MODULE: config.settings.dev
       REDIS_URL: redis://localhost:6379/0
       CELERY_BROKER_URL: redis://localhost:6379/1
       CELERY_RESULT_BACKEND: redis://localhost:6379/2
       SITE_NAME: "find your foto"
-      SITE_DOMAIN: localhost:8000
+      SITE_DOMAIN: findyourfoto.com
       NOTIFIER_BACKEND: whatsapp_manual
       LANGUAGE_CODE: es
       TIME_ZONE: America/El_Salvador
+      FACE_SEARCH_ENABLED: "false"
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: claude/runfoto-security-audit-bknirm
+          ref: main
 
-      - name: Install system libs for OpenCV/onnxruntime
+      - name: Install system libs
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -55,22 +50,139 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - name: Install Python deps
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Ruff (lint)
-        run: ruff check .
+      - name: Fetch prod credentials
+        run: |
+          python3 - <<'PYX'
+          import os, requests
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          q='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          def vf(sid):
+              v={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}
+              r=requests.post(API,headers=H,json={"query":q,"variables":v},timeout=40)
+              return (r.json().get("data",{}) or {}).get("variables") or {}
+          pg=vf(os.environ["PG_ID"]); web=vf(os.environ["WEB_ID"])
+          out={"DATABASE_URL": pg.get("DATABASE_PUBLIC_URL"),
+               "R2_ACCESS_KEY_ID": web.get("R2_ACCESS_KEY_ID"),
+               "R2_SECRET_ACCESS_KEY": web.get("R2_SECRET_ACCESS_KEY"),
+               "R2_BUCKET_NAME": web.get("R2_BUCKET_NAME"),
+               "R2_ENDPOINT_URL": web.get("R2_ENDPOINT_URL")}
+          missing=[k for k,v in out.items() if not v]
+          if missing: raise SystemExit(f"faltan: {missing}")
+          with open(os.environ["GITHUB_ENV"],"a") as f:
+              for k,v in out.items():
+                  print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
+          print("credenciales OK")
+          PYX
 
-      - name: Ruff (format)
-        run: ruff format --check .
+      - name: Generar avatares (paralelo, reanudable)
+        run: |
+          python manage.py shell <<'PYX'
+          import io, os, threading
+          import boto3
+          from botocore.config import Config
+          from concurrent.futures import ThreadPoolExecutor
+          from collections import defaultdict
 
-      - name: Mypy
-        run: mypy .
+          from django.db import connections
+          from apps.events.models import Event, EventStatus
+          from apps.photos.faces import face_size_px, is_avatar_sized
+          from apps.photos.imaging import FaceTooBlurryError, generate_face_avatar
+          from apps.photos.models import FaceEmbedding, PhotoStatus
+          from apps.photos.storage import key_for_face_avatar
 
-      - name: Django check
-        run: python manage.py check
+          ev = Event.objects.filter(slug="surf-city-2026").exclude(status=EventStatus.DELETED).first()
+          if ev is None:
+              raise SystemExit("no existe surf-city-2026")
 
-      - name: Pytest (reviewers + events + dashboard)
-        run: pytest -m "not slow and not e2e" tests/reviewers tests/events tests/dashboard tests/photos -q
+          rows = list(
+              FaceEmbedding.objects.filter(
+                  photo__event=ev, photo__status=PhotoStatus.APPROVED, avatar_key=""
+              )
+              .exclude(photo__original_key="")
+              .values_list("id", "bbox", "photo_id", "photo__original_key")
+          )
+          # Filtro de tamano (barato, sin bajar la imagen).
+          todo = [r for r in rows if is_avatar_sized(r[1])]
+          by_photo = defaultdict(list)
+          for fid, bbox, pid, okey in todo:
+              by_photo[(pid, okey)].append((fid, bbox))
+          print(f"CARAS_SIN_AVATAR={len(rows)} CALIFICAN={len(todo)} FOTOS={len(by_photo)}", flush=True)
+
+          bucket = os.environ["R2_BUCKET_NAME"]
+          s3 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
+              aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+              aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+              region_name="auto",
+              config=Config(signature_version="s3v4", max_pool_connections=48,
+                            retries={"max_attempts": 3}))
+
+          lock = threading.Lock()
+          done = {"ok": 0, "blurry": 0, "err": 0, "photos": 0}
+          updates = []
+
+          def work(item):
+              (pid, okey), faces = item
+              try:
+                  buf = io.BytesIO()
+                  s3.download_fileobj(bucket, okey, buf)
+                  data = buf.getvalue()
+              except Exception:
+                  with lock:
+                      done["err"] += len(faces); done["photos"] += 1
+                  return
+              local = []
+              for fid, bbox in faces:
+                  try:
+                      png = generate_face_avatar(data, bbox)
+                  except FaceTooBlurryError:
+                      with lock: done["blurry"] += 1
+                      continue
+                  except Exception:
+                      with lock: done["err"] += 1
+                      continue
+                  key = key_for_face_avatar(ev.slug, fid)
+                  try:
+                      s3.put_object(Bucket=bucket, Key=key, Body=png,
+                                    ContentType="image/webp",
+                                    CacheControl="public, max-age=2592000")
+                  except Exception:
+                      with lock: done["err"] += 1
+                      continue
+                  local.append((fid, key))
+              with lock:
+                  updates.extend(local)
+                  done["ok"] += len(local)
+                  done["photos"] += 1
+                  if done["photos"] % 500 == 0:
+                      print(f"progress {done['photos']}/{len(by_photo)} fotos "
+                            f"ok={done['ok']} borrosas={done['blurry']} err={done['err']}", flush=True)
+
+          with ThreadPoolExecutor(max_workers=20) as ex:
+              list(ex.map(work, list(by_photo.items())))
+
+          # Persistir los avatar_key en lotes (los hilos no comparten conexion).
+          connections.close_all()
+          B = 1000
+          for i in range(0, len(updates), B):
+              chunk = updates[i:i+B]
+              objs = []
+              for fid, key in chunk:
+                  objs.append(FaceEmbedding(id=fid, avatar_key=key))
+              FaceEmbedding.objects.bulk_update(objs, ["avatar_key"])
+          print(f"AVATARS_DONE ok={done['ok']} borrosas={done['blurry']} err={done['err']} "
+                f"persistidos={len(updates)}", flush=True)
+
+          con_avatar = FaceEmbedding.objects.filter(photo__event=ev).exclude(avatar_key="").count()
+          from apps.photos.models import Photo
+          fotos_con_visor = Photo.objects.filter(
+              event=ev, status=PhotoStatus.APPROVED,
+              face_embeddings__avatar_key__gt=""
+          ).distinct().count()
+          print(f"TOTAL_AVATARES={con_avatar} FOTOS_CON_VISOR={fotos_con_visor}", flush=True)
+          PYX
