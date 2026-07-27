@@ -343,6 +343,109 @@
     padding: 0.3125rem 0.625rem;
   }
 
+  /* ==========================================================================
+     Visor de caras (opción A) — las personas detectadas en la foto.
+     El motivo son las ESQUINAS DE ENFOQUE del wordmark: en reposo son finas y
+     grises; al pasar/enfocar se cierran sobre la cara y se prenden en naranja.
+     Es el logo convertido en interacción (y lo que nos separa de la competencia,
+     que usa círculos genéricos).
+     ========================================================================== */
+  .rf-visor {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    flex-wrap: wrap;
+  }
+
+  .rf-visor__label {
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-text-3);
+  }
+
+  .rf-visor__row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .rf-visor__tile {
+    position: relative;
+    width: 3.25rem;
+    height: 3.25rem;
+    flex: none;
+    border-radius: var(--radius-badge);
+    overflow: hidden;
+    background: var(--color-ink-2);
+    /* `color` maneja las 4 esquinas de una (usan currentColor). */
+    color: var(--color-border);
+    transition: color 0.18s ease, transform 0.18s ease;
+  }
+
+  .rf-visor__face {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .rf-visor__brk {
+    position: absolute;
+    inset: 3px;
+    transition: inset 0.18s ease;
+    pointer-events: none;
+  }
+
+  .rf-visor__tile:hover,
+  .rf-visor__tile:focus-visible {
+    color: var(--color-brand);
+    transform: translateY(-2px);
+  }
+
+  .rf-visor__tile:hover .rf-visor__brk,
+  .rf-visor__tile:focus-visible .rf-visor__brk {
+    inset: 1px;
+  }
+
+  .rf-visor__tile:focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+
+  /* Una esquina de enfoque: dos rayitas en ángulo, rotadas por modificador. */
+  .rf-br {
+    position: absolute;
+    width: 30%;
+    aspect-ratio: 1;
+  }
+
+  .rf-br::before,
+  .rf-br::after {
+    content: "";
+    position: absolute;
+    background: currentColor;
+  }
+
+  .rf-br::before {
+    inset: 0 auto auto 0;
+    width: 100%;
+    height: 1.5px;
+  }
+
+  .rf-br::after {
+    inset: 0 auto auto 0;
+    width: 1.5px;
+    height: 100%;
+  }
+
+  .rf-br--tl { top: 0; left: 0; }
+  .rf-br--tr { top: 0; right: 0; transform: scaleX(-1); }
+  .rf-br--bl { bottom: 0; left: 0; transform: scaleY(-1); }
+  .rf-br--br { bottom: 0; right: 0; transform: scale(-1); }
+
   /* --- Pulsing dot (live indicator) --- */
   .rf-pulse {
     animation: rfpulse 1.6s ease-out infinite;

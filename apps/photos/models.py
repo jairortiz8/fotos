@@ -316,6 +316,11 @@ class FaceEmbedding(TimeStampedModel):
         help_text=_("True si `estimated_age < 18`. Activa blur en preview público."),
     )
 
+    # Recorte cuadrado de la cara (webp en R2) que se muestra como avatar
+    # clickeable en el "visor" del lightbox. Vacío = esta cara no califica
+    # (muy chica o borrosa) o todavía no se generó. Ver apps/photos/faces.py.
+    avatar_key = models.CharField(_("key del avatar"), max_length=255, blank=True, db_index=True)
+
     # Para retention cleanup (CLAUDE.md §3 — 90 días sin match → borrar).
     last_matched_at = models.DateTimeField(_("último match"), null=True, blank=True)
     match_count = models.PositiveIntegerField(_("# de matches"), default=0)

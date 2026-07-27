@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 
 # Umbral de similitud coseno (ADR 0006). Ajustable con `tune_threshold`.
 SIMILARITY_THRESHOLD = 0.55
+# Click en una cara del visor: el vector de consulta sale del MISMO pipeline
+# que los indexados (foto profesional, cara grande y nítida), no de un selfie
+# de celular. Al ser una consulta más limpia podemos exigir más y así evitar
+# que le aparezcan fotos de otra persona parecida.
+FACE_CLICK_THRESHOLD = 0.62
 MAX_SELFIE_RESULTS = 50
 MAX_SELFIE_BYTES = 10 * 1024 * 1024  # 10 MB
 

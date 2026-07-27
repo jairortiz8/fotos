@@ -76,6 +76,12 @@ class EventGalleryView(View):
         if bib_query:
             return self._handle_bib_search(request, event, bib_query)
 
+        # ?cara=<id> → "las fotos de esta persona" (click en el visor). Es una
+        # búsqueda, así que vale igual con la galería cerrada pero searchable.
+        face_query = request.GET.get("cara", "").strip()
+        if face_query.isdigit():
+            return self._handle_face_search(request, event, int(face_query))
+
         # Sin query: si la galería pública no está abierta mostramos una pantalla
         # intermedia (con buscador por dorsal). Distinguimos dos casos para no
         # confundir:
@@ -212,6 +218,48 @@ class EventGalleryView(View):
                 "search_photos": photos,
                 "bib_query": bib_query,
                 "is_search_result": True,
+                "result_count": len(photos),
+            },
+        )
+
+    # ----- Búsqueda por cara (click en el visor) -----
+    def _handle_face_search(self, request: HttpRequest, event: Event, face_id: int) -> HttpResponse:
+        """Fotos de la persona de esa cara, por similitud con el embedding YA
+        guardado. No procesa ninguna imagen nueva ni sube nada: usa el vector
+        que se extrajo cuando se subió la foto."""
+        from apps.photos.models import FaceEmbedding
+        from apps.search.views import FACE_CLICK_THRESHOLD, search_faces_by_similarity
+
+        if not event.is_searchable():
+            raise Http404
+
+        face = (
+            FaceEmbedding.objects.filter(
+                id=face_id, photo__event=event, photo__status=PhotoStatus.APPROVED
+            )
+            .only("id", "embedding")
+            .first()
+        )
+        if face is None:
+            raise Http404
+
+        if not check_general_search_rate_limit(request):
+            return render(request, "public/rate_limited.html", {"event": event}, status=429)
+
+        photos = search_faces_by_similarity(
+            event, list(face.embedding), threshold=FACE_CLICK_THRESHOLD
+        )
+        record_event_metric(event.id, Metric.SEARCH)
+
+        return render(
+            request,
+            "public/event_gallery.html",
+            {
+                "event": event,
+                "search_photos": photos,
+                "is_search_result": True,
+                "is_face_search": True,
+                "face_id": face_id,
                 "result_count": len(photos),
             },
         )

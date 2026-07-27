@@ -125,11 +125,16 @@
   {# ===== Filters strip (solo en resultados de búsqueda) ===== #}
   {% if is_search_result %}
   <div class="flex items-center justify-between gap-3 px-6 md:px-10 py-3.5 border-b border-border">
-    {# El pill del filtro es un botón para QUITARLO: click → galería completa. #}
+    {% comment %}El pill del filtro es un botón para QUITARLO: click → galería completa.
+    Con `is_face_search` el filtro es una persona (click en el visor), no un dorsal.{% endcomment %}
     <a href="{% url 'events:gallery' slug=event.slug %}"
        class="rf-pill rf-pill--orange hover:opacity-80 transition"
-       aria-label="{% trans 'Quitar el filtro de dorsal y ver todas las fotos' %}">
-      {% blocktrans count n=result_count %}Dorsal #{{ bib_query }} · {{ n }} foto{% plural %}Dorsal #{{ bib_query }} · {{ n }} fotos{% endblocktrans %}
+       aria-label="{% trans 'Quitar el filtro y ver todas las fotos' %}">
+      {% if is_face_search %}
+        {% blocktrans count n=result_count %}Esta persona · {{ n }} foto{% plural %}Esta persona · {{ n }} fotos{% endblocktrans %}
+      {% else %}
+        {% blocktrans count n=result_count %}Dorsal #{{ bib_query }} · {{ n }} foto{% plural %}Dorsal #{{ bib_query }} · {{ n }} fotos{% endblocktrans %}
+      {% endif %}
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
     </a>
     <a href="{% url 'events:gallery' slug=event.slug %}" class="text-[12px] text-text-2 hover:text-text-1 transition shrink-0">{% trans "Ver todas" %}</a>
