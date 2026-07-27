@@ -4,10 +4,10 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  regen:
-    name: diagnosticar foto 688 + regenerar visor faltante
+  render:
+    name: verificar que el visor se dibuja (datos reales de prod)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 25
     services:
       redis:
         image: redis:7-alpine
@@ -75,69 +75,23 @@ jobs:
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
           PYX
 
-      - name: Diagnostico de la foto del dorsal 688
+      - name: Renderizar el lightbox con datos reales
         run: |
           python manage.py shell <<'PYX'
-          from apps.photos.faces import face_size_px
-          from apps.photos.models import Photo, PhotoStatus
-          qs = Photo.objects.filter(
-              event__slug="surf-city-2026", status=PhotoStatus.APPROVED,
-              bibs__number="688", bibs__rejected=False,
-          ).distinct().prefetch_related("face_embeddings")
-          print(f"FOTOS_CON_DORSAL_688={qs.count()}")
-          for p in qs[:5]:
-              faces = list(p.face_embeddings.all())
-              sizes = sorted((round(face_size_px(f.bbox)) for f in faces), reverse=True)
-              con_avatar = sum(1 for f in faces if f.avatar_key)
-              print(f"  foto={p.id} dim={p.width}x{p.height} caras={len(faces)} "
-                    f"tamanos={sizes[:8]} con_avatar={con_avatar}")
-          PYX
-
-      - name: Regenerar el visor faltante (incremental)
-        run: |
-          python manage.py shell <<'PYX'
-          import threading
-          from concurrent.futures import ThreadPoolExecutor
-          from django.db import connections
-          from apps.events.models import Event, EventStatus
-          from apps.photos.faces import generate_avatars_for_photo
+          from django.conf import settings
+          settings.ALLOWED_HOSTS = ["*"]
+          from django.test import Client
+          from apps.photos.faces import avatar_faces_for_photo
           from apps.photos.models import Photo, PhotoStatus
 
-          ev = Event.objects.filter(slug="surf-city-2026").exclude(status=EventStatus.DELETED).first()
-          # Fotos APROBADAS con caras pero SIN ningun avatar todavia.
-          faltantes = list(
-              Photo.objects.filter(event=ev, status=PhotoStatus.APPROVED,
-                                   face_embeddings__isnull=False)
-              .exclude(face_embeddings__avatar_key__gt="")
-              .exclude(original_key="")
-              .distinct().values_list("id", flat=True)
-          )
-          print(f"FOTOS_SIN_VISOR={len(faltantes)}", flush=True)
-
-          lock = threading.Lock()
-          acc = {"gen": 0, "fb": 0, "err": 0, "n": 0}
-
-          def work(pid):
-              try:
-                  p = Photo.objects.select_related("event").get(id=pid)
-                  st = generate_avatars_for_photo(p)
-              except Exception:
-                  with lock: acc["err"] += 1; acc["n"] += 1
-                  return
-              with lock:
-                  acc["gen"] += st["generated"]; acc["fb"] += st.get("fallback", 0)
-                  acc["n"] += 1
-                  if acc["n"] % 500 == 0:
-                      print(f"progress {acc['n']}/{len(faltantes)} gen={acc['gen']} "
-                            f"respaldo={acc['fb']} err={acc['err']}", flush=True)
-
-          with ThreadPoolExecutor(max_workers=12) as ex:
-              list(ex.map(work, faltantes))
-          print(f"REGEN_DONE gen={acc['gen']} respaldo={acc['fb']} err={acc['err']}", flush=True)
-
-          connections.close_all()
-          total = Photo.objects.filter(event=ev, status=PhotoStatus.APPROVED,
-                                       face_embeddings__avatar_key__gt="").distinct().count()
-          aprob = Photo.objects.filter(event=ev, status=PhotoStatus.APPROVED).count()
-          print(f"COBERTURA {total}/{aprob} = {round(100*total/aprob,1)}%", flush=True)
+          # Las mismas fotos del dorsal 688 que ya sabemos que tienen avatar.
+          for pid in (16458, 15917, 14979):
+              p = Photo.objects.filter(id=pid, status=PhotoStatus.APPROVED).select_related("event").first()
+              if not p:
+                  print(f"foto {pid}: no existe / no aprobada"); continue
+              faces = avatar_faces_for_photo(p)
+              r = Client().get(f"/eventos/{p.event.slug}/foto/{p.id}/")
+              body = r.content.decode(errors="ignore")
+              print(f"foto={pid} HTTP={r.status_code} caras_con_avatar={len(faces)} "
+                    f"rf-visor={'rf-visor' in body} link_cara={'?cara=' in body}")
           PYX
