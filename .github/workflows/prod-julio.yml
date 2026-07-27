@@ -4,73 +4,140 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  validate:
-    name: validate feature branch
+  regen:
+    name: diagnosticar foto 688 + regenerar visor faltante
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 90
     services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: runfoto
-          POSTGRES_PASSWORD: runfoto
-          POSTGRES_DB: runfoto
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready --health-interval 10s
-          --health-timeout 5s --health-retries 5
       redis:
         image: redis:7-alpine
-        ports:
-          - 6379:6379
+        ports: ["6379:6379"]
         options: >-
           --health-cmd "redis-cli ping" --health-interval 10s
           --health-timeout 5s --health-retries 5
     env:
-      DATABASE_URL: postgres://runfoto:runfoto@localhost:5432/runfoto
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
+      DJANGO_SETTINGS_MODULE: config.settings.dev
       REDIS_URL: redis://localhost:6379/0
       CELERY_BROKER_URL: redis://localhost:6379/1
       CELERY_RESULT_BACKEND: redis://localhost:6379/2
       SITE_NAME: "find your foto"
-      SITE_DOMAIN: localhost:8000
+      SITE_DOMAIN: findyourfoto.com
       NOTIFIER_BACKEND: whatsapp_manual
       LANGUAGE_CODE: es
       TIME_ZONE: America/El_Salvador
+      FACE_SEARCH_ENABLED: "false"
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: claude/runfoto-security-audit-bknirm
-
-      - name: Install system libs for OpenCV/onnxruntime
+          ref: main
+      - name: Install system libs
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libgl1 libglib2.0-0 libgomp1 libxcb1 libsm6 libxext6 libxrender1
-
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
-
-      - name: Install Python deps
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+      - name: Fetch prod credentials
+        run: |
+          python3 - <<'PYX'
+          import os, requests
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          q='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          def vf(sid):
+              v={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}
+              r=requests.post(API,headers=H,json={"query":q,"variables":v},timeout=40)
+              return (r.json().get("data",{}) or {}).get("variables") or {}
+          pg=vf(os.environ["PG_ID"]); web=vf(os.environ["WEB_ID"])
+          out={"DATABASE_URL": pg.get("DATABASE_PUBLIC_URL"),
+               "R2_ACCESS_KEY_ID": web.get("R2_ACCESS_KEY_ID"),
+               "R2_SECRET_ACCESS_KEY": web.get("R2_SECRET_ACCESS_KEY"),
+               "R2_BUCKET_NAME": web.get("R2_BUCKET_NAME"),
+               "R2_ENDPOINT_URL": web.get("R2_ENDPOINT_URL")}
+          missing=[k for k,v in out.items() if not v]
+          if missing: raise SystemExit(f"faltan: {missing}")
+          with open(os.environ["GITHUB_ENV"],"a") as f:
+              for k,v in out.items():
+                  print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
+          PYX
 
-      - name: Ruff (lint)
-        run: ruff check .
+      - name: Diagnostico de la foto del dorsal 688
+        run: |
+          python manage.py shell <<'PYX'
+          from apps.photos.faces import face_size_px
+          from apps.photos.models import Photo, PhotoStatus
+          qs = Photo.objects.filter(
+              event__slug="surf-city-2026", status=PhotoStatus.APPROVED,
+              bibs__number="688", bibs__rejected=False,
+          ).distinct().prefetch_related("face_embeddings")
+          print(f"FOTOS_CON_DORSAL_688={qs.count()}")
+          for p in qs[:5]:
+              faces = list(p.face_embeddings.all())
+              sizes = sorted((round(face_size_px(f.bbox)) for f in faces), reverse=True)
+              con_avatar = sum(1 for f in faces if f.avatar_key)
+              print(f"  foto={p.id} dim={p.width}x{p.height} caras={len(faces)} "
+                    f"tamanos={sizes[:8]} con_avatar={con_avatar}")
+          PYX
 
-      - name: Ruff (format)
-        run: ruff format --check .
+      - name: Regenerar el visor faltante (incremental)
+        run: |
+          python manage.py shell <<'PYX'
+          import threading
+          from concurrent.futures import ThreadPoolExecutor
+          from django.db import connections
+          from apps.events.models import Event, EventStatus
+          from apps.photos.faces import generate_avatars_for_photo
+          from apps.photos.models import Photo, PhotoStatus
 
-      - name: Mypy
-        run: mypy .
+          ev = Event.objects.filter(slug="surf-city-2026").exclude(status=EventStatus.DELETED).first()
+          # Fotos APROBADAS con caras pero SIN ningun avatar todavia.
+          faltantes = list(
+              Photo.objects.filter(event=ev, status=PhotoStatus.APPROVED,
+                                   face_embeddings__isnull=False)
+              .exclude(face_embeddings__avatar_key__gt="")
+              .exclude(original_key="")
+              .distinct().values_list("id", flat=True)
+          )
+          print(f"FOTOS_SIN_VISOR={len(faltantes)}", flush=True)
 
-      - name: Django check
-        run: python manage.py check
+          lock = threading.Lock()
+          acc = {"gen": 0, "fb": 0, "err": 0, "n": 0}
 
-      - name: Pytest (reviewers + events + dashboard)
-        run: pytest -m "not slow and not e2e" tests/reviewers tests/events tests/dashboard tests/photos -q
+          def work(pid):
+              try:
+                  p = Photo.objects.select_related("event").get(id=pid)
+                  st = generate_avatars_for_photo(p)
+              except Exception:
+                  with lock: acc["err"] += 1; acc["n"] += 1
+                  return
+              with lock:
+                  acc["gen"] += st["generated"]; acc["fb"] += st.get("fallback", 0)
+                  acc["n"] += 1
+                  if acc["n"] % 500 == 0:
+                      print(f"progress {acc['n']}/{len(faltantes)} gen={acc['gen']} "
+                            f"respaldo={acc['fb']} err={acc['err']}", flush=True)
+
+          with ThreadPoolExecutor(max_workers=12) as ex:
+              list(ex.map(work, faltantes))
+          print(f"REGEN_DONE gen={acc['gen']} respaldo={acc['fb']} err={acc['err']}", flush=True)
+
+          connections.close_all()
+          total = Photo.objects.filter(event=ev, status=PhotoStatus.APPROVED,
+                                       face_embeddings__avatar_key__gt="").distinct().count()
+          aprob = Photo.objects.filter(event=ev, status=PhotoStatus.APPROVED).count()
+          print(f"COBERTURA {total}/{aprob} = {round(100*total/aprob,1)}%", flush=True)
+          PYX
