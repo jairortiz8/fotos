@@ -4,17 +4,10 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  render:
-    name: verificar que el visor se dibuja (datos reales de prod)
+  descarga:
+    name: medir perdida en la descarga (original vs con logos)
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    services:
-      redis:
-        image: redis:7-alpine
-        ports: ["6379:6379"]
-        options: >-
-          --health-cmd "redis-cli ping" --health-interval 10s
-          --health-timeout 5s --health-retries 5
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
@@ -22,39 +15,22 @@ jobs:
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
       WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
-      DJANGO_SETTINGS_MODULE: config.settings.dev
-      REDIS_URL: redis://localhost:6379/0
-      CELERY_BROKER_URL: redis://localhost:6379/1
-      CELERY_RESULT_BACKEND: redis://localhost:6379/2
-      SITE_NAME: "find your foto"
-      SITE_DOMAIN: findyourfoto.com
-      NOTIFIER_BACKEND: whatsapp_manual
-      LANGUAGE_CODE: es
-      TIME_ZONE: America/El_Salvador
-      FACE_SEARCH_ENABLED: "false"
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
-      - name: Install system libs
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libgl1 libglib2.0-0 libgomp1 libxcb1 libsm6 libxext6 libxrender1
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-      - name: Install deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-      - name: Fetch prod credentials
+      - name: Install
+        run: pip install "psycopg[binary]" requests boto3 pillow
+      - name: Comparar original vs descarga
         run: |
           python3 - <<'PYX'
-          import os, requests
+          import io, os, requests, psycopg, boto3
+          from botocore.config import Config
+          from PIL import Image
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
           q='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
@@ -63,35 +39,33 @@ jobs:
               r=requests.post(API,headers=H,json={"query":q,"variables":v},timeout=40)
               return (r.json().get("data",{}) or {}).get("variables") or {}
           pg=vf(os.environ["PG_ID"]); web=vf(os.environ["WEB_ID"])
-          out={"DATABASE_URL": pg.get("DATABASE_PUBLIC_URL"),
-               "R2_ACCESS_KEY_ID": web.get("R2_ACCESS_KEY_ID"),
-               "R2_SECRET_ACCESS_KEY": web.get("R2_SECRET_ACCESS_KEY"),
-               "R2_BUCKET_NAME": web.get("R2_BUCKET_NAME"),
-               "R2_ENDPOINT_URL": web.get("R2_ENDPOINT_URL")}
-          missing=[k for k,v in out.items() if not v]
-          if missing: raise SystemExit(f"faltan: {missing}")
-          with open(os.environ["GITHUB_ENV"],"a") as f:
-              for k,v in out.items():
-                  print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
-          PYX
+          dburl=pg.get("DATABASE_PUBLIC_URL"); print("::add-mask::"+dburl)
+          bucket=web["R2_BUCKET_NAME"]
+          s3=boto3.client("s3", endpoint_url=web["R2_ENDPOINT_URL"],
+              aws_access_key_id=web["R2_ACCESS_KEY_ID"],
+              aws_secret_access_key=web["R2_SECRET_ACCESS_KEY"],
+              region_name="auto", config=Config(signature_version="s3v4"))
 
-      - name: Renderizar el lightbox con datos reales
-        run: |
-          python manage.py shell <<'PYX'
-          from django.conf import settings
-          settings.ALLOWED_HOSTS = ["*"]
-          from django.test import Client
-          from apps.photos.faces import avatar_faces_for_photo
-          from apps.photos.models import Photo, PhotoStatus
-
-          # Las mismas fotos del dorsal 688 que ya sabemos que tienen avatar.
-          for pid in (16458, 15917, 14979):
-              p = Photo.objects.filter(id=pid, status=PhotoStatus.APPROVED).select_related("event").first()
-              if not p:
-                  print(f"foto {pid}: no existe / no aprobada"); continue
-              faces = avatar_faces_for_photo(p)
-              r = Client().get(f"/eventos/{p.event.slug}/foto/{p.id}/")
-              body = r.content.decode(errors="ignore")
-              print(f"foto={pid} HTTP={r.status_code} caras_con_avatar={len(faces)} "
-                    f"rf-visor={'rf-visor' in body} link_cara={'?cara=' in body}")
+          with psycopg.connect(dburl, connect_timeout=30) as c, c.cursor() as cur:
+              cur.execute('''
+                SELECT p.id, p.original_key, p.branded_key, p.file_size, p.width, p.height
+                FROM photos_photo p JOIN events_event e ON e.id=p.event_id
+                WHERE e.slug='surf-city-2026' AND p.status='approved'
+                  AND p.branded_key <> '' ORDER BY p.id DESC LIMIT 6
+              ''')
+              rows = cur.fetchall()
+          print(f"muestras={len(rows)}\n")
+          print(f"{'foto':>7} {'dimensiones':>13} {'original':>10} {'descarga':>10} {'dif':>7} {'px descarga':>13} {'EXIF':>6}")
+          for pid, okey, bkey, fsize, w, h in rows:
+              try:
+                  head = s3.head_object(Bucket=bucket, Key=bkey)
+                  bsize = head["ContentLength"]
+              except Exception as exc:
+                  print(f"{pid:>7} error head: {exc}"); continue
+              buf = io.BytesIO(); s3.download_fileobj(bucket, bkey, buf); buf.seek(0)
+              img = Image.open(buf)
+              tiene_exif = bool(img.getexif())
+              dif = round(100*(bsize-fsize)/fsize)
+              print(f"{pid:>7} {f'{w}x{h}':>13} {fsize/1e6:>9.2f}M {bsize/1e6:>9.2f}M "
+                    f"{dif:>+6}% {f'{img.width}x{img.height}':>13} {str(tiene_exif):>6}")
           PYX
