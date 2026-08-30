@@ -36,16 +36,14 @@ jobs:
       - uses: actions/checkout@v4
         with: { ref: main }
 
-      - name: Instalar deps
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends libgl1 libglib2.0-0 libgomp1 libxcb1 libsm6 libxext6 libxrender1
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-      - run: pip install -e ".[dev]"
+
+      # Solo el driver de Postgres + requests. NO se instala el arbol de deps
+      # del proyecto (paddle/torch/insightface): tardaba mas de 20 min y este
+      # trabajo solo necesita un UPDATE de una columna.
+      - run: pip install --quiet "psycopg[binary]" requests
 
       - name: Credenciales de prod
         run: |
@@ -73,58 +71,95 @@ jobs:
 
       - name: Apagar los eventos de prueba
         run: |
-          python manage.py shell <<'PYX'
-          from apps.events.models import Event, EventStatus
+          python3 - <<'PYX'
+          import os, psycopg
 
           # Solo estos tres. Los eventos REALES (surf-city-2026 con 19.506 fotos y
           # camino-a-san-luis-iron-dream con 3.082) NO se tocan.
           APAGAR = ["surf-city-prueba-logos", "trail-ipala-2026", "maraton-antigua-2026"]
           INTOCABLES = {"surf-city-2026", "camino-a-san-luis-iron-dream"}
+          assert not (set(APAGAR) & INTOCABLES), "la lista toca un evento real"
 
-          print("=== ANTES ===")
-          for e in Event.objects.exclude(status=EventStatus.DELETED).order_by("-date"):
-              links = e.photographer_links.filter(is_active=True).count()
-              print(f"  {e.slug:<32} {e.status:<16} vis={e.visibility:<9} fotos={e.photo_count:<6} links={links}")
+          def listar(cur, titulo):
+              print(f"\n=== {titulo} ===")
+              cur.execute("""
+                  SELECT e.slug, e.status, e.visibility, e.photo_count,
+                         (SELECT count(*) FROM photographers_photographerlink l
+                           WHERE l.event_id = e.id AND l.is_active) AS links
+                    FROM events_event e
+                   WHERE e.status <> 'deleted'
+                   ORDER BY e.date DESC
+              """)
+              for slug, st, vis, fotos, links in cur.fetchall():
+                  print(f"  {slug:<32} {st:<16} vis={vis:<9} fotos={fotos:<6} links={links}")
 
-          print("\n=== APAGANDO ===")
-          for slug in APAGAR:
-              assert slug not in INTOCABLES, f"NO tocar {slug}"
-              e = Event.objects.filter(slug=slug).first()
-              if e is None:
-                  print(f"  {slug}: no existe (nada que hacer)")
-                  continue
-              antes = e.status
-              if antes == EventStatus.DRAFT:
-                  print(f"  {slug}: ya estaba apagado (draft)")
-                  continue
-              e.status = EventStatus.DRAFT
-              e.save(update_fields=["status", "updated_at"])
-              print(f"  {slug}: {antes} -> draft  ({e.photo_count} fotos intactas)")
+          with psycopg.connect(os.environ["DATABASE_URL"], autocommit=False) as conn:
+              with conn.cursor() as cur:
+                  listar(cur, "ANTES")
 
-          print("\n=== DESPUES ===")
-          for e in Event.objects.exclude(status=EventStatus.DELETED).order_by("-date"):
-              links = e.photographer_links.filter(is_active=True).count()
-              print(f"  {e.slug:<32} {e.status:<16} vis={e.visibility:<9} fotos={e.photo_count:<6} links={links}")
+                  print("\n=== APAGANDO ===")
+                  for slug in APAGAR:
+                      cur.execute("SELECT status, photo_count FROM events_event WHERE slug = %s", (slug,))
+                      fila = cur.fetchone()
+                      if fila is None:
+                          print(f"  {slug}: no existe (nada que hacer)")
+                          continue
+                      antes, fotos = fila
+                      if antes == "draft":
+                          print(f"  {slug}: ya estaba apagado (draft)")
+                          continue
+                      cur.execute(
+                          "UPDATE events_event SET status = 'draft', updated_at = now() "
+                          "WHERE slug = %s AND slug <> ALL(%s)",
+                          (slug, list(INTOCABLES)),
+                      )
+                      print(f"  {slug}: {antes} -> draft  ({fotos} fotos intactas, {cur.rowcount} fila)")
 
-          print("\n=== LINKS DE FOTOGRAFO ACTIVOS (por evento) ===")
-          print("Un link activo en un evento apagado deja subir fotos al evento equivocado.")
-          for e in Event.objects.exclude(status=EventStatus.DELETED).order_by("-date"):
-              for l in e.photographer_links.filter(is_active=True):
-                  print(f"  {e.slug:<32} {e.status:<16} {l.photographer_name!r:<28} vence={l.expires_at:%d/%m/%Y}")
+                  listar(cur, "DESPUES")
+
+                  print("\n=== LINKS DE FOTOGRAFO ACTIVOS ===")
+                  print("Un link activo en un evento apagado deja subir fotos al evento equivocado.")
+                  cur.execute("""
+                      SELECT e.slug, e.status, l.photographer_name, l.expires_at
+                        FROM photographers_photographerlink l
+                        JOIN events_event e ON e.id = l.event_id
+                       WHERE l.is_active AND e.status <> 'deleted'
+                       ORDER BY e.date DESC, l.photographer_name
+                  """)
+                  filas = cur.fetchall()
+                  if not filas:
+                      print("  (ninguno)")
+                  for slug, st, nombre, vence in filas:
+                      print(f"  {slug:<32} {st:<16} {nombre!r:<28} vence={vence:%d/%m/%Y}")
+
+              conn.commit()
+              print("\nCOMMIT hecho.")
           PYX
 
-      - name: Confirmar que la galeria publica ya no responde
+      - name: Confirmar el estado final
         run: |
-          python manage.py shell <<'PYX'
-          from django.test import Client
-          from django.conf import settings
-          settings.ALLOWED_HOSTS = ["*"]
-          c = Client()
-          for slug in ["surf-city-prueba-logos", "trail-ipala-2026", "maraton-antigua-2026",
-                       "surf-city-2026", "camino-a-san-luis-iron-dream"]:
-              r = c.get(f"/eventos/{slug}/")
-              esperado = "404 (apagado)" if slug not in ("surf-city-2026","camino-a-san-luis-iron-dream") else "200 (real, sigue vivo)"
-              print(f"  /eventos/{slug}/ -> {r.status_code}   esperado: {esperado}")
-          r = c.get("/")
-          print(f"\n  home -> {r.status_code}")
+          python3 - <<'PYX'
+          import os, psycopg
+          esperado = {
+              "surf-city-prueba-logos": "draft",
+              "trail-ipala-2026": "draft",
+              "maraton-antigua-2026": "draft",
+          }
+          reales = {"surf-city-2026", "camino-a-san-luis-iron-dream"}
+          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
+              cur.execute("SELECT slug, status FROM events_event WHERE slug = ANY(%s)",
+                          (list(esperado) + list(reales),))
+              estado = dict(cur.fetchall())
+          ok = True
+          for slug, quiero in esperado.items():
+              hay = estado.get(slug, "(no existe)")
+              marca = "OK" if hay == quiero else "MAL"
+              if hay != quiero and hay != "(no existe)": ok = False
+              print(f"  {marca:<4} {slug:<32} {hay}")
+          for slug in reales:
+              hay = estado.get(slug, "(no existe)")
+              marca = "OK" if hay not in ("draft", "deleted") else "MAL"
+              if marca == "MAL": ok = False
+              print(f"  {marca:<4} {slug:<32} {hay}   <- evento real, debe seguir vivo")
+          raise SystemExit(0 if ok else 1)
           PYX
