@@ -7,8 +7,8 @@ concurrency:
   group: prod-julio
   cancel-in-progress: true
 jobs:
-  medir:
-    name: cuanto tarda de verdad el procesamiento
+  urgente:
+    name: URGENTE - por que no procesa el worker
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -63,119 +63,82 @@ jobs:
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
           PYX
 
-      - name: Limpiar lo que haya dejado la prueba anterior
-        run: |
-          python3 - <<'PYX'
-          import os, psycopg, boto3
-          from botocore.config import Config
-          NOMBRE = "PRUEBA (borrar) - Claude"
-          s3 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
-                            aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
-                            aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
-                            config=Config(signature_version="s3v4"), region_name="auto")
-          bucket = os.environ["R2_BUCKET_NAME"]
-          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
-              cur.execute("SELECT id, event_id FROM photographers_photographerlink WHERE photographer_name = %s", (NOMBRE,))
-              links = cur.fetchall()
-              if not links:
-                  print("  no quedo nada de la prueba anterior")
-              for link_id, eid in links:
-                  cur.execute("SELECT id, status FROM photos_photo WHERE photographer_link_id = %s", (link_id,))
-                  filas = cur.fetchall()
-                  ids = [r[0] for r in filas]
-                  # Antes de borrar: dejar constancia de en que estado quedaron.
-                  for pid, st in filas:
-                      cur.execute("""SELECT preview_key <> '', thumbnail_key <> '',
-                                            EXTRACT(EPOCH FROM (updated_at - created_at))
-                                       FROM photos_photo WHERE id = %s""", (pid,))
-                      prev, thumb, seg = cur.fetchone()
-                      cur.execute("SELECT count(*) FROM photos_faceembedding WHERE photo_id = %s", (pid,))
-                      print(f"  id={pid} estado={st} preview={'si' if prev else 'no'} "
-                            f"thumb={'si' if thumb else 'no'} caras={cur.fetchone()[0]} ({seg:.0f}s)")
-                  claves = []
-                  if ids:
-                      cur.execute("SELECT original_key, preview_key, thumbnail_key, branded_key FROM photos_photo WHERE id = ANY(%s)", (ids,))
-                      for fila in cur.fetchall():
-                          claves += [k for k in fila if k]
-                      cur.execute("SELECT avatar_key FROM photos_faceembedding WHERE photo_id = ANY(%s) AND avatar_key <> ''", (ids,))
-                      claves += [r[0] for r in cur.fetchall()]
-                      cur.execute("DELETE FROM photos_faceembedding WHERE photo_id = ANY(%s)", (ids,))
-                      cur.execute("DELETE FROM photos_bib WHERE photo_id = ANY(%s)", (ids,))
-                      cur.execute("DELETE FROM photos_photo WHERE id = ANY(%s)", (ids,))
-                  cur.execute("DELETE FROM photographers_photographerlink WHERE id = %s", (link_id,))
-                  cur.execute("""UPDATE events_event SET
-                                   photo_count = (SELECT count(*) FROM photos_photo WHERE event_id = %s AND status <> 'deleted'),
-                                   pending_count = (SELECT count(*) FROM photos_photo WHERE event_id = %s AND status = 'pending_review'),
-                                   updated_at = now() WHERE id = %s""", (eid, eid, eid))
-                  conn.commit()
-                  for k in claves:
-                      try: s3.delete_object(Bucket=bucket, Key=k)
-                      except Exception: pass
-                  print(f"  limpiadas {len(ids)} fotos + link {link_id}")
-          PYX
-
-      - name: Cuanto tardo CADA foto real de Surf City
+      - name: 1 - Estado real de las fotos del evento
         run: |
           python3 - <<'PYX'
           import os, psycopg
-
+          SLUG = "garmin-runners-girls-5k-social-run"
           with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
-              for slug in ("surf-city-2026", "camino-a-san-luis-iron-dream"):
-                  cur.execute("SELECT id, name FROM events_event WHERE slug = %s", (slug,))
-                  eid, nombre = cur.fetchone()
+              cur.execute("SELECT id FROM events_event WHERE slug = %s", (SLUG,))
+              eid = cur.fetchone()[0]
+              cur.execute("""SELECT status, count(*),
+                                    min(created_at), max(created_at)
+                               FROM photos_photo WHERE event_id = %s
+                              GROUP BY 1 ORDER BY 2 DESC""", (eid,))
+              print("=== FOTOS POR ESTADO ===")
+              for st, n, prim, ult in cur.fetchall():
+                  print(f"  {st:<20} {n:<6} primera={prim:%H:%M:%S} ultima={ult:%H:%M:%S}")
 
-                  # Tiempo entre que la foto entro y que quedo procesada. Solo las
-                  # que llegaron a tener preview: esas completaron la cadena.
-                  cur.execute("""
-                      SELECT count(*),
-                             percentile_cont(0.50) WITHIN GROUP (ORDER BY seg),
-                             percentile_cont(0.90) WITHIN GROUP (ORDER BY seg),
-                             percentile_cont(0.99) WITHIN GROUP (ORDER BY seg),
-                             max(seg), avg(tam)/1024/1024
-                        FROM (SELECT EXTRACT(EPOCH FROM (updated_at - created_at)) AS seg,
-                                     file_size AS tam
-                                FROM photos_photo
-                               WHERE event_id = %s AND preview_key <> ''
-                                 AND updated_at > created_at) t
-                  """, (eid,))
-                  n, p50, p90, p99, mx, mb = cur.fetchone()
-                  print(f"\n=== {nombre} ===")
-                  if not n:
-                      print("  sin datos")
-                      continue
-                  print(f"  {n} fotos procesadas, {mb:.1f} MB promedio")
-                  print(f"    mediana   {p50:6.0f}s   (la mitad tardo menos que esto)")
-                  print(f"    p90       {p90:6.0f}s   (9 de cada 10 por debajo)")
-                  print(f"    p99       {p99:6.0f}s")
-                  print(f"    la peor   {mx:6.0f}s")
+              cur.execute("""SELECT count(*),
+                             EXTRACT(EPOCH FROM (now() - min(created_at)))/60,
+                             count(*) FILTER (WHERE preview_key <> ''),
+                             count(*) FILTER (WHERE thumbnail_key <> ''),
+                             count(*) FILTER (WHERE width > 0)
+                        FROM photos_photo
+                       WHERE event_id = %s AND status IN ('processing','uploading')""", (eid,))
+              n, mins, prev, thumb, dim = cur.fetchone()
+              print(f"\n=== LAS TRABADAS ===")
+              print(f"  {n} en processing/uploading")
+              if mins: print(f"  la mas vieja entro hace {mins:.0f} minutos")
+              print(f"  con preview: {prev}   con thumbnail: {thumb}   con dimensiones leidas: {dim}")
+              print("  -> si TODO esta en 0, el worker no toco NINGUNA: no esta consumiendo la cola")
 
-                  # Throughput real: cuantas fotos por minuto salieron en la hora
-                  # mas cargada. Esto es lo que importa para un lote de 600.
-                  cur.execute("""
-                      SELECT date_trunc('hour', updated_at) AS hora, count(*)
-                        FROM photos_photo WHERE event_id = %s AND preview_key <> ''
-                       GROUP BY 1 ORDER BY 2 DESC LIMIT 3
-                  """, (eid,))
-                  print("    horas de mayor produccion del worker:")
-                  for hora, cuantas in cur.fetchall():
-                      print(f"      {hora:%d/%m %H:%M}  {cuantas} fotos  (~{cuantas/60:.1f} por minuto)")
-
-              # Estado global: hay algo trabado AHORA?
-              cur.execute("""SELECT status, count(*) FROM photos_photo
-                              WHERE created_at > now() - interval '2 hours'
-                              GROUP BY 1 ORDER BY 2 DESC""")
-              print("\n=== FOTOS DE LAS ULTIMAS 2 HORAS (todo el sistema) ===")
-              filas = cur.fetchall()
-              if not filas: print("  (ninguna)")
-              for st, n in filas: print(f"  {st:<20} {n}")
-
-              cur.execute("""SELECT count(*) FROM photos_photo
-                              WHERE status IN ('processing','uploading')
-                                AND created_at < now() - interval '1 hour'""")
-              print(f"\n  trabadas hace mas de 1h: {cur.fetchone()[0]}")
+              cur.execute("""SELECT count(*) FROM photos_faceembedding fe
+                              JOIN photos_photo p ON p.id = fe.photo_id
+                             WHERE p.event_id = %s""", (eid,))
+              print(f"  caras indexadas en el evento: {cur.fetchone()[0]}")
           PYX
 
-      - name: Estado del worker
+      - name: 2 - Cuanto hay encolado en Redis
+        run: |
+          python3 - <<'PYX'
+          import os, requests
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          # Hay que ubicar el serviceId de Redis para pedirle REDIS_PUBLIC_URL.
+          q1='query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{ serviceId serviceName } } } } }'
+          d=requests.post(API,headers=H,json={"query":q1,"variables":{"e":os.environ["ENV_ID"]}},timeout=40).json()
+          redis_id=None
+          for e in d["data"]["environment"]["serviceInstances"]["edges"]:
+              if e["node"]["serviceName"].lower().startswith("redis"):
+                  redis_id=e["node"]["serviceId"]
+          if not redis_id:
+              print("  no encontre el servicio Redis"); raise SystemExit(0)
+          q2='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          v={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":redis_id}
+          vars=(requests.post(API,headers=H,json={"query":q2,"variables":v},timeout=40)
+                .json().get("data",{}) or {}).get("variables") or {}
+          url=vars.get("REDIS_PUBLIC_URL")
+          if not url:
+              print(f"  sin REDIS_PUBLIC_URL. claves: {sorted(vars)[:15]}"); raise SystemExit(0)
+          print(f"::add-mask::{url}")
+          os.system("pip install --quiet redis")
+          import redis
+          r=redis.from_url(url, socket_timeout=20)
+          print(f"  ping: {r.ping()}")
+          print("\n=== COLAS ===")
+          for k in r.scan_iter(count=1000):
+              try:
+                  t=r.type(k).decode()
+                  if t=="list":
+                      print(f"  lista {k.decode():<30} {r.llen(k)} tareas encoladas")
+              except Exception: pass
+          info=r.info("memory")
+          print(f"\n  memoria usada: {info.get('used_memory_human')}")
+          PYX
+
+      - name: 3 - Logs del worker en Railway
+        if: always()
         run: |
           python3 - <<'PYX'
           import os, json, urllib.request
@@ -185,11 +148,24 @@ jobs:
               req=urllib.request.Request(API,data=body,headers={
                   "Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
                   "Content-Type":"application/json","User-Agent":"curl/8.0"})
-              return json.load(urllib.request.urlopen(req,timeout=45))
+              return json.load(urllib.request.urlopen(req,timeout=60))
           q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceName latestDeployment{ status createdAt } } } } } }"""
+                serviceName latestDeployment{ id status } } } } } }"""
           d=gql(q,{"e":os.environ["ENV_ID"]})
+          dep_id=None
           for e in d["data"]["environment"]["serviceInstances"]["edges"]:
-              n=e["node"]; dep=n.get("latestDeployment") or {}
-              print(f"  {n['serviceName']:<12} {dep.get('status') or 'SIN DEPLOY':<12} {(dep.get('createdAt') or '-')[:19]}")
+              n=e["node"]
+              if n["serviceName"]=="worker":
+                  dep=n.get("latestDeployment") or {}
+                  dep_id=dep.get("id"); print(f"  worker deploy {dep_id} estado={dep.get('status')}")
+          if not dep_id:
+              raise SystemExit(0)
+          ql="""query($d:String!,$n:Int!){ deploymentLogs(deploymentId:$d, limit:$n){ timestamp message severity } }"""
+          try:
+              logs=gql(ql,{"d":dep_id,"n":250})["data"]["deploymentLogs"]
+          except Exception as exc:
+              print(f"  no pude traer logs: {exc}"); raise SystemExit(0)
+          print(f"\n=== ULTIMAS {len(logs)} LINEAS DEL WORKER ===")
+          for l in logs[-250:]:
+              print(f"  {(l.get('timestamp') or '')[:19]} {(l.get('message') or '')[:190]}")
           PYX
