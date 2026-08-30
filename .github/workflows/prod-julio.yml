@@ -7,8 +7,8 @@ concurrency:
   group: prod-julio
   cancel-in-progress: true
 jobs:
-  revisar:
-    name: revisar el evento nuevo
+  probar:
+    name: probar la subida de punta a punta
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -37,7 +37,7 @@ jobs:
       # Solo el driver de Postgres + requests. NO se instala el arbol de deps
       # del proyecto (paddle/torch/insightface): tardaba mas de 20 min y este
       # trabajo solo necesita un UPDATE de una columna.
-      - run: pip install --quiet "psycopg[binary]" requests
+      - run: pip install --quiet "psycopg[binary]" requests boto3
 
       - name: Credenciales de prod
         run: |
@@ -63,189 +63,223 @@ jobs:
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
           PYX
 
-      - name: 1 - Servicios de Railway
+      - name: 1 - Crear un link de prueba
         run: |
           python3 - <<'PYX'
-          import os, json, urllib.request
-          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          def gql(q,v=None):
-              body=json.dumps({"query":q,"variables":v or {}}).encode()
-              req=urllib.request.Request(API,data=body,headers={
-                  "Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
-                  "Content-Type":"application/json","User-Agent":"curl/8.0"})
-              return json.load(urllib.request.urlopen(req,timeout=45))
-          q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceName latestDeployment{ status createdAt meta } } } } } }"""
-          d=gql(q,{"e":os.environ["ENV_ID"]})
-          print(f"{'servicio':<12} {'estado':<14} commit")
-          for e in d["data"]["environment"]["serviceInstances"]["edges"]:
-              n=e["node"]; dep=n.get("latestDeployment") or {}
-              meta=dep.get("meta") or {}
-              sha=(meta.get("commitHash") or "")[:7]
-              msg=((meta.get("commitMessage") or "").splitlines() or [""])[0][:44]
-              print(f"{n['serviceName']:<12} {dep.get('status') or 'SIN DEPLOY':<14} {sha} {msg}")
+          import os, secrets, hashlib, psycopg
+          from datetime import datetime, timedelta, timezone as tz
+
+          SLUG = "garmin-runners-girls-5k-social-run"
+          NOMBRE = "PRUEBA (borrar) - Claude"
+
+          # El token es una CREDENCIAL: da permiso de subir al evento. El repo es
+          # publico, asi que NUNCA se imprime. Se enmascara en el log y al final
+          # del trabajo el link queda revocado.
+          token = secrets.token_urlsafe(24)
+          token_hash = hashlib.sha256(token.encode()).hexdigest()
+          print(f"::add-mask::{token}")
+
+          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
+              cur.execute("SELECT id, date FROM events_event WHERE slug = %s", (SLUG,))
+              fila = cur.fetchone()
+              if fila is None:
+                  raise SystemExit(f"no existe el evento {SLUG}")
+              eid, fecha = fila
+              vence = datetime.combine(fecha, datetime.max.time()).replace(tzinfo=tz.utc) + timedelta(days=30)
+              cur.execute("""
+                  INSERT INTO photographers_photographerlink
+                      (event_id, photographer_name, photographer_email, photographer_phone,
+                       token_hash, expires_at, is_active, revoked_reason, photos_uploaded,
+                       featured_image_key, created_at, updated_at)
+                  VALUES (%s, %s, NULL, '', %s, %s, true, '', 0, '', now(), now())
+                  RETURNING id
+              """, (eid, NOMBRE, token_hash, vence))
+              link_id = cur.fetchone()[0]
+              conn.commit()
+
+          print(f"  link de prueba creado: id={link_id}  vence={vence:%d/%m/%Y}")
+          print("  (el token no se imprime a proposito: el repo es publico)")
+          with open(os.environ["GITHUB_ENV"],"a") as f:
+              f.write(f"TOKEN_PRUEBA={token}\n")
+              f.write(f"LINK_ID={link_id}\n")
+              f.write(f"EVENT_ID={eid}\n")
           PYX
 
-      - name: 2 - El evento nuevo
+      - name: 2 - Bajar fotos reales de R2 para la prueba
+        run: |
+          python3 - <<'PYX'
+          import os, psycopg, boto3, time
+          from botocore.config import Config
+
+          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
+              # Fotos reales de Surf City: tamano y caras de verdad, para que la
+              # medicion valga. Se suben al evento nuevo y se BORRAN al final.
+              cur.execute("""
+                  SELECT p.original_key, p.file_size, p.original_filename
+                    FROM photos_photo p JOIN events_event e ON e.id = p.event_id
+                   WHERE e.slug = 'surf-city-2026' AND p.status = 'approved'
+                     AND p.original_key <> '' AND p.has_faces_detected
+                   ORDER BY p.file_size DESC LIMIT 3
+              """)
+              fuentes = cur.fetchall()
+          if not fuentes:
+              raise SystemExit("no encontre fotos fuente")
+
+          s3 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
+                            aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+                            aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+                            config=Config(signature_version="s3v4"), region_name="auto")
+          bucket = os.environ["R2_BUCKET_NAME"]
+          os.makedirs("/tmp/fotos", exist_ok=True)
+          for n, (key, tam, nombre) in enumerate(fuentes, 1):
+              t0 = time.time()
+              s3.download_file(bucket, key, f"/tmp/fotos/prueba{n}.jpg")
+              real = os.path.getsize(f"/tmp/fotos/prueba{n}.jpg")
+              print(f"  prueba{n}.jpg  {real/1024/1024:.1f} MB  (bajada en {time.time()-t0:.1f}s)  origen={nombre}")
+          PYX
+
+      - name: 3 - Subir y medir
+        run: |
+          python3 - <<'PYX'
+          import os, time, json, requests, glob
+
+          base = "https://" + os.environ["SITE_DOMAIN"]
+          url = f"{base}/u/{os.environ['TOKEN_PRUEBA']}/upload/"
+
+          print("=== SUBIDA ===")
+          ids, fallos = [], []
+          for ruta in sorted(glob.glob("/tmp/fotos/*.jpg")):
+              mb = os.path.getsize(ruta)/1024/1024
+              t0 = time.time()
+              try:
+                  with open(ruta, "rb") as fh:
+                      r = requests.post(url, files={"file": (os.path.basename(ruta), fh, "image/jpeg")}, timeout=180)
+                  seg = time.time() - t0
+                  cuerpo = r.json() if r.headers.get("content-type","").startswith("application/json") else {}
+                  if r.status_code == 200 and cuerpo.get("id"):
+                      ids.append(cuerpo["id"])
+                      print(f"  OK   {os.path.basename(ruta)}  {mb:.1f} MB  subida en {seg:.1f}s  "
+                            f"({mb/seg:.1f} MB/s)  id={cuerpo['id']}")
+                  else:
+                      fallos.append((ruta, r.status_code, cuerpo))
+                      print(f"  FALLA {os.path.basename(ruta)}  HTTP {r.status_code}  {json.dumps(cuerpo)[:120]}")
+              except Exception as exc:
+                  fallos.append((ruta, "excepcion", str(exc)))
+                  print(f"  ERROR {os.path.basename(ruta)}  {exc}")
+
+          if not ids:
+              raise SystemExit("no se subio ninguna: la subida esta rota")
+
+          print("\n=== PROCESAMIENTO (worker) ===")
+          estado_url = f"{base}/u/{os.environ['TOKEN_PRUEBA']}/status/"
+          t0 = time.time()
+          listas, limite = {}, 420
+          while time.time() - t0 < limite:
+              r = requests.get(estado_url, params={"ids": ",".join(map(str, ids))}, timeout=30)
+              for foto in r.json().get("photos", []):
+                  if foto["status"] not in ("processing", "uploading") and foto["id"] not in listas:
+                      listas[foto["id"]] = (time.time() - t0, foto["status"], bool(foto["thumb_url"]))
+                      print(f"  id={foto['id']:<5} {foto['status']:<18} en {time.time()-t0:6.1f}s  "
+                            f"thumbnail={'si' if foto['thumb_url'] else 'NO'}")
+              if len(listas) == len(ids):
+                  break
+              time.sleep(5)
+
+          faltan = [i for i in ids if i not in listas]
+          if faltan:
+              print(f"  SIN TERMINAR tras {limite}s: {faltan}")
+          else:
+              tiempos = [v[0] for v in listas.values()]
+              print(f"\n  todas listas. la ultima tardo {max(tiempos):.0f}s desde que arranco el lote")
+          with open(os.environ["GITHUB_ENV"],"a") as f:
+              f.write(f"IDS_PRUEBA={','.join(map(str, ids))}\n")
+          PYX
+
+      - name: 4 - Que detecto (dorsales y caras)
+        if: always()
         run: |
           python3 - <<'PYX'
           import os, psycopg
-          from datetime import datetime, timezone as tz
-
-          ahora = datetime.now(tz.utc)
+          ids = [int(x) for x in os.environ.get("IDS_PRUEBA","").split(",") if x.strip().isdigit()]
+          if not ids:
+              raise SystemExit(0)
           with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
-              cur.execute("""
-                  SELECT id, slug, name, status, visibility, date, created_at,
-                         photo_count, pending_count, cover_key,
-                         organizer_name, organizer_instagram,
-                         public_until, searchable_until, archive_until, permanent_archive
-                    FROM events_event
-                   WHERE status <> 'deleted'
-                   ORDER BY created_at DESC LIMIT 3
-              """)
-              filas = cur.fetchall()
-              if not filas:
-                  raise SystemExit("no hay eventos")
-
-              print("=== LOS 3 EVENTOS MAS RECIENTES (por fecha de creacion) ===")
-              for f in filas:
-                  print(f"  {f[1]:<32} creado={f[6]:%d/%m %H:%M}  estado={f[3]:<16} fotos={f[7]}")
-
-              ev = filas[0]
-              (eid, slug, nombre, estado, vis, fecha, creado, fotos, pendientes,
-               portada, org, ig, hasta_pub, hasta_busq, hasta_arch, permanente) = ev
-
-              print(f"\n=== EVENTO NUEVO: {nombre} ===")
-              print(f"  slug            {slug}")
-              print(f"  id              {eid}")
-              print(f"  creado          {creado:%d/%m/%Y %H:%M} UTC")
-              print(f"  fecha de carrera {fecha}")
-              print(f"  estado          {estado}")
-              print(f"  visibilidad     {vis}")
-              print(f"  portada         {'si (' + portada + ')' if portada else 'NO tiene'}")
-              print(f"  organizador     {org or '(vacio)'}   IG: {ig or '(vacio)'}")
-              print(f"  fotos           {fotos}   pendientes de aprobar: {pendientes}")
-              print(f"  galeria abierta hasta   {hasta_pub}")
-              print(f"  busqueda abierta hasta  {hasta_busq}")
-              print(f"  archivo hasta           {hasta_arch}")
-              print(f"  archivo permanente      {permanente}")
-
-              # --- diagnostico de lo que le falta para funcionar hoy ---
-              print("\n=== CHEQUEOS ===")
-              problemas = []
-              if estado in ("draft", "deleted"):
-                  problemas.append(f"estado '{estado}': la galeria publica devuelve 404. "
-                                   "Para que los corredores entren tiene que estar en 'live' (Galeria abierta).")
-              elif estado in ("upcoming",):
-                  problemas.append("estado 'upcoming': todavia no muestra galeria.")
-              else:
-                  print(f"  OK  estado '{estado}' deja ver/buscar")
-
-              if vis == "private":
-                  problemas.append("visibilidad 'private': devuelve 404 aunque el estado este bien.")
-              elif vis == "unlisted":
-                  print("  OJO visibilidad 'unlisted': no sale en la home, solo con el link directo")
-              else:
-                  print("  OK  visibilidad 'public' (sale en la home)")
-
-              if hasta_pub and hasta_pub < ahora:
-                  problemas.append(f"public_until ya paso ({hasta_pub:%d/%m/%Y}): la galeria se cierra sola.")
-              if hasta_busq and hasta_busq < ahora:
-                  problemas.append(f"searchable_until ya paso ({hasta_busq:%d/%m/%Y}): no se puede buscar.")
-              if not portada:
-                  print("  OJO sin portada: se muestra el placeholder de marca (no rompe nada)")
-
-              # --- links de fotografo ---
-              cur.execute("""
-                  SELECT photographer_name, is_active, expires_at, photo_limit,
-                         photos_uploaded, last_used_at
-                    FROM photographers_photographerlink
-                   WHERE event_id = %s ORDER BY created_at
-              """, (eid,))
-              links = cur.fetchall()
-              print(f"\n=== LINKS DE FOTOGRAFO ({len(links)}) ===")
-              if not links:
-                  problemas.append("NO hay ningun link de fotografo: nadie puede subir fotos todavia.")
-                  print("  (ninguno)")
-              usables = 0
-              for nom, activo, vence, tope, subidas, uso in links:
-                  vencido = vence < ahora
-                  sirve = activo and not vencido
-                  usables += sirve
-                  marca = "OK  " if sirve else "NO  "
-                  motivo = "" if sirve else ("(revocado)" if not activo else "(VENCIDO)")
-                  print(f"  {marca}{nom!r:<28} vence={vence:%d/%m/%Y} {motivo:<12} "
-                        f"tope={tope if tope else 'sin tope'} subidas={subidas}")
-              if links and usables == 0:
-                  problemas.append("todos los links estan vencidos o revocados: nadie puede subir.")
-
-              # --- fotos por estado ---
-              cur.execute("""
-                  SELECT status, count(*) FROM photos_photo
-                   WHERE event_id = %s GROUP BY status ORDER BY 2 DESC
-              """, (eid,))
-              porestado = cur.fetchall()
-              print(f"\n=== FOTOS DEL EVENTO ===")
-              if not porestado:
-                  print("  (todavia no se subio ninguna)")
-              for st, n in porestado:
-                  print(f"  {st:<20} {n}")
-
-              # --- trabadas en todo el sistema ---
-              cur.execute("""
-                  SELECT count(*) FROM photos_photo
-                   WHERE status IN ('processing','uploading')
-                     AND created_at < now() - interval '1 hour'
-              """)
-              trabadas = cur.fetchone()[0]
-              print(f"\n  fotos trabadas (>1h procesando, todo el sistema): {trabadas}")
-              if trabadas:
-                  problemas.append(f"{trabadas} fotos trabadas hace mas de 1h: revisar el worker.")
-
-              print("\n=== RESUMEN ===")
-              if problemas:
-                  for p in problemas:
-                      print(f"  FALTA: {p}")
-              else:
-                  print("  Todo en orden para recibir fotos y que los corredores busquen.")
-              with open(os.environ["GITHUB_ENV"],"a") as fh:
-                  fh.write(f"SLUG_NUEVO={slug}\n")
+              for pid in ids:
+                  cur.execute("""SELECT status, width, height, file_size, capture_time,
+                                        has_faces_detected, has_bibs_detected, preview_key <> '',
+                                        thumbnail_key <> ''
+                                   FROM photos_photo WHERE id = %s""", (pid,))
+                  f = cur.fetchone()
+                  if not f: continue
+                  cur.execute("SELECT count(*) FROM photos_faceembedding WHERE photo_id = %s", (pid,))
+                  caras = cur.fetchone()[0]
+                  cur.execute("SELECT count(*), count(*) FILTER (WHERE avatar_key <> '') FROM photos_faceembedding WHERE photo_id = %s", (pid,))
+                  _, avatares = cur.fetchone()
+                  cur.execute("SELECT number, confidence FROM photos_bib WHERE photo_id = %s ORDER BY confidence DESC LIMIT 6", (pid,))
+                  dorsales = cur.fetchall()
+                  print(f"\n  foto id={pid}  estado={f[0]}")
+                  print(f"    {f[1]}x{f[2]}px  {f[3]/1024/1024:.1f} MB  tomada={f[4]}")
+                  print(f"    preview={'si' if f[7] else 'NO'}  thumbnail={'si' if f[8] else 'NO'}")
+                  print(f"    caras indexadas={caras}  con visor={avatares}")
+                  print(f"    dorsales={[(n, round(c,2)) for n, c in dorsales] or 'ninguno'}")
           PYX
 
-      - name: 3 - Como responde el sitio de verdad
+      - name: 5 - Limpiar todo (borrar fotos y revocar el link)
+        if: always()
         run: |
           python3 - <<'PYX'
-          import os, requests
-          base = "https://" + os.environ["SITE_DOMAIN"]
-          slug = os.environ["SLUG_NUEVO"]
-          for ruta, que in [("/", "home"),
-                            (f"/eventos/{slug}/", "galeria del evento nuevo"),
-                            (f"/eventos/{slug}/?bib=1", "busqueda por dorsal"),
-                            ("/healthz/lite", "health")]:
+          import os, psycopg, boto3
+          from botocore.config import Config
+
+          ids = [int(x) for x in os.environ.get("IDS_PRUEBA","").split(",") if x.strip().isdigit()]
+          link_id = int(os.environ["LINK_ID"]); eid = int(os.environ["EVENT_ID"])
+
+          s3 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
+                            aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+                            aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+                            config=Config(signature_version="s3v4"), region_name="auto")
+          bucket = os.environ["R2_BUCKET_NAME"]
+
+          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
+              claves = []
+              if ids:
+                  cur.execute("""SELECT original_key, preview_key, thumbnail_key, branded_key
+                                   FROM photos_photo WHERE id = ANY(%s)""", (ids,))
+                  for fila in cur.fetchall():
+                      claves += [k for k in fila if k]
+                  cur.execute("SELECT avatar_key FROM photos_faceembedding WHERE photo_id = ANY(%s) AND avatar_key <> ''", (ids,))
+                  claves += [r[0] for r in cur.fetchall()]
+
+                  cur.execute("DELETE FROM photos_faceembedding WHERE photo_id = ANY(%s)", (ids,))
+                  cur.execute("DELETE FROM photos_bib WHERE photo_id = ANY(%s)", (ids,))
+                  cur.execute("DELETE FROM photos_photo WHERE id = ANY(%s)", (ids,))
+                  print(f"  borradas {len(ids)} fotos de la base")
+
+              cur.execute("""UPDATE photographers_photographerlink
+                                SET is_active = false, revoked_at = now(),
+                                    revoked_reason = 'prueba de subida', updated_at = now()
+                              WHERE id = %s""", (link_id,))
+              print(f"  link de prueba id={link_id} REVOCADO")
+
+              cur.execute("""UPDATE events_event SET photo_count = (
+                                 SELECT count(*) FROM photos_photo
+                                  WHERE event_id = %s AND status <> 'deleted'),
+                             pending_count = (
+                                 SELECT count(*) FROM photos_photo
+                                  WHERE event_id = %s AND status = 'pending_review'),
+                             updated_at = now()
+                           WHERE id = %s""", (eid, eid, eid))
+              conn.commit()
+
+              cur.execute("SELECT photo_count, pending_count FROM events_event WHERE id = %s", (eid,))
+              print(f"  contadores del evento recalculados: {cur.fetchone()}")
+
+          borradas = 0
+          for k in claves:
               try:
-                  r = requests.get(base + ruta, timeout=30, allow_redirects=True)
-                  print(f"  {r.status_code}  {que:<28} {ruta}")
+                  s3.delete_object(Bucket=bucket, Key=k); borradas += 1
               except Exception as exc:
-                  print(f"  ERR  {que:<28} {ruta}  {exc}")
-          PYX
-
-      - name: 4 - Flags del worker y del web
-        run: |
-          python3 - <<'PYX'
-          import os, requests
-          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
-          q='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          def vf(sid):
-              v={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}
-              return (requests.post(API,headers=H,json={"query":q,"variables":v},timeout=40)
-                      .json().get("data",{}) or {}).get("variables") or {}
-          web=vf(os.environ["WEB_ID"]); wk=vf(os.environ["WORKER_ID"])
-          print("web:")
-          for k in ("FACE_SEARCH_ENABLED","OCR_BACKEND","PHOTO_UPLOAD_MAX_MB","SITE_NAME"):
-              print(f"  {k} = {web.get(k,'(sin setear)')}")
-          print("worker:")
-          for k in ("FACE_PROCESSING_ENABLED","FACE_SEARCH_ENABLED","MINOR_BLUR_ENABLED",
-                    "OCR_BACKEND","PHOTO_UPLOAD_MAX_MB"):
-              print(f"  {k} = {wk.get(k,'(sin setear)')}")
+                  print(f"  no pude borrar {k}: {exc}")
+          print(f"  borrados {borradas} objetos de R2")
+          print("\n  El evento queda igual que antes de la prueba: 0 fotos, sin links activos.")
           PYX
