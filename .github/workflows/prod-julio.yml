@@ -62,6 +62,47 @@ jobs:
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
           PYX
 
+      - name: Estado del deploy en Railway
+        run: |
+          python3 - <<'PYX'
+          import os, json, urllib.request
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          def gql(q,v=None):
+              body=json.dumps({"query":q,"variables":v or {}}).encode()
+              req=urllib.request.Request(API,data=body,headers={
+                  "Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
+                  "Content-Type":"application/json","User-Agent":"curl/8.0"})
+              return json.load(urllib.request.urlopen(req,timeout=45))
+          q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
+                serviceName latestDeployment{ status createdAt meta } } } } } }"""
+          d=gql(q,{"e":os.environ["ENV_ID"]})
+          print(f"{'servicio':<12} {'estado':<14} {'desde':<22} commit")
+          for e in d["data"]["environment"]["serviceInstances"]["edges"]:
+              n=e["node"]; dep=n.get("latestDeployment") or {}
+              meta=dep.get("meta") or {}
+              sha=(meta.get("commitHash") or "")[:7]
+              msg=(meta.get("commitMessage") or "").splitlines()[0][:48]
+              print(f"{n['serviceName']:<12} {dep.get('status') or 'SIN DEPLOY':<14} "
+                    f"{(dep.get('createdAt') or '-')[:19]:<22} {sha} {msg}")
+          PYX
+
+      - name: El arreglo del buscador esta en el codigo desplegado
+        run: |
+          python3 - <<'PYX'
+          import re
+          src = open("apps/search/views.py").read()
+          umbral = re.search(r"^FACE_CLICK_THRESHOLD\s*=\s*([\d.]+)", src, re.M)
+          tope   = re.search(r"^FACE_CLICK_MAX_RESULTS\s*=\s*(\d+)", src, re.M)
+          print(f"  FACE_CLICK_THRESHOLD  = {umbral.group(1)}   (antes 0.62)")
+          print(f"  FACE_CLICK_MAX_RESULTS = {tope.group(1)}     (antes heredaba 50)")
+          assert umbral.group(1) == "0.48", "el umbral no es el arreglado"
+          assert tope.group(1) == "400", "el tope no es el arreglado"
+          for f in ("apps/events/views.py", "apps/reviewers/views.py"):
+              t = open(f).read()
+              assert "FACE_CLICK_MAX_RESULTS" in t, f"{f} no usa el tope propio"
+              print(f"  {f}: usa FACE_CLICK_THRESHOLD + FACE_CLICK_MAX_RESULTS")
+          PYX
+
       - name: Apagar los eventos de prueba
         run: |
           python3 - <<'PYX'
