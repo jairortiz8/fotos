@@ -3,18 +3,14 @@ on:
   workflow_dispatch:
   push:
     branches: ["run-julio"]
+concurrency:
+  group: prod-julio
+  cancel-in-progress: true
 jobs:
   apagar:
     name: apagar eventos de prueba
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      redis:
-        image: redis:7-alpine
-        ports: ["6379:6379"]
-        options: >-
-          --health-cmd "redis-cli ping" --health-interval 10s
-          --health-timeout 5s --health-retries 5
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
@@ -23,9 +19,6 @@ jobs:
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
       WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
       DJANGO_SETTINGS_MODULE: config.settings.dev
-      REDIS_URL: redis://localhost:6379/0
-      CELERY_BROKER_URL: redis://localhost:6379/1
-      CELERY_RESULT_BACKEND: redis://localhost:6379/2
       SITE_NAME: "find your foto"
       SITE_DOMAIN: findyourfoto.com
       NOTIFIER_BACKEND: whatsapp_manual
