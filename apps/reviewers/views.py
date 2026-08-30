@@ -180,7 +180,11 @@ class ReviewerGalleryView(ReviewerRequiredMixin, View):
         """Fotos de la persona de esa cara. Usa el embedding ya guardado — no
         procesa ninguna imagen nueva."""
         from apps.photos.models import FaceEmbedding
-        from apps.search.views import FACE_CLICK_THRESHOLD, search_faces_by_similarity
+        from apps.search.views import (
+            FACE_CLICK_MAX_RESULTS,
+            FACE_CLICK_THRESHOLD,
+            search_faces_by_similarity,
+        )
 
         face = (
             FaceEmbedding.objects.filter(
@@ -193,7 +197,10 @@ class ReviewerGalleryView(ReviewerRequiredMixin, View):
             raise Http404
 
         photos = search_faces_by_similarity(
-            event, list(face.embedding), threshold=FACE_CLICK_THRESHOLD
+            event,
+            list(face.embedding),
+            threshold=FACE_CLICK_THRESHOLD,
+            limit=FACE_CLICK_MAX_RESULTS,
         )
         attach_clean_thumb_urls(photos, event)
         return render(
