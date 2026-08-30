@@ -296,3 +296,30 @@ def test_photo_without_faces_generates_nothing(r2) -> None:  # type: ignore[no-u
     stats = generate_avatars_for_photo(photo)
     assert stats["generated"] == 0
     assert stats["fallback"] == 0
+
+
+# --- Recall del click en la cara -------------------------------------------
+def test_face_click_no_usa_el_tope_de_50() -> None:
+    """El click en una cara devuelve MUCHAS más de 50.
+
+    Medido en prod: hay corredores con 100+ fotos. Con el tope de 50 del selfie,
+    el "ver todas las fotos de esta persona" mentía. Este test fija que el click
+    tenga su propio tope, bien por encima.
+    """
+    from apps.search.views import FACE_CLICK_MAX_RESULTS, MAX_SELFIE_RESULTS
+
+    assert FACE_CLICK_MAX_RESULTS >= 300
+    assert FACE_CLICK_MAX_RESULTS > MAX_SELFIE_RESULTS
+
+
+def test_umbral_del_click_prioriza_encontrar_todas() -> None:
+    """El click en una cara usa un umbral MÁS PERMISIVO que el selfie.
+
+    Con 0.62 se perdía ~1 de cada 3 apariciones reales (misma persona de lejos
+    o de perfil). Al ser "mostrame todas mis fotos", una de más molesta menos
+    que una propia que falta.
+    """
+    from apps.search.views import FACE_CLICK_THRESHOLD, SIMILARITY_THRESHOLD
+
+    assert FACE_CLICK_THRESHOLD < SIMILARITY_THRESHOLD
+    assert FACE_CLICK_THRESHOLD >= 0.40, "demasiado permisivo: entrarían desconocidos"

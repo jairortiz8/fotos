@@ -228,7 +228,11 @@ class EventGalleryView(View):
         guardado. No procesa ninguna imagen nueva ni sube nada: usa el vector
         que se extrajo cuando se subió la foto."""
         from apps.photos.models import FaceEmbedding
-        from apps.search.views import FACE_CLICK_THRESHOLD, search_faces_by_similarity
+        from apps.search.views import (
+            FACE_CLICK_MAX_RESULTS,
+            FACE_CLICK_THRESHOLD,
+            search_faces_by_similarity,
+        )
 
         if not event.is_searchable():
             raise Http404
@@ -247,7 +251,10 @@ class EventGalleryView(View):
             return render(request, "public/rate_limited.html", {"event": event}, status=429)
 
         photos = search_faces_by_similarity(
-            event, list(face.embedding), threshold=FACE_CLICK_THRESHOLD
+            event,
+            list(face.embedding),
+            threshold=FACE_CLICK_THRESHOLD,
+            limit=FACE_CLICK_MAX_RESULTS,
         )
         record_event_metric(event.id, Metric.SEARCH)
 

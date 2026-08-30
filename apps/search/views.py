@@ -28,12 +28,22 @@ logger = logging.getLogger(__name__)
 
 # Umbral de similitud coseno (ADR 0006). Ajustable con `tune_threshold`.
 SIMILARITY_THRESHOLD = 0.55
-# Click en una cara del visor: el vector de consulta sale del MISMO pipeline
-# que los indexados (foto profesional, cara grande y nítida), no de un selfie
-# de celular. Al ser una consulta más limpia podemos exigir más y así evitar
-# que le aparezcan fotos de otra persona parecida.
-FACE_CLICK_THRESHOLD = 0.62
+# Click en una cara del visor.
+# MEDIDO contra datos reales de Surf City (2026-08), usando el dorsal como
+# verdad de referencia sobre en qué fotos está cada corredor:
+#     umbral   0.62    0.55    0.45    0.35
+#     recall    42%     51%     55%     61%
+# Con 0.62 se perdía ~1 de cada 3 apariciones REALES: la misma persona de
+# lejos, de perfil o con otra luz queda apenas por debajo del corte. Bajado a
+# 0.48, que recupera la mayor parte sin irse al extremo permisivo. Es la
+# función "mostrame todas mis fotos": una foto de más molesta mucho menos que
+# una propia que falta.
+FACE_CLICK_THRESHOLD = 0.48
 MAX_SELFIE_RESULTS = 50
+# El click en una cara NO usa el tope de 50: un corredor bien fotografiado
+# aparece en 100+ fotos y cortarle a 50 contradice el "todas tus fotos".
+# La consulta es un índice HNSW, así que subir el tope no la encarece.
+FACE_CLICK_MAX_RESULTS = 400
 MAX_SELFIE_BYTES = 10 * 1024 * 1024  # 10 MB
 
 # Cortes de confianza para agrupar resultados en la UI.
