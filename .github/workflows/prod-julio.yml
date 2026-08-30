@@ -7,8 +7,8 @@ concurrency:
   group: prod-julio
   cancel-in-progress: true
 jobs:
-  probar:
-    name: probar la subida de punta a punta
+  medir:
+    name: cuanto tarda de verdad el procesamiento
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -63,224 +63,133 @@ jobs:
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
           PYX
 
-      - name: 1 - Crear un link de prueba
-        run: |
-          python3 - <<'PYX'
-          import os, secrets, hashlib, psycopg
-          from datetime import datetime, timedelta, timezone as tz
-
-          SLUG = "garmin-runners-girls-5k-social-run"
-          NOMBRE = "PRUEBA (borrar) - Claude"
-
-          # El token es una CREDENCIAL: da permiso de subir al evento. El repo es
-          # publico, asi que NUNCA se imprime. Se enmascara en el log y al final
-          # del trabajo el link queda revocado.
-          token = secrets.token_urlsafe(24)
-          token_hash = hashlib.sha256(token.encode()).hexdigest()
-          print(f"::add-mask::{token}")
-
-          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
-              cur.execute("SELECT id, date FROM events_event WHERE slug = %s", (SLUG,))
-              fila = cur.fetchone()
-              if fila is None:
-                  raise SystemExit(f"no existe el evento {SLUG}")
-              eid, fecha = fila
-              vence = datetime.combine(fecha, datetime.max.time()).replace(tzinfo=tz.utc) + timedelta(days=30)
-              cur.execute("""
-                  INSERT INTO photographers_photographerlink
-                      (event_id, photographer_name, photographer_email, photographer_phone,
-                       token_hash, expires_at, is_active, revoked_reason, photos_uploaded,
-                       featured_image_key, created_at, updated_at)
-                  VALUES (%s, %s, NULL, '', %s, %s, true, '', 0, '', now(), now())
-                  RETURNING id
-              """, (eid, NOMBRE, token_hash, vence))
-              link_id = cur.fetchone()[0]
-              conn.commit()
-
-          print(f"  link de prueba creado: id={link_id}  vence={vence:%d/%m/%Y}")
-          print("  (el token no se imprime a proposito: el repo es publico)")
-          with open(os.environ["GITHUB_ENV"],"a") as f:
-              f.write(f"TOKEN_PRUEBA={token}\n")
-              f.write(f"LINK_ID={link_id}\n")
-              f.write(f"EVENT_ID={eid}\n")
-          PYX
-
-      - name: 2 - Bajar fotos reales de R2 para la prueba
-        run: |
-          python3 - <<'PYX'
-          import os, psycopg, boto3, time
-          from botocore.config import Config
-
-          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
-              # Fotos reales de Surf City: tamano y caras de verdad, para que la
-              # medicion valga. Se suben al evento nuevo y se BORRAN al final.
-              cur.execute("""
-                  SELECT p.original_key, p.file_size, p.original_filename
-                    FROM photos_photo p JOIN events_event e ON e.id = p.event_id
-                   WHERE e.slug = 'surf-city-2026' AND p.status = 'approved'
-                     AND p.original_key <> '' AND p.has_faces_detected
-                   ORDER BY p.file_size DESC LIMIT 3
-              """)
-              fuentes = cur.fetchall()
-          if not fuentes:
-              raise SystemExit("no encontre fotos fuente")
-
-          s3 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
-                            aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
-                            aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
-                            config=Config(signature_version="s3v4"), region_name="auto")
-          bucket = os.environ["R2_BUCKET_NAME"]
-          os.makedirs("/tmp/fotos", exist_ok=True)
-          for n, (key, tam, nombre) in enumerate(fuentes, 1):
-              t0 = time.time()
-              s3.download_file(bucket, key, f"/tmp/fotos/prueba{n}.jpg")
-              real = os.path.getsize(f"/tmp/fotos/prueba{n}.jpg")
-              print(f"  prueba{n}.jpg  {real/1024/1024:.1f} MB  (bajada en {time.time()-t0:.1f}s)  origen={nombre}")
-          PYX
-
-      - name: 3 - Subir y medir
-        run: |
-          python3 - <<'PYX'
-          import os, time, json, requests, glob
-
-          base = "https://" + os.environ["SITE_DOMAIN"]
-          url = f"{base}/u/{os.environ['TOKEN_PRUEBA']}/upload/"
-
-          print("=== SUBIDA ===")
-          ids, fallos = [], []
-          for ruta in sorted(glob.glob("/tmp/fotos/*.jpg")):
-              mb = os.path.getsize(ruta)/1024/1024
-              t0 = time.time()
-              try:
-                  with open(ruta, "rb") as fh:
-                      r = requests.post(url, files={"file": (os.path.basename(ruta), fh, "image/jpeg")}, timeout=180)
-                  seg = time.time() - t0
-                  cuerpo = r.json() if r.headers.get("content-type","").startswith("application/json") else {}
-                  if r.status_code == 200 and cuerpo.get("id"):
-                      ids.append(cuerpo["id"])
-                      print(f"  OK   {os.path.basename(ruta)}  {mb:.1f} MB  subida en {seg:.1f}s  "
-                            f"({mb/seg:.1f} MB/s)  id={cuerpo['id']}")
-                  else:
-                      fallos.append((ruta, r.status_code, cuerpo))
-                      print(f"  FALLA {os.path.basename(ruta)}  HTTP {r.status_code}  {json.dumps(cuerpo)[:120]}")
-              except Exception as exc:
-                  fallos.append((ruta, "excepcion", str(exc)))
-                  print(f"  ERROR {os.path.basename(ruta)}  {exc}")
-
-          if not ids:
-              raise SystemExit("no se subio ninguna: la subida esta rota")
-
-          # Se anotan ANTES de esperar: si la corrida se corta, la limpieza
-          # igual sabe cuales borrar. (La vez pasada se anotaban al final y
-          # quedaron 3 fotos colgadas.)
-          with open(os.environ["GITHUB_ENV"],"a") as f:
-              f.write(f"IDS_PRUEBA={','.join(map(str, ids))}\n")
-
-          print("\n=== PROCESAMIENTO (worker) ===")
-          estado_url = f"{base}/u/{os.environ['TOKEN_PRUEBA']}/status/"
-          t0 = time.time()
-          listas, limite = {}, 900
-          while time.time() - t0 < limite:
-              r = requests.get(estado_url, params={"ids": ",".join(map(str, ids))}, timeout=30)
-              for foto in r.json().get("photos", []):
-                  if foto["status"] not in ("processing", "uploading") and foto["id"] not in listas:
-                      listas[foto["id"]] = (time.time() - t0, foto["status"], bool(foto["thumb_url"]))
-                      print(f"  id={foto['id']:<5} {foto['status']:<18} en {time.time()-t0:6.1f}s  "
-                            f"thumbnail={'si' if foto['thumb_url'] else 'NO'}")
-              if len(listas) == len(ids):
-                  break
-              time.sleep(5)
-
-          faltan = [i for i in ids if i not in listas]
-          if faltan:
-              print(f"  SIN TERMINAR tras {limite}s: {faltan}")
-          else:
-              tiempos = [v[0] for v in listas.values()]
-              print(f"\n  todas listas. la ultima tardo {max(tiempos):.0f}s desde que arranco el lote")
-          PYX
-
-      - name: 4 - Que detecto (dorsales y caras)
-        if: always()
-        run: |
-          python3 - <<'PYX'
-          import os, psycopg
-          ids = [int(x) for x in os.environ.get("IDS_PRUEBA","").split(",") if x.strip().isdigit()]
-          if not ids:
-              raise SystemExit(0)
-          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
-              for pid in ids:
-                  cur.execute("""SELECT status, width, height, file_size, capture_time,
-                                        has_faces_detected, has_bibs_detected, preview_key <> '',
-                                        thumbnail_key <> ''
-                                   FROM photos_photo WHERE id = %s""", (pid,))
-                  f = cur.fetchone()
-                  if not f: continue
-                  cur.execute("SELECT count(*) FROM photos_faceembedding WHERE photo_id = %s", (pid,))
-                  caras = cur.fetchone()[0]
-                  cur.execute("SELECT count(*), count(*) FILTER (WHERE avatar_key <> '') FROM photos_faceembedding WHERE photo_id = %s", (pid,))
-                  _, avatares = cur.fetchone()
-                  cur.execute("SELECT number, confidence FROM photos_bib WHERE photo_id = %s ORDER BY confidence DESC LIMIT 6", (pid,))
-                  dorsales = cur.fetchall()
-                  print(f"\n  foto id={pid}  estado={f[0]}")
-                  print(f"    {f[1]}x{f[2]}px  {f[3]/1024/1024:.1f} MB  tomada={f[4]}")
-                  print(f"    preview={'si' if f[7] else 'NO'}  thumbnail={'si' if f[8] else 'NO'}")
-                  print(f"    caras indexadas={caras}  con visor={avatares}")
-                  print(f"    dorsales={[(n, round(c,2)) for n, c in dorsales] or 'ninguno'}")
-          PYX
-
-      - name: 5 - Limpiar todo (borrar fotos y revocar el link)
-        if: always()
+      - name: Limpiar lo que haya dejado la prueba anterior
         run: |
           python3 - <<'PYX'
           import os, psycopg, boto3
           from botocore.config import Config
-
-          ids = [int(x) for x in os.environ.get("IDS_PRUEBA","").split(",") if x.strip().isdigit()]
-          link_id = int(os.environ["LINK_ID"]); eid = int(os.environ["EVENT_ID"])
-
+          NOMBRE = "PRUEBA (borrar) - Claude"
           s3 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
                             aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
                             aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
                             config=Config(signature_version="s3v4"), region_name="auto")
           bucket = os.environ["R2_BUCKET_NAME"]
+          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
+              cur.execute("SELECT id, event_id FROM photographers_photographerlink WHERE photographer_name = %s", (NOMBRE,))
+              links = cur.fetchall()
+              if not links:
+                  print("  no quedo nada de la prueba anterior")
+              for link_id, eid in links:
+                  cur.execute("SELECT id, status FROM photos_photo WHERE photographer_link_id = %s", (link_id,))
+                  filas = cur.fetchall()
+                  ids = [r[0] for r in filas]
+                  # Antes de borrar: dejar constancia de en que estado quedaron.
+                  for pid, st in filas:
+                      cur.execute("""SELECT preview_key <> '', thumbnail_key <> '',
+                                            EXTRACT(EPOCH FROM (updated_at - created_at))
+                                       FROM photos_photo WHERE id = %s""", (pid,))
+                      prev, thumb, seg = cur.fetchone()
+                      cur.execute("SELECT count(*) FROM photos_faceembedding WHERE photo_id = %s", (pid,))
+                      print(f"  id={pid} estado={st} preview={'si' if prev else 'no'} "
+                            f"thumb={'si' if thumb else 'no'} caras={cur.fetchone()[0]} ({seg:.0f}s)")
+                  claves = []
+                  if ids:
+                      cur.execute("SELECT original_key, preview_key, thumbnail_key, branded_key FROM photos_photo WHERE id = ANY(%s)", (ids,))
+                      for fila in cur.fetchall():
+                          claves += [k for k in fila if k]
+                      cur.execute("SELECT avatar_key FROM photos_faceembedding WHERE photo_id = ANY(%s) AND avatar_key <> ''", (ids,))
+                      claves += [r[0] for r in cur.fetchall()]
+                      cur.execute("DELETE FROM photos_faceembedding WHERE photo_id = ANY(%s)", (ids,))
+                      cur.execute("DELETE FROM photos_bib WHERE photo_id = ANY(%s)", (ids,))
+                      cur.execute("DELETE FROM photos_photo WHERE id = ANY(%s)", (ids,))
+                  cur.execute("DELETE FROM photographers_photographerlink WHERE id = %s", (link_id,))
+                  cur.execute("""UPDATE events_event SET
+                                   photo_count = (SELECT count(*) FROM photos_photo WHERE event_id = %s AND status <> 'deleted'),
+                                   pending_count = (SELECT count(*) FROM photos_photo WHERE event_id = %s AND status = 'pending_review'),
+                                   updated_at = now() WHERE id = %s""", (eid, eid, eid))
+                  conn.commit()
+                  for k in claves:
+                      try: s3.delete_object(Bucket=bucket, Key=k)
+                      except Exception: pass
+                  print(f"  limpiadas {len(ids)} fotos + link {link_id}")
+          PYX
+
+      - name: Cuanto tardo CADA foto real de Surf City
+        run: |
+          python3 - <<'PYX'
+          import os, psycopg
 
           with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
-              claves = []
-              if ids:
-                  cur.execute("""SELECT original_key, preview_key, thumbnail_key, branded_key
-                                   FROM photos_photo WHERE id = ANY(%s)""", (ids,))
-                  for fila in cur.fetchall():
-                      claves += [k for k in fila if k]
-                  cur.execute("SELECT avatar_key FROM photos_faceembedding WHERE photo_id = ANY(%s) AND avatar_key <> ''", (ids,))
-                  claves += [r[0] for r in cur.fetchall()]
+              for slug in ("surf-city-2026", "camino-a-san-luis-iron-dream"):
+                  cur.execute("SELECT id, name FROM events_event WHERE slug = %s", (slug,))
+                  eid, nombre = cur.fetchone()
 
-                  cur.execute("DELETE FROM photos_faceembedding WHERE photo_id = ANY(%s)", (ids,))
-                  cur.execute("DELETE FROM photos_bib WHERE photo_id = ANY(%s)", (ids,))
-                  cur.execute("DELETE FROM photos_photo WHERE id = ANY(%s)", (ids,))
-                  print(f"  borradas {len(ids)} fotos de la base")
+                  # Tiempo entre que la foto entro y que quedo procesada. Solo las
+                  # que llegaron a tener preview: esas completaron la cadena.
+                  cur.execute("""
+                      SELECT count(*),
+                             percentile_cont(0.50) WITHIN GROUP (ORDER BY seg),
+                             percentile_cont(0.90) WITHIN GROUP (ORDER BY seg),
+                             percentile_cont(0.99) WITHIN GROUP (ORDER BY seg),
+                             max(seg), avg(tam)/1024/1024
+                        FROM (SELECT EXTRACT(EPOCH FROM (updated_at - created_at)) AS seg,
+                                     file_size AS tam
+                                FROM photos_photo
+                               WHERE event_id = %s AND preview_key <> ''
+                                 AND updated_at > created_at) t
+                  """, (eid,))
+                  n, p50, p90, p99, mx, mb = cur.fetchone()
+                  print(f"\n=== {nombre} ===")
+                  if not n:
+                      print("  sin datos")
+                      continue
+                  print(f"  {n} fotos procesadas, {mb:.1f} MB promedio")
+                  print(f"    mediana   {p50:6.0f}s   (la mitad tardo menos que esto)")
+                  print(f"    p90       {p90:6.0f}s   (9 de cada 10 por debajo)")
+                  print(f"    p99       {p99:6.0f}s")
+                  print(f"    la peor   {mx:6.0f}s")
 
-              cur.execute("DELETE FROM photographers_photographerlink WHERE id = %s", (link_id,))
-              print(f"  link de prueba id={link_id} BORRADO")
+                  # Throughput real: cuantas fotos por minuto salieron en la hora
+                  # mas cargada. Esto es lo que importa para un lote de 600.
+                  cur.execute("""
+                      SELECT date_trunc('hour', updated_at) AS hora, count(*)
+                        FROM photos_photo WHERE event_id = %s AND preview_key <> ''
+                       GROUP BY 1 ORDER BY 2 DESC LIMIT 3
+                  """, (eid,))
+                  print("    horas de mayor produccion del worker:")
+                  for hora, cuantas in cur.fetchall():
+                      print(f"      {hora:%d/%m %H:%M}  {cuantas} fotos  (~{cuantas/60:.1f} por minuto)")
 
-              cur.execute("""UPDATE events_event SET photo_count = (
-                                 SELECT count(*) FROM photos_photo
-                                  WHERE event_id = %s AND status <> 'deleted'),
-                             pending_count = (
-                                 SELECT count(*) FROM photos_photo
-                                  WHERE event_id = %s AND status = 'pending_review'),
-                             updated_at = now()
-                           WHERE id = %s""", (eid, eid, eid))
-              conn.commit()
+              # Estado global: hay algo trabado AHORA?
+              cur.execute("""SELECT status, count(*) FROM photos_photo
+                              WHERE created_at > now() - interval '2 hours'
+                              GROUP BY 1 ORDER BY 2 DESC""")
+              print("\n=== FOTOS DE LAS ULTIMAS 2 HORAS (todo el sistema) ===")
+              filas = cur.fetchall()
+              if not filas: print("  (ninguna)")
+              for st, n in filas: print(f"  {st:<20} {n}")
 
-              cur.execute("SELECT photo_count, pending_count FROM events_event WHERE id = %s", (eid,))
-              print(f"  contadores del evento recalculados: {cur.fetchone()}")
+              cur.execute("""SELECT count(*) FROM photos_photo
+                              WHERE status IN ('processing','uploading')
+                                AND created_at < now() - interval '1 hour'""")
+              print(f"\n  trabadas hace mas de 1h: {cur.fetchone()[0]}")
+          PYX
 
-          borradas = 0
-          for k in claves:
-              try:
-                  s3.delete_object(Bucket=bucket, Key=k); borradas += 1
-              except Exception as exc:
-                  print(f"  no pude borrar {k}: {exc}")
-          print(f"  borrados {borradas} objetos de R2")
-          print("\n  El evento queda igual que antes de la prueba: 0 fotos, sin links activos.")
+      - name: Estado del worker
+        run: |
+          python3 - <<'PYX'
+          import os, json, urllib.request
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          def gql(q,v=None):
+              body=json.dumps({"query":q,"variables":v or {}}).encode()
+              req=urllib.request.Request(API,data=body,headers={
+                  "Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
+                  "Content-Type":"application/json","User-Agent":"curl/8.0"})
+              return json.load(urllib.request.urlopen(req,timeout=45))
+          q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
+                serviceName latestDeployment{ status createdAt } } } } } }"""
+          d=gql(q,{"e":os.environ["ENV_ID"]})
+          for e in d["data"]["environment"]["serviceInstances"]["edges"]:
+              n=e["node"]; dep=n.get("latestDeployment") or {}
+              print(f"  {n['serviceName']:<12} {dep.get('status') or 'SIN DEPLOY':<12} {(dep.get('createdAt') or '-')[:19]}")
           PYX
