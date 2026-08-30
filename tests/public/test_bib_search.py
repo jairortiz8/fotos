@@ -75,7 +75,9 @@ def test_active_bib_chip_and_strip_clear_the_filter(client: Client) -> None:
         reverse("events:gallery", args=[event.slug]), {"bib": "1042"}
     ).content.decode()
     # El pill del filtro es un botón de "quitar" + hay un "Ver todas".
-    assert "Quitar el filtro de dorsal y ver todas las fotos" in content
+    # El aria-label dice solo "el filtro" (sin "de dorsal") porque el mismo pill
+    # sirve para el filtro por cara, donde no hay dorsal.
+    assert "Quitar el filtro y ver todas las fotos" in content
     assert "Ver todas" in content
     # El chip del dorsal buscado pasa a "quitar", ya no "ver todas las del 1042".
     assert "Quitar el filtro del dorsal 1042" in content
