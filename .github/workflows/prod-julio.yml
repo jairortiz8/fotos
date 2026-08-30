@@ -7,8 +7,8 @@ concurrency:
   group: prod-julio
   cancel-in-progress: true
 jobs:
-  apagar:
-    name: apagar eventos de prueba
+  revisar:
+    name: revisar el evento nuevo
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -18,6 +18,7 @@ jobs:
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
       WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
+      WORKER_ID: 1846c52a-57c3-4a8b-b4ec-1cc200a8e652
       DJANGO_SETTINGS_MODULE: config.settings.dev
       SITE_NAME: "find your foto"
       SITE_DOMAIN: findyourfoto.com
@@ -62,7 +63,7 @@ jobs:
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
           PYX
 
-      - name: Estado del deploy en Railway
+      - name: 1 - Servicios de Railway
         run: |
           python3 - <<'PYX'
           import os, json, urllib.request
@@ -76,124 +77,175 @@ jobs:
           q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
                 serviceName latestDeployment{ status createdAt meta } } } } } }"""
           d=gql(q,{"e":os.environ["ENV_ID"]})
-          print(f"{'servicio':<12} {'estado':<14} {'desde':<22} commit")
+          print(f"{'servicio':<12} {'estado':<14} commit")
           for e in d["data"]["environment"]["serviceInstances"]["edges"]:
               n=e["node"]; dep=n.get("latestDeployment") or {}
               meta=dep.get("meta") or {}
               sha=(meta.get("commitHash") or "")[:7]
-              msg=((meta.get("commitMessage") or "").splitlines() or [""])[0][:48]
-              print(f"{n['serviceName']:<12} {dep.get('status') or 'SIN DEPLOY':<14} "
-                    f"{(dep.get('createdAt') or '-')[:19]:<22} {sha} {msg}")
+              msg=((meta.get("commitMessage") or "").splitlines() or [""])[0][:44]
+              print(f"{n['serviceName']:<12} {dep.get('status') or 'SIN DEPLOY':<14} {sha} {msg}")
           PYX
 
-      - name: El arreglo del buscador esta en el codigo desplegado
-        run: |
-          python3 - <<'PYX'
-          import re
-          src = open("apps/search/views.py").read()
-          umbral = re.search(r"^FACE_CLICK_THRESHOLD\s*=\s*([\d.]+)", src, re.M)
-          tope   = re.search(r"^FACE_CLICK_MAX_RESULTS\s*=\s*(\d+)", src, re.M)
-          print(f"  FACE_CLICK_THRESHOLD  = {umbral.group(1)}   (antes 0.62)")
-          print(f"  FACE_CLICK_MAX_RESULTS = {tope.group(1)}     (antes heredaba 50)")
-          assert umbral.group(1) == "0.48", "el umbral no es el arreglado"
-          assert tope.group(1) == "400", "el tope no es el arreglado"
-          for f in ("apps/events/views.py", "apps/reviewers/views.py"):
-              t = open(f).read()
-              assert "FACE_CLICK_MAX_RESULTS" in t, f"{f} no usa el tope propio"
-              print(f"  {f}: usa FACE_CLICK_THRESHOLD + FACE_CLICK_MAX_RESULTS")
-          PYX
-
-      - name: Apagar los eventos de prueba
+      - name: 2 - El evento nuevo
         run: |
           python3 - <<'PYX'
           import os, psycopg
+          from datetime import datetime, timezone as tz
 
-          # Solo estos tres. Los eventos REALES (surf-city-2026 con 19.506 fotos y
-          # camino-a-san-luis-iron-dream con 3.082) NO se tocan.
-          APAGAR = ["surf-city-prueba-logos", "trail-ipala-2026", "maraton-antigua-2026"]
-          INTOCABLES = {"surf-city-2026", "camino-a-san-luis-iron-dream"}
-          assert not (set(APAGAR) & INTOCABLES), "la lista toca un evento real"
-
-          def listar(cur, titulo):
-              print(f"\n=== {titulo} ===")
-              cur.execute("""
-                  SELECT e.slug, e.status, e.visibility, e.photo_count,
-                         (SELECT count(*) FROM photographers_photographerlink l
-                           WHERE l.event_id = e.id AND l.is_active) AS links
-                    FROM events_event e
-                   WHERE e.status <> 'deleted'
-                   ORDER BY e.date DESC
-              """)
-              for slug, st, vis, fotos, links in cur.fetchall():
-                  print(f"  {slug:<32} {st:<16} vis={vis:<9} fotos={fotos:<6} links={links}")
-
-          with psycopg.connect(os.environ["DATABASE_URL"], autocommit=False) as conn:
-              with conn.cursor() as cur:
-                  listar(cur, "ANTES")
-
-                  print("\n=== APAGANDO ===")
-                  for slug in APAGAR:
-                      cur.execute("SELECT status, photo_count FROM events_event WHERE slug = %s", (slug,))
-                      fila = cur.fetchone()
-                      if fila is None:
-                          print(f"  {slug}: no existe (nada que hacer)")
-                          continue
-                      antes, fotos = fila
-                      if antes == "draft":
-                          print(f"  {slug}: ya estaba apagado (draft)")
-                          continue
-                      cur.execute(
-                          "UPDATE events_event SET status = 'draft', updated_at = now() "
-                          "WHERE slug = %s AND slug <> ALL(%s)",
-                          (slug, list(INTOCABLES)),
-                      )
-                      print(f"  {slug}: {antes} -> draft  ({fotos} fotos intactas, {cur.rowcount} fila)")
-
-                  listar(cur, "DESPUES")
-
-                  print("\n=== LINKS DE FOTOGRAFO ACTIVOS ===")
-                  print("Un link activo en un evento apagado deja subir fotos al evento equivocado.")
-                  cur.execute("""
-                      SELECT e.slug, e.status, l.photographer_name, l.expires_at
-                        FROM photographers_photographerlink l
-                        JOIN events_event e ON e.id = l.event_id
-                       WHERE l.is_active AND e.status <> 'deleted'
-                       ORDER BY e.date DESC, l.photographer_name
-                  """)
-                  filas = cur.fetchall()
-                  if not filas:
-                      print("  (ninguno)")
-                  for slug, st, nombre, vence in filas:
-                      print(f"  {slug:<32} {st:<16} {nombre!r:<28} vence={vence:%d/%m/%Y}")
-
-              conn.commit()
-              print("\nCOMMIT hecho.")
-          PYX
-
-      - name: Confirmar el estado final
-        run: |
-          python3 - <<'PYX'
-          import os, psycopg
-          esperado = {
-              "surf-city-prueba-logos": "draft",
-              "trail-ipala-2026": "draft",
-              "maraton-antigua-2026": "draft",
-          }
-          reales = {"surf-city-2026", "camino-a-san-luis-iron-dream"}
+          ahora = datetime.now(tz.utc)
           with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
-              cur.execute("SELECT slug, status FROM events_event WHERE slug = ANY(%s)",
-                          (list(esperado) + list(reales),))
-              estado = dict(cur.fetchall())
-          ok = True
-          for slug, quiero in esperado.items():
-              hay = estado.get(slug, "(no existe)")
-              marca = "OK" if hay == quiero else "MAL"
-              if hay != quiero and hay != "(no existe)": ok = False
-              print(f"  {marca:<4} {slug:<32} {hay}")
-          for slug in reales:
-              hay = estado.get(slug, "(no existe)")
-              marca = "OK" if hay not in ("draft", "deleted") else "MAL"
-              if marca == "MAL": ok = False
-              print(f"  {marca:<4} {slug:<32} {hay}   <- evento real, debe seguir vivo")
-          raise SystemExit(0 if ok else 1)
+              cur.execute("""
+                  SELECT id, slug, name, status, visibility, date, created_at,
+                         photo_count, pending_count, cover_key,
+                         organizer_name, organizer_instagram,
+                         public_until, searchable_until, archive_until, permanent_archive
+                    FROM events_event
+                   WHERE status <> 'deleted'
+                   ORDER BY created_at DESC LIMIT 3
+              """)
+              filas = cur.fetchall()
+              if not filas:
+                  raise SystemExit("no hay eventos")
+
+              print("=== LOS 3 EVENTOS MAS RECIENTES (por fecha de creacion) ===")
+              for f in filas:
+                  print(f"  {f[1]:<32} creado={f[6]:%d/%m %H:%M}  estado={f[3]:<16} fotos={f[7]}")
+
+              ev = filas[0]
+              (eid, slug, nombre, estado, vis, fecha, creado, fotos, pendientes,
+               portada, org, ig, hasta_pub, hasta_busq, hasta_arch, permanente) = ev
+
+              print(f"\n=== EVENTO NUEVO: {nombre} ===")
+              print(f"  slug            {slug}")
+              print(f"  id              {eid}")
+              print(f"  creado          {creado:%d/%m/%Y %H:%M} UTC")
+              print(f"  fecha de carrera {fecha}")
+              print(f"  estado          {estado}")
+              print(f"  visibilidad     {vis}")
+              print(f"  portada         {'si (' + portada + ')' if portada else 'NO tiene'}")
+              print(f"  organizador     {org or '(vacio)'}   IG: {ig or '(vacio)'}")
+              print(f"  fotos           {fotos}   pendientes de aprobar: {pendientes}")
+              print(f"  galeria abierta hasta   {hasta_pub}")
+              print(f"  busqueda abierta hasta  {hasta_busq}")
+              print(f"  archivo hasta           {hasta_arch}")
+              print(f"  archivo permanente      {permanente}")
+
+              # --- diagnostico de lo que le falta para funcionar hoy ---
+              print("\n=== CHEQUEOS ===")
+              problemas = []
+              if estado in ("draft", "deleted"):
+                  problemas.append(f"estado '{estado}': la galeria publica devuelve 404. "
+                                   "Para que los corredores entren tiene que estar en 'live' (Galeria abierta).")
+              elif estado in ("upcoming",):
+                  problemas.append("estado 'upcoming': todavia no muestra galeria.")
+              else:
+                  print(f"  OK  estado '{estado}' deja ver/buscar")
+
+              if vis == "private":
+                  problemas.append("visibilidad 'private': devuelve 404 aunque el estado este bien.")
+              elif vis == "unlisted":
+                  print("  OJO visibilidad 'unlisted': no sale en la home, solo con el link directo")
+              else:
+                  print("  OK  visibilidad 'public' (sale en la home)")
+
+              if hasta_pub and hasta_pub < ahora:
+                  problemas.append(f"public_until ya paso ({hasta_pub:%d/%m/%Y}): la galeria se cierra sola.")
+              if hasta_busq and hasta_busq < ahora:
+                  problemas.append(f"searchable_until ya paso ({hasta_busq:%d/%m/%Y}): no se puede buscar.")
+              if not portada:
+                  print("  OJO sin portada: se muestra el placeholder de marca (no rompe nada)")
+
+              # --- links de fotografo ---
+              cur.execute("""
+                  SELECT photographer_name, is_active, expires_at, photo_limit,
+                         photos_uploaded, last_used_at
+                    FROM photographers_photographerlink
+                   WHERE event_id = %s ORDER BY created_at
+              """, (eid,))
+              links = cur.fetchall()
+              print(f"\n=== LINKS DE FOTOGRAFO ({len(links)}) ===")
+              if not links:
+                  problemas.append("NO hay ningun link de fotografo: nadie puede subir fotos todavia.")
+                  print("  (ninguno)")
+              usables = 0
+              for nom, activo, vence, tope, subidas, uso in links:
+                  vencido = vence < ahora
+                  sirve = activo and not vencido
+                  usables += sirve
+                  marca = "OK  " if sirve else "NO  "
+                  motivo = "" if sirve else ("(revocado)" if not activo else "(VENCIDO)")
+                  print(f"  {marca}{nom!r:<28} vence={vence:%d/%m/%Y} {motivo:<12} "
+                        f"tope={tope if tope else 'sin tope'} subidas={subidas}")
+              if links and usables == 0:
+                  problemas.append("todos los links estan vencidos o revocados: nadie puede subir.")
+
+              # --- fotos por estado ---
+              cur.execute("""
+                  SELECT status, count(*) FROM photos_photo
+                   WHERE event_id = %s GROUP BY status ORDER BY 2 DESC
+              """, (eid,))
+              porestado = cur.fetchall()
+              print(f"\n=== FOTOS DEL EVENTO ===")
+              if not porestado:
+                  print("  (todavia no se subio ninguna)")
+              for st, n in porestado:
+                  print(f"  {st:<20} {n}")
+
+              # --- trabadas en todo el sistema ---
+              cur.execute("""
+                  SELECT count(*) FROM photos_photo
+                   WHERE status IN ('processing','uploading')
+                     AND created_at < now() - interval '1 hour'
+              """)
+              trabadas = cur.fetchone()[0]
+              print(f"\n  fotos trabadas (>1h procesando, todo el sistema): {trabadas}")
+              if trabadas:
+                  problemas.append(f"{trabadas} fotos trabadas hace mas de 1h: revisar el worker.")
+
+              print("\n=== RESUMEN ===")
+              if problemas:
+                  for p in problemas:
+                      print(f"  FALTA: {p}")
+              else:
+                  print("  Todo en orden para recibir fotos y que los corredores busquen.")
+              with open(os.environ["GITHUB_ENV"],"a") as fh:
+                  fh.write(f"SLUG_NUEVO={slug}\n")
+          PYX
+
+      - name: 3 - Como responde el sitio de verdad
+        run: |
+          python3 - <<'PYX'
+          import os, requests
+          base = "https://" + os.environ["SITE_DOMAIN"]
+          slug = os.environ["SLUG_NUEVO"]
+          for ruta, que in [("/", "home"),
+                            (f"/eventos/{slug}/", "galeria del evento nuevo"),
+                            (f"/eventos/{slug}/?bib=1", "busqueda por dorsal"),
+                            ("/healthz/lite", "health")]:
+              try:
+                  r = requests.get(base + ruta, timeout=30, allow_redirects=True)
+                  print(f"  {r.status_code}  {que:<28} {ruta}")
+              except Exception as exc:
+                  print(f"  ERR  {que:<28} {ruta}  {exc}")
+          PYX
+
+      - name: 4 - Flags del worker y del web
+        run: |
+          python3 - <<'PYX'
+          import os, requests
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          q='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          def vf(sid):
+              v={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}
+              return (requests.post(API,headers=H,json={"query":q,"variables":v},timeout=40)
+                      .json().get("data",{}) or {}).get("variables") or {}
+          web=vf(os.environ["WEB_ID"]); wk=vf(os.environ["WORKER_ID"])
+          print("web:")
+          for k in ("FACE_SEARCH_ENABLED","OCR_BACKEND","PHOTO_UPLOAD_MAX_MB","SITE_NAME"):
+              print(f"  {k} = {web.get(k,'(sin setear)')}")
+          print("worker:")
+          for k in ("FACE_PROCESSING_ENABLED","FACE_SEARCH_ENABLED","MINOR_BLUR_ENABLED",
+                    "OCR_BACKEND","PHOTO_UPLOAD_MAX_MB"):
+              print(f"  {k} = {wk.get(k,'(sin setear)')}")
           PYX
