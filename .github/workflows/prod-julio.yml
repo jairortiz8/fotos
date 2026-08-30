@@ -63,7 +63,61 @@ jobs:
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
           PYX
 
-      - name: 1 - Logs del worker en Railway
+      - name: 1 - El web y el worker apuntan al MISMO broker?
+        run: |
+          pip install --quiet redis
+          python3 - <<'PYX'
+          import os, requests
+          from urllib.parse import urlparse
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          q='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          def vf(sid):
+              v={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}
+              return (requests.post(API,headers=H,json={"query":q,"variables":v},timeout=40)
+                      .json().get("data",{}) or {}).get("variables") or {}
+          web=vf(os.environ["WEB_ID"]); wk=vf(os.environ["WORKER_ID"])
+
+          def describir(u):
+              # No se imprime la URL (trae password). Solo host y numero de base.
+              if not u: return "(sin setear)"
+              try:
+                  p=urlparse(u); base=(p.path or "/").lstrip("/") or "0"
+                  return f"host={p.hostname} puerto={p.port} base={base}"
+              except Exception: return "(no se pudo leer)"
+
+          print("=== A QUE REDIS LE HABLA CADA UNO ===")
+          for etiqueta, d in (("web", web), ("worker", wk)):
+              for k in ("CELERY_BROKER_URL","CELERY_RESULT_BACKEND","REDIS_URL"):
+                  print(f"  {etiqueta:<7}.{k:<22} {describir(d.get(k))}")
+          iguales = web.get("CELERY_BROKER_URL") == wk.get("CELERY_BROKER_URL")
+          print(f"\n  MISMO BROKER: {'SI' if iguales else 'NO -- ACA ESTA EL PROBLEMA'}")
+          print(f"  worker.PROCESS_TYPE = {wk.get('PROCESS_TYPE','(sin setear)')}")
+
+          # Ahora sí: mirar las colas en TODAS las bases, no solo la 0.
+          rid=None
+          q1='query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{ serviceId serviceName } } } } }'
+          d=requests.post(API,headers=H,json={"query":q1,"variables":{"e":os.environ["ENV_ID"]}},timeout=40).json()
+          for e in d["data"]["environment"]["serviceInstances"]["edges"]:
+              if e["node"]["serviceName"].lower().startswith("redis"): rid=e["node"]["serviceId"]
+          pub=vf(rid).get("REDIS_PUBLIC_URL") if rid else None
+          if not pub:
+              print("\n  sin REDIS_PUBLIC_URL, no puedo mirar las colas"); raise SystemExit(0)
+          print(f"::add-mask::{pub}")
+          import redis
+          print("\n=== COLAS POR BASE DE REDIS ===")
+          base_ok = urlparse(web.get("CELERY_BROKER_URL") or "").path.lstrip("/") or "0"
+          for n in range(0, 4):
+              try:
+                  r = redis.from_url(pub, db=n, socket_timeout=10, socket_connect_timeout=10)
+                  llen = r.llen("celery")
+                  marca = "  <-- la que usa el web" if str(n) == base_ok else ""
+                  print(f"  base {n}: cola 'celery' = {llen} tareas   (claves: {r.dbsize()}){marca}")
+              except Exception as exc:
+                  print(f"  base {n}: {exc}")
+          PYX
+
+      - name: 2 - Logs recientes del worker
         if: always()
         run: |
           python3 - <<'PYX'
@@ -78,89 +132,20 @@ jobs:
           q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
                 serviceName latestDeployment{ id status } } } } } }"""
           d=gql(q,{"e":os.environ["ENV_ID"]})
-          dep_id=None
+          dep=None
           for e in d["data"]["environment"]["serviceInstances"]["edges"]:
-              n=e["node"]
-              if n["serviceName"]=="worker":
-                  dep=n.get("latestDeployment") or {}
-                  dep_id=dep.get("id"); print(f"  worker deploy {dep_id} estado={dep.get('status')}")
-          if not dep_id:
-              raise SystemExit(0)
-          ql="""query($d:String!,$n:Int!){ deploymentLogs(deploymentId:$d, limit:$n){ timestamp message severity } }"""
-          try:
-              logs=gql(ql,{"d":dep_id,"n":250})["data"]["deploymentLogs"]
-          except Exception as exc:
-              print(f"  no pude traer logs: {exc}"); raise SystemExit(0)
-          print(f"\n=== ULTIMAS {len(logs)} LINEAS DEL WORKER ===")
-          for l in logs[-250:]:
-              print(f"  {(l.get('timestamp') or '')[:19]} {(l.get('message') or '')[:190]}")
-          PYX
-
-      - name: 2 - Estado real de las fotos del evento
-        run: |
-          python3 - <<'PYX'
-          import os, psycopg
-          SLUG = "garmin-runners-girls-5k-social-run"
-          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
-              cur.execute("SELECT id FROM events_event WHERE slug = %s", (SLUG,))
-              eid = cur.fetchone()[0]
-              cur.execute("""SELECT status, count(*),
-                                    min(created_at), max(created_at)
-                               FROM photos_photo WHERE event_id = %s
-                              GROUP BY 1 ORDER BY 2 DESC""", (eid,))
-              print("=== FOTOS POR ESTADO ===")
-              for st, n, prim, ult in cur.fetchall():
-                  print(f"  {st:<20} {n:<6} primera={prim:%H:%M:%S} ultima={ult:%H:%M:%S}")
-
-              cur.execute("""SELECT count(*),
-                             EXTRACT(EPOCH FROM (now() - min(created_at)))/60,
-                             count(*) FILTER (WHERE preview_key <> ''),
-                             count(*) FILTER (WHERE thumbnail_key <> ''),
-                             count(*) FILTER (WHERE width > 0)
-                        FROM photos_photo
-                       WHERE event_id = %s AND status IN ('processing','uploading')""", (eid,))
-              n, mins, prev, thumb, dim = cur.fetchone()
-              print(f"\n=== LAS TRABADAS ===")
-              print(f"  {n} en processing/uploading")
-              if mins: print(f"  la mas vieja entro hace {mins:.0f} minutos")
-              print(f"  con preview: {prev}   con thumbnail: {thumb}   con dimensiones leidas: {dim}")
-              print("  -> si TODO esta en 0, el worker no toco NINGUNA: no esta consumiendo la cola")
-
-              cur.execute("""SELECT count(*) FROM photos_faceembedding fe
-                              JOIN photos_photo p ON p.id = fe.photo_id
-                             WHERE p.event_id = %s""", (eid,))
-              print(f"  caras indexadas en el evento: {cur.fetchone()[0]}")
-          PYX
-
-      - name: 3 - Cuanto hay encolado en Redis
-        if: always()
-        timeout-minutes: 4
-        run: |
-          pip install --quiet redis
-          python3 - <<'PYX'
-          import os, requests, redis
-          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
-          q1='query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{ serviceId serviceName } } } } }'
-          d=requests.post(API,headers=H,json={"query":q1,"variables":{"e":os.environ["ENV_ID"]}},timeout=40).json()
-          rid=next((e["node"]["serviceId"] for e in d["data"]["environment"]["serviceInstances"]["edges"]
-                    if e["node"]["serviceName"].lower().startswith("redis")), None)
-          if not rid: print("  sin servicio Redis"); raise SystemExit(0)
-          q2='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          v={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":rid}
-          vs=(requests.post(API,headers=H,json={"query":q2,"variables":v},timeout=40)
-              .json().get("data",{}) or {}).get("variables") or {}
-          url=vs.get("REDIS_PUBLIC_URL")
-          if not url: print(f"  sin REDIS_PUBLIC_URL; claves: {sorted(vs)[:12]}"); raise SystemExit(0)
-          print(f"::add-mask::{url}")
-          r=redis.from_url(url, socket_timeout=15, socket_connect_timeout=15)
-          print(f"  ping: {r.ping()}")
-          # Solo la cola por defecto de celery, sin recorrer todo el keyspace.
-          for nombre in ("celery", "celery.priority", "default"):
-              try: print(f"  cola {nombre!r}: {r.llen(nombre)} tareas esperando")
-              except Exception as exc: print(f"  cola {nombre!r}: {exc}")
-          try:
-              print(f"  claves totales en la base: {r.dbsize()}")
-              print(f"  memoria: {r.info('memory').get('used_memory_human')}")
-          except Exception as exc: print(f"  info: {exc}")
+              if e["node"]["serviceName"]=="worker":
+                  dep=(e["node"].get("latestDeployment") or {}).get("id")
+          if not dep: raise SystemExit(0)
+          ql="""query($d:String!,$n:Int!){ deploymentLogs(deploymentId:$d, limit:$n){ timestamp message } }"""
+          logs=gql(ql,{"d":dep,"n":600})["data"]["deploymentLogs"]
+          print(f"=== {len(logs)} LINEAS; ULTIMAS 60 ===")
+          for l in logs[-60:]:
+              print(f"  {(l.get('timestamp') or '')[:19]} {(l.get('message') or '')[:180]}")
+          # Cuantas veces arranco: si se reinicia en loop, es OOM.
+          arranques=[l for l in logs if "celery@" in (l.get("message") or "")
+                     or "ready" in (l.get("message") or "").lower()]
+          print(f"\n  lineas de arranque/ready detectadas: {len(arranques)}")
+          for l in arranques[-8:]:
+              print(f"    {(l.get('timestamp') or '')[:19]} {(l.get('message') or '')[:140]}")
           PYX
