@@ -81,7 +81,7 @@ jobs:
               n=e["node"]; dep=n.get("latestDeployment") or {}
               meta=dep.get("meta") or {}
               sha=(meta.get("commitHash") or "")[:7]
-              msg=(meta.get("commitMessage") or "").splitlines()[0][:48]
+              msg=((meta.get("commitMessage") or "").splitlines() or [""])[0][:48]
               print(f"{n['serviceName']:<12} {dep.get('status') or 'SIN DEPLOY':<14} "
                     f"{(dep.get('createdAt') or '-')[:19]:<22} {sha} {msg}")
           PYX
