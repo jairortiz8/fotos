@@ -7,10 +7,10 @@ concurrency:
   group: prod-julio
   cancel-in-progress: true
 jobs:
-  comprobar:
-    name: SOLO LECTURA - se esta haciendo selfie y OCR?
+  caras:
+    name: Encender el procesamiento de caras (selfie)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
@@ -34,7 +34,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install --quiet "psycopg[binary]" requests redis
+      - run: pip install --quiet "psycopg[binary]" requests redis celery
 
       - name: Credenciales de prod
         run: |
@@ -61,67 +61,119 @@ jobs:
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
           PYX
 
-      - name: Que se esta haciendo y que no
+      - name: 1 - Como esta antes de tocar nada
         run: |
           python3 - <<'PYX'
-          import os, psycopg, requests, redis
+          import os, psycopg, redis
           SLUG="garmin-runners-girls-5k-social-run"
-
-          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
-          q='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          v={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":os.environ["WORKER_ID"]}
-          wk=(requests.post(API,headers=H,json={"query":q,"variables":v},timeout=40)
-              .json().get("data",{}) or {}).get("variables") or {}
-          colas = wk.get("WORKER_QUEUES","(sin setear)")
-          print("=== CONFIGURACION DEL WORKER ===")
-          print(f"  WORKER_QUEUES           = {colas}")
-          print(f"  FACE_PROCESSING_ENABLED = {wk.get('FACE_PROCESSING_ENABLED','(sin setear)')}")
-          print(f"  OCR_BACKEND             = {wk.get('OCR_BACKEND','(sin setear)')}")
-          print(f"\n  OCR  (cola 'fast')  -> {'SI se procesa' if 'fast' in colas else 'NO se procesa'}")
-          print(f"  CARAS/selfie (cola 'faces') -> {'SI se procesa' if 'faces' in colas else 'NO se procesa (encoladas)'}")
-
           r=redis.from_url(os.environ["REDIS_PUB"], socket_timeout=15, socket_connect_timeout=15)
-          print("\n=== TAREAS EN COLA AHORA ===")
-          for cola in ("fast","faces","celery"):
-              print(f"  {cola:<8} {r.llen(cola)} esperando")
-
+          print("=== COLAS ===")
+          for c in ("fast","faces","celery"):
+              print(f"  {c:<8} {r.llen(c)} esperando")
           with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
               cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,))
               eid=cur.fetchone()[0]
-              cur.execute("""SELECT status, count(*) FROM photos_photo
-                              WHERE event_id=%s GROUP BY 1 ORDER BY 2 DESC""",(eid,))
-              print("\n=== FOTOS DEL EVENTO ===")
-              for st,n in cur.fetchall(): print(f"  {st:<20} {n}")
-
-              cur.execute("""SELECT count(*),
-                                    count(*) FILTER (WHERE preview_key<>''),
-                                    count(*) FILTER (WHERE thumbnail_key<>''),
+              cur.execute("""SELECT count(*), count(*) FILTER (WHERE preview_key<>''),
                                     count(*) FILTER (WHERE has_bibs_detected),
                                     count(*) FILTER (WHERE has_faces_detected)
                                FROM photos_photo WHERE event_id=%s""",(eid,))
-              total, prev, thumb, conbib, concara = cur.fetchone()
-              print(f"\n=== QUE SE LES HIZO A LAS {total} FOTOS ===")
-              print(f"  preview generado     {prev}")
-              print(f"  thumbnail generado   {thumb}")
-              print(f"  con dorsal detectado {conbib}   <- esto es el OCR")
-              print(f"  con caras detectadas {concara}  <- esto es el selfie")
-
-              cur.execute("""SELECT count(*) FROM photos_bib b
-                              JOIN photos_photo p ON p.id=b.photo_id WHERE p.event_id=%s""",(eid,))
-              print(f"\n  dorsales leidos en total: {cur.fetchone()[0]}")
+              tot,prev,bib,cara=cur.fetchone()
               cur.execute("""SELECT count(*) FROM photos_faceembedding fe
                               JOIN photos_photo p ON p.id=fe.photo_id WHERE p.event_id=%s""",(eid,))
-              print(f"  caras indexadas en total: {cur.fetchone()[0]}")
+              emb=cur.fetchone()[0]
+              cur.execute("""SELECT count(*) FROM photos_bib b
+                              JOIN photos_photo p ON p.id=b.photo_id WHERE p.event_id=%s""",(eid,))
+              bibs=cur.fetchone()[0]
+              print(f"\n=== EVENTO (antes) ===")
+              print(f"  fotos {tot} | con preview {prev} | con dorsal {bib} | con caras {cara}")
+              print(f"  dorsales leidos {bibs} | caras indexadas {emb}")
+              with open(os.environ["GITHUB_ENV"],"a") as f:
+                  f.write(f"EVENT_ID={eid}\nEMB_ANTES={emb}\n")
+          PYX
 
-              cur.execute("""SELECT b.number, b.confidence, b.source
-                               FROM photos_bib b JOIN photos_photo p ON p.id=b.photo_id
-                              WHERE p.event_id=%s ORDER BY b.id DESC LIMIT 8""",(eid,))
-              muestra=cur.fetchall()
-              if muestra:
-                  print("\n  ultimos dorsales leidos (muestra):")
-                  for num, conf, src in muestra:
-                      print(f"    #{num:<8} confianza={conf:.2f}  fuente={src}")
-              else:
-                  print("\n  todavia no se leyo ningun dorsal")
+      - name: 2 - Encender la cola de caras
+        run: |
+          python3 - <<'PYX'
+          import os, json, urllib.request
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          def gql(q,v=None):
+              body=json.dumps({"query":q,"variables":v or {}}).encode()
+              req=urllib.request.Request(API,data=body,headers={
+                  "Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
+                  "Content-Type":"application/json","User-Agent":"curl/8.0"})
+              return json.load(urllib.request.urlopen(req,timeout=60))
+          M="""mutation($p:String!,$e:String!,$s:String!,$n:String!,$v:String!){
+                 variableUpsert(input:{projectId:$p, environmentId:$e, serviceId:$s, name:$n, value:$v}) }"""
+          r=gql(M,{"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
+                   "s":os.environ["WORKER_ID"],"n":"WORKER_QUEUES","v":"fast,faces,celery"})
+          print(f"  WORKER_QUEUES = fast,faces,celery -> {json.dumps(r.get('data'))}")
+          if r.get("errors"): raise SystemExit(f"ERROR: {r['errors']}")
+          D="""mutation($s:String!,$e:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e) }"""
+          r2=gql(D,{"s":os.environ["WORKER_ID"],"e":os.environ["ENV_ID"]})
+          print(f"  redeploy disparado -> {json.dumps(r2.get('data'))[:120]}")
+          if r2.get("errors"): print(f"  ERRORES: {r2['errors']}")
+          PYX
+
+      - name: 3 - Red de seguridad - encolar caras para las que ya tienen preview
+        run: |
+          python3 - <<'PYX'
+          import os, psycopg
+          from celery import Celery
+          # Las fotos que process_photo ya termino encolaron su tarea de cara sola
+          # (FACE_PROCESSING_ENABLED=true). Esto es por si alguna quedo afuera:
+          # run_face_recognition_on_photo es idempotente (saltea las ya indexadas),
+          # asi que re-encolar es barato y no duplica trabajo.
+          eid=int(os.environ["EVENT_ID"])
+          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
+              cur.execute("""SELECT p.id FROM photos_photo p
+                              WHERE p.event_id=%s AND p.preview_key<>''
+                                AND NOT EXISTS (SELECT 1 FROM photos_faceembedding fe
+                                                 WHERE fe.photo_id=p.id)
+                              ORDER BY p.id""",(eid,))
+              ids=[r[0] for r in cur.fetchall()]
+          print(f"  fotos con preview y sin caras indexadas: {len(ids)}")
+          if not ids:
+              print("  nada que re-encolar (todavia no hay previews o ya estan todas)")
+              raise SystemExit(0)
+          app=Celery(broker=os.environ["REDIS_PUB"])
+          for pid in ids:
+              app.send_task("photos.run_face_recognition_on_photo", args=[pid], queue="faces")
+          print(f"  re-encoladas {len(ids)} tareas de cara en la cola 'faces'")
+          PYX
+
+      - name: 4 - Ver si empieza a indexar caras
+        if: always()
+        run: |
+          python3 - <<'PYX'
+          import os, psycopg, redis, time
+          eid=int(os.environ["EVENT_ID"])
+          r=redis.from_url(os.environ["REDIS_PUB"], socket_timeout=15)
+          def estado():
+              with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
+                  cur.execute("""SELECT count(*) FILTER (WHERE preview_key<>''),
+                                        count(*) FILTER (WHERE has_faces_detected),
+                                        count(*) FILTER (WHERE status='pending_review')
+                                   FROM photos_photo WHERE event_id=%s""",(eid,))
+                  prev,cara,pend=cur.fetchone()
+                  cur.execute("""SELECT count(*) FROM photos_faceembedding fe
+                                  JOIN photos_photo p ON p.id=fe.photo_id
+                                 WHERE p.event_id=%s""",(eid,))
+                  return prev,cara,pend,cur.fetchone()[0]
+          print("=== AVANCE ===")
+          for i in range(8):
+              prev,cara,pend,emb = estado()
+              print(f"  t+{i*45:3}s  fast={r.llen('fast'):<5} faces={r.llen('faces'):<5} "
+                    f"previews={prev:<5} listas={pend:<5} fotos_con_cara={cara:<5} caras={emb}")
+              if i < 7: time.sleep(45)
+          prev,cara,pend,emb = estado()
+          print(f"\n=== RESULTADO ===")
+          print(f"  previews generados     {prev}")
+          print(f"  listas para aprobar    {pend}")
+          print(f"  fotos con cara detectada {cara}")
+          print(f"  caras indexadas (selfie) {emb}   (antes: {os.environ.get('EMB_ANTES','?')})")
+          print(f"  falta en cola: fast={r.llen('fast')}  faces={r.llen('faces')}")
+          if emb > int(os.environ.get("EMB_ANTES","0")):
+              print("\n  EL SELFIE YA ESTA INDEXANDO.")
+          else:
+              print("\n  todavia sin caras nuevas; puede estar cargando el modelo (~30s la 1a vez)")
           PYX
