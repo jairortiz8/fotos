@@ -7,10 +7,10 @@ concurrency:
   group: prod-julio
   cancel-in-progress: true
 jobs:
-  arreglo:
-    name: ARREGLO - que el worker consuma la cola fast
+  comprobar:
+    name: SOLO LECTURA - se esta haciendo selfie y OCR?
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
@@ -52,99 +52,76 @@ jobs:
           d=requests.post(API,headers=H,json={"query":q1,"variables":{"e":os.environ["ENV_ID"]}},timeout=40).json()
           rid=next((e["node"]["serviceId"] for e in d["data"]["environment"]["serviceInstances"]["edges"]
                     if e["node"]["serviceName"].lower().startswith("redis")), None)
-          pub=vf(rid).get("REDIS_PUBLIC_URL") if rid else None
-          out={"DATABASE_URL":pg.get("DATABASE_PUBLIC_URL"), "REDIS_PUB":pub}
+          out={"DATABASE_URL":pg.get("DATABASE_PUBLIC_URL"),
+               "REDIS_PUB":vf(rid).get("REDIS_PUBLIC_URL") if rid else None}
           faltan=[k for k,v in out.items() if not v]
           if faltan: raise SystemExit(f"faltan: {faltan}")
           with open(os.environ["GITHUB_ENV"],"a") as f:
               for k,v in out.items():
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
-          print("  credenciales listas")
           PYX
 
-      - name: 1 - Confirmar el diagnostico
+      - name: Que se esta haciendo y que no
         run: |
           python3 - <<'PYX'
-          import os, requests, redis
+          import os, psycopg, requests, redis
+          SLUG="garmin-runners-girls-5k-social-run"
+
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
           q='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
           v={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":os.environ["WORKER_ID"]}
           wk=(requests.post(API,headers=H,json={"query":q,"variables":v},timeout=40)
               .json().get("data",{}) or {}).get("variables") or {}
-          print(f"  worker.WORKER_QUEUES (antes) = {wk.get('WORKER_QUEUES','(sin setear)')}")
+          colas = wk.get("WORKER_QUEUES","(sin setear)")
+          print("=== CONFIGURACION DEL WORKER ===")
+          print(f"  WORKER_QUEUES           = {colas}")
+          print(f"  FACE_PROCESSING_ENABLED = {wk.get('FACE_PROCESSING_ENABLED','(sin setear)')}")
+          print(f"  OCR_BACKEND             = {wk.get('OCR_BACKEND','(sin setear)')}")
+          print(f"\n  OCR  (cola 'fast')  -> {'SI se procesa' if 'fast' in colas else 'NO se procesa'}")
+          print(f"  CARAS/selfie (cola 'faces') -> {'SI se procesa' if 'faces' in colas else 'NO se procesa (encoladas)'}")
+
           r=redis.from_url(os.environ["REDIS_PUB"], socket_timeout=15, socket_connect_timeout=15)
-          print("\n=== TAREAS ESPERANDO POR COLA ===")
+          print("\n=== TAREAS EN COLA AHORA ===")
           for cola in ("fast","faces","celery"):
-              print(f"  {cola:<8} {r.llen(cola)} tareas")
-          print("\n  'fast' con tareas + WORKER_QUEUES sin 'fast' = nadie las consume")
-          PYX
+              print(f"  {cola:<8} {r.llen(cola)} esperando")
 
-      - name: 2 - Aplicar el arreglo
-        run: |
-          python3 - <<'PYX'
-          import os, json, urllib.request
-          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          def gql(q,v=None):
-              body=json.dumps({"query":q,"variables":v or {}}).encode()
-              req=urllib.request.Request(API,data=body,headers={
-                  "Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
-                  "Content-Type":"application/json","User-Agent":"curl/8.0"})
-              return json.load(urllib.request.urlopen(req,timeout=60))
-          # Prioridad esta noche: que salgan los previews. El worker se dedica a
-          # `fast` y `celery`; las caras (~15s c/u) quedan encoladas y se ponen al
-          # dia despues volviendo a `celery,faces,fast`.
-          M="""mutation($p:String!,$e:String!,$s:String!,$n:String!,$v:String!){
-                 variableUpsert(input:{projectId:$p, environmentId:$e, serviceId:$s, name:$n, value:$v}) }"""
-          r=gql(M,{"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
-                   "s":os.environ["WORKER_ID"],"n":"WORKER_QUEUES","v":"fast,celery"})
-          print(f"  WORKER_QUEUES = fast,celery -> {json.dumps(r.get('data'))}")
-          if r.get("errors"): raise SystemExit(f"ERROR: {r['errors']}")
-          D="""mutation($s:String!,$e:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e) }"""
-          r2=gql(D,{"s":os.environ["WORKER_ID"],"e":os.environ["ENV_ID"]})
-          print(f"  redeploy disparado -> {json.dumps(r2.get('data'))[:120]}")
-          if r2.get("errors"): print(f"  ERRORES: {r2['errors']}")
-          PYX
+          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
+              cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,))
+              eid=cur.fetchone()[0]
+              cur.execute("""SELECT status, count(*) FROM photos_photo
+                              WHERE event_id=%s GROUP BY 1 ORDER BY 2 DESC""",(eid,))
+              print("\n=== FOTOS DEL EVENTO ===")
+              for st,n in cur.fetchall(): print(f"  {st:<20} {n}")
 
-      - name: 3 - Esperar el arranque
-        run: sleep 270
+              cur.execute("""SELECT count(*),
+                                    count(*) FILTER (WHERE preview_key<>''),
+                                    count(*) FILTER (WHERE thumbnail_key<>''),
+                                    count(*) FILTER (WHERE has_bibs_detected),
+                                    count(*) FILTER (WHERE has_faces_detected)
+                               FROM photos_photo WHERE event_id=%s""",(eid,))
+              total, prev, thumb, conbib, concara = cur.fetchone()
+              print(f"\n=== QUE SE LES HIZO A LAS {total} FOTOS ===")
+              print(f"  preview generado     {prev}")
+              print(f"  thumbnail generado   {thumb}")
+              print(f"  con dorsal detectado {conbib}   <- esto es el OCR")
+              print(f"  con caras detectadas {concara}  <- esto es el selfie")
 
-      - name: 4 - Verificar que esta procesando
-        if: always()
-        run: |
-          python3 - <<'PYX'
-          import os, psycopg, redis, time
-          SLUG="garmin-runners-girls-5k-social-run"
-          r=redis.from_url(os.environ["REDIS_PUB"], socket_timeout=15)
+              cur.execute("""SELECT count(*) FROM photos_bib b
+                              JOIN photos_photo p ON p.id=b.photo_id WHERE p.event_id=%s""",(eid,))
+              print(f"\n  dorsales leidos en total: {cur.fetchone()[0]}")
+              cur.execute("""SELECT count(*) FROM photos_faceembedding fe
+                              JOIN photos_photo p ON p.id=fe.photo_id WHERE p.event_id=%s""",(eid,))
+              print(f"  caras indexadas en total: {cur.fetchone()[0]}")
 
-          def foto_estado():
-              with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
-                  cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,))
-                  eid=cur.fetchone()[0]
-                  cur.execute("""SELECT count(*) FILTER (WHERE preview_key<>''),
-                                        count(*) FILTER (WHERE status='pending_review'),
-                                        count(*) FILTER (WHERE status='processing'),
-                                        count(*)
-                                   FROM photos_photo WHERE event_id=%s""",(eid,))
-                  return cur.fetchone()
-
-          print("=== AVANCE ===")
-          for i in range(6):
-              prev, pend, proc, total = foto_estado()
-              cola = r.llen("fast")
-              print(f"  t+{i*30:3}s  cola fast={cola:<5} con preview={prev:<5} "
-                    f"listas para aprobar={pend:<5} procesando={proc}")
-              if i < 5: time.sleep(30)
-
-          prev, pend, proc, total = foto_estado()
-          print(f"\n=== RESULTADO ===")
-          print(f"  total de fotos:        {total}")
-          print(f"  con preview generado:  {prev}")
-          print(f"  listas para aprobar:   {pend}")
-          print(f"  todavia procesando:    {proc}")
-          print(f"  tareas en cola 'fast': {r.llen('fast')}")
-          if prev > 0:
-              print("\n  ARREGLADO: el worker esta generando previews.")
-          else:
-              print("\n  TODAVIA EN 0: el worker no arranco, revisar sus logs.")
+              cur.execute("""SELECT b.number, b.confidence, b.source
+                               FROM photos_bib b JOIN photos_photo p ON p.id=b.photo_id
+                              WHERE p.event_id=%s ORDER BY b.id DESC LIMIT 8""",(eid,))
+              muestra=cur.fetchall()
+              if muestra:
+                  print("\n  ultimos dorsales leidos (muestra):")
+                  for num, conf, src in muestra:
+                      print(f"    #{num:<8} confianza={conf:.2f}  fuente={src}")
+              else:
+                  print("\n  todavia no se leyo ningun dorsal")
           PYX
