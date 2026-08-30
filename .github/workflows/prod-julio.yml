@@ -4,73 +4,127 @@ on:
   push:
     branches: ["run-julio"]
 jobs:
-  validate:
-    name: validate feature branch
+  apagar:
+    name: apagar eventos de prueba
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: runfoto
-          POSTGRES_PASSWORD: runfoto
-          POSTGRES_DB: runfoto
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready --health-interval 10s
-          --health-timeout 5s --health-retries 5
       redis:
         image: redis:7-alpine
-        ports:
-          - 6379:6379
+        ports: ["6379:6379"]
         options: >-
           --health-cmd "redis-cli ping" --health-interval 10s
           --health-timeout 5s --health-retries 5
     env:
-      DATABASE_URL: postgres://runfoto:runfoto@localhost:5432/runfoto
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
+      DJANGO_SETTINGS_MODULE: config.settings.dev
       REDIS_URL: redis://localhost:6379/0
       CELERY_BROKER_URL: redis://localhost:6379/1
       CELERY_RESULT_BACKEND: redis://localhost:6379/2
       SITE_NAME: "find your foto"
-      SITE_DOMAIN: localhost:8000
+      SITE_DOMAIN: findyourfoto.com
       NOTIFIER_BACKEND: whatsapp_manual
       LANGUAGE_CODE: es
       TIME_ZONE: America/El_Salvador
+      FACE_SEARCH_ENABLED: "false"
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: main
+        with: { ref: main }
 
-      - name: Install system libs for OpenCV/onnxruntime
+      - name: Instalar deps
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libgl1 libglib2.0-0 libgomp1 libxcb1 libsm6 libxext6 libxrender1
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends libgl1 libglib2.0-0 libgomp1 libxcb1 libsm6 libxext6 libxrender1
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
 
-      - name: Install Python deps
+      - name: Credenciales de prod
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          python3 - <<'PYX'
+          import os, requests
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          q='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          def vf(sid):
+              v={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}
+              return (requests.post(API,headers=H,json={"query":q,"variables":v},timeout=40)
+                      .json().get("data",{}) or {}).get("variables") or {}
+          pg=vf(os.environ["PG_ID"]); web=vf(os.environ["WEB_ID"])
+          out={"DATABASE_URL":pg.get("DATABASE_PUBLIC_URL"),
+               "R2_ACCESS_KEY_ID":web.get("R2_ACCESS_KEY_ID"),
+               "R2_SECRET_ACCESS_KEY":web.get("R2_SECRET_ACCESS_KEY"),
+               "R2_BUCKET_NAME":web.get("R2_BUCKET_NAME"),
+               "R2_ENDPOINT_URL":web.get("R2_ENDPOINT_URL")}
+          missing=[k for k,v in out.items() if not v]
+          if missing: raise SystemExit(f"faltan: {missing}")
+          with open(os.environ["GITHUB_ENV"],"a") as f:
+              for k,v in out.items():
+                  print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
+          PYX
 
-      - name: Ruff (lint)
-        run: ruff check .
+      - name: Apagar los eventos de prueba
+        run: |
+          python manage.py shell <<'PYX'
+          from apps.events.models import Event, EventStatus
 
-      - name: Ruff (format)
-        run: ruff format --check .
+          # Solo estos tres. Los eventos REALES (surf-city-2026 con 19.506 fotos y
+          # camino-a-san-luis-iron-dream con 3.082) NO se tocan.
+          APAGAR = ["surf-city-prueba-logos", "trail-ipala-2026", "maraton-antigua-2026"]
+          INTOCABLES = {"surf-city-2026", "camino-a-san-luis-iron-dream"}
 
-      - name: Mypy
-        run: mypy .
+          print("=== ANTES ===")
+          for e in Event.objects.exclude(status=EventStatus.DELETED).order_by("-date"):
+              links = e.photographer_links.filter(is_active=True).count()
+              print(f"  {e.slug:<32} {e.status:<16} vis={e.visibility:<9} fotos={e.photo_count:<6} links={links}")
 
-      - name: Django check
-        run: python manage.py check
+          print("\n=== APAGANDO ===")
+          for slug in APAGAR:
+              assert slug not in INTOCABLES, f"NO tocar {slug}"
+              e = Event.objects.filter(slug=slug).first()
+              if e is None:
+                  print(f"  {slug}: no existe (nada que hacer)")
+                  continue
+              antes = e.status
+              if antes == EventStatus.DRAFT:
+                  print(f"  {slug}: ya estaba apagado (draft)")
+                  continue
+              e.status = EventStatus.DRAFT
+              e.save(update_fields=["status", "updated_at"])
+              print(f"  {slug}: {antes} -> draft  ({e.photo_count} fotos intactas)")
 
-      - name: Pytest (reviewers + events + dashboard)
-        run: pytest -m "not slow and not e2e" tests/reviewers tests/events tests/dashboard tests/photos -q
+          print("\n=== DESPUES ===")
+          for e in Event.objects.exclude(status=EventStatus.DELETED).order_by("-date"):
+              links = e.photographer_links.filter(is_active=True).count()
+              print(f"  {e.slug:<32} {e.status:<16} vis={e.visibility:<9} fotos={e.photo_count:<6} links={links}")
+
+          print("\n=== LINKS DE FOTOGRAFO ACTIVOS (por evento) ===")
+          print("Un link activo en un evento apagado deja subir fotos al evento equivocado.")
+          for e in Event.objects.exclude(status=EventStatus.DELETED).order_by("-date"):
+              for l in e.photographer_links.filter(is_active=True):
+                  print(f"  {e.slug:<32} {e.status:<16} {l.photographer_name!r:<28} vence={l.expires_at:%d/%m/%Y}")
+          PYX
+
+      - name: Confirmar que la galeria publica ya no responde
+        run: |
+          python manage.py shell <<'PYX'
+          from django.test import Client
+          from django.conf import settings
+          settings.ALLOWED_HOSTS = ["*"]
+          c = Client()
+          for slug in ["surf-city-prueba-logos", "trail-ipala-2026", "maraton-antigua-2026",
+                       "surf-city-2026", "camino-a-san-luis-iron-dream"]:
+              r = c.get(f"/eventos/{slug}/")
+              esperado = "404 (apagado)" if slug not in ("surf-city-2026","camino-a-san-luis-iron-dream") else "200 (real, sigue vivo)"
+              print(f"  /eventos/{slug}/ -> {r.status_code}   esperado: {esperado}")
+          r = c.get("/")
+          print(f"\n  home -> {r.status_code}")
+          PYX
