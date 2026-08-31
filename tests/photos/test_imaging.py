@@ -261,7 +261,10 @@ def test_parse_capture_time_uses_el_salvador_timezone() -> None:
 # ---------------------------------------------------------------------------
 @pytest.mark.django_db
 def test_preview_lleva_watermark_con_el_flag_prendido(
-    storage: R2Storage, synthetic_jpeg: Path, settings, monkeypatch  # type: ignore[no-untyped-def]
+    storage: R2Storage,
+    synthetic_jpeg: Path,
+    settings,
+    monkeypatch,  # type: ignore[no-untyped-def]
 ) -> None:
     """Comportamiento por defecto: el preview pasa por la marca de agua."""
     settings.PREVIEW_WATERMARK_ENABLED = True
@@ -282,7 +285,10 @@ def test_preview_lleva_watermark_con_el_flag_prendido(
 
 @pytest.mark.django_db
 def test_preview_sale_limpio_con_el_flag_apagado(
-    storage: R2Storage, synthetic_jpeg: Path, settings, monkeypatch  # type: ignore[no-untyped-def]
+    storage: R2Storage,
+    synthetic_jpeg: Path,
+    settings,
+    monkeypatch,  # type: ignore[no-untyped-def]
 ) -> None:
     """Con el flag apagado (así corre prod) el preview NO lleva marca de agua.
 
