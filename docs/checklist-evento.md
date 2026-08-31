@@ -156,6 +156,11 @@ mutation($id:String!){ deploymentRemove(id:$id) }
 esa rama), o *Redeploy* en cada servicio desde el panel. No hay que reconfigurar
 nada.
 
+> **Ojo con el orden**: como cualquier push a `main` los revive, apagalos
+> **después** del último push. Si hacés un push con los workers ya apagados
+> (aunque sea de documentación), vuelven a levantarse solos y hay que bajarlos
+> otra vez.
+
 **Lo que deja de funcionar con los workers apagados**:
 
 - Procesar fotos nuevas (si alguien sube, queda trabada).
