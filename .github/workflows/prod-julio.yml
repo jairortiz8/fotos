@@ -7,8 +7,8 @@ concurrency:
   group: prod-julio
   cancel-in-progress: true
 jobs:
-  auditoria:
-    name: SOLO LECTURA - auditar OCR y caras en fotos grupales
+  ocr:
+    name: SOLO LECTURA - esta funcionando el OCR?
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -17,7 +17,6 @@ jobs:
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
-      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
       WORKER_ID: 1846c52a-57c3-4a8b-b4ec-1cc200a8e652
     steps:
       - uses: actions/checkout@v4
@@ -27,9 +26,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install --quiet "psycopg[binary]" requests redis
+      - run: pip install --quiet "psycopg[binary]" requests
 
-      - name: Credenciales de prod
+      - name: Credenciales + flags de OCR
         run: |
           python3 - <<'PYX'
           import os, requests
@@ -41,145 +40,67 @@ jobs:
               return (requests.post(API,headers=H,json={"query":q,"variables":v},timeout=40)
                       .json().get("data",{}) or {}).get("variables") or {}
           pg=vf(os.environ["PG_ID"]); wk=vf(os.environ["WORKER_ID"])
-          q1='query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{ serviceId serviceName } } } } }'
-          d=requests.post(API,headers=H,json={"query":q1,"variables":{"e":os.environ["ENV_ID"]}},timeout=40).json()
-          rid=next((e["node"]["serviceId"] for e in d["data"]["environment"]["serviceInstances"]["edges"]
-                    if e["node"]["serviceName"].lower().startswith("redis")), None)
-          out={"DATABASE_URL":pg.get("DATABASE_PUBLIC_URL"),
-               "REDIS_PUB":vf(rid).get("REDIS_PUBLIC_URL") if rid else None}
-          if [k for k,v in out.items() if not v]: raise SystemExit("faltan credenciales")
+          url=pg.get("DATABASE_PUBLIC_URL")
+          if not url: raise SystemExit("sin DATABASE_PUBLIC_URL")
+          print(f"::add-mask::{url}")
           with open(os.environ["GITHUB_ENV"],"a") as f:
-              for k,v in out.items():
-                  print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
-          print("=== CONFIG DEL WORKER (relevante al OCR) ===")
-          for k in ("OCR_BACKEND","GEMINI_API_KEY","GEMINI_OCR_MODEL",
-                    "OCR_EXHAUSTIVE_ON_UPLOAD","WORKER_QUEUES","FACE_AVATAR_MIN_PX"):
-              val = wk.get(k)
-              if k == "GEMINI_API_KEY":
-                  val = f"(seteada, {len(val)} chars)" if val else "*** NO SETEADA ***"
-              print(f"  {k:<26} {val if val else '(sin setear)'}")
+              f.write(f"DATABASE_URL={url}\n")
+              f.write(f"OCR_BACKEND={wk.get('OCR_BACKEND','')}\n")
+              f.write(f"TIENE_KEY={'si' if wk.get('GEMINI_API_KEY') else 'NO'}\n")
+              f.write(f"MODELO={wk.get('GEMINI_OCR_MODEL','(default)')}\n")
           PYX
 
-      - name: 1 - Avance del procesamiento
+      - name: Reporte de OCR
         run: |
           python3 - <<'PYX'
-          import os, psycopg, redis
+          import os, psycopg
           SLUG="garmin-runners-girls-5k-social-run"
-          r=redis.from_url(os.environ["REDIS_PUB"], socket_timeout=15, socket_connect_timeout=15)
-          print("=== COLAS ===")
-          for c in ("fast","faces","celery"): print(f"  {c:<7} {r.llen(c)} esperando")
           with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
               cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,))
               eid=cur.fetchone()[0]
-              with open(os.environ["GITHUB_ENV"],"a") as f: f.write(f"EVENT_ID={eid}\n")
               cur.execute("""SELECT count(*), count(*) FILTER (WHERE preview_key<>''),
-                                    count(*) FILTER (WHERE status='pending_review'),
-                                    count(*) FILTER (WHERE status='processing'),
-                                    count(*) FILTER (WHERE has_faces_detected),
                                     count(*) FILTER (WHERE has_bibs_detected)
                                FROM photos_photo WHERE event_id=%s""",(eid,))
-              tot,prev,pend,proc,cara,bib=cur.fetchone()
-              print(f"\n=== FOTOS ({tot}) ===")
-              print(f"  con preview          {prev}")
-              print(f"  listas para aprobar  {pend}")
-              print(f"  todavia procesando   {proc}")
-              print(f"  con caras detectadas {cara}")
-              print(f"  con dorsal detectado {bib}")
-          PYX
-
-      - name: 2 - OCR - que esta leyendo
-        run: |
-          python3 - <<'PYX'
-          import os, psycopg
-          eid=int(os.environ["EVENT_ID"])
-          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
+              tot, procesadas, con_bib = cur.fetchone()
               cur.execute("""SELECT count(*) FROM photos_bib b
                               JOIN photos_photo p ON p.id=b.photo_id WHERE p.event_id=%s""",(eid,))
-              total=cur.fetchone()[0]
-              print(f"=== DORSALES LEIDOS: {total} ===")
-              cur.execute("""SELECT b.source, count(*), avg(b.confidence)
-                               FROM photos_bib b JOIN photos_photo p ON p.id=b.photo_id
-                              WHERE p.event_id=%s GROUP BY 1 ORDER BY 2 DESC""",(eid,))
-              for src,n,conf in cur.fetchall():
-                  print(f"  {src:<20} {n:<6} confianza media {conf:.2f}")
+              bibs=cur.fetchone()[0]
+              cur.execute("""SELECT b.source, count(*) FROM photos_bib b
+                              JOIN photos_photo p ON p.id=b.photo_id
+                             WHERE p.event_id=%s GROUP BY 1 ORDER BY 2 DESC""",(eid,))
+              por_fuente=cur.fetchall()
               cur.execute("""SELECT b.number, b.confidence, b.source
                                FROM photos_bib b JOIN photos_photo p ON p.id=b.photo_id
-                              WHERE p.event_id=%s ORDER BY b.id DESC LIMIT 15""",(eid,))
+                              WHERE p.event_id=%s ORDER BY b.id DESC LIMIT 12""",(eid,))
               muestra=cur.fetchall()
-              if muestra:
-                  print("\n  muestra de lo leido:")
-                  for num,conf,src in muestra:
-                      print(f"    #{num:<10} conf={conf:.2f}  {src}")
-              else:
-                  print("\n  NINGUN dorsal leido en todo el evento")
-              # Comparacion: un evento donde el OCR SI funciono.
-              cur.execute("""SELECT count(*) FROM photos_bib b JOIN photos_photo p ON p.id=b.photo_id
-                              JOIN events_event e ON e.id=p.event_id WHERE e.slug='surf-city-2026'""")
-              print(f"\n  (referencia) dorsales en Surf City: {cur.fetchone()[0]}")
-          PYX
+              cur.execute("""SELECT count(*), count(DISTINCT b.photo_id)
+                               FROM photos_bib b JOIN photos_photo p ON p.id=b.photo_id
+                               JOIN events_event e ON e.id=p.event_id
+                              WHERE e.slug='surf-city-2026'""")
+              sc_bibs, sc_fotos = cur.fetchone()
 
-      - name: 3 - Caras - por que las fotos grupales muestran una sola
-        run: |
-          python3 - <<'PYX'
-          import os, psycopg
-          eid=int(os.environ["EVENT_ID"])
-          # lado mayor del bbox, igual que face_size_px() en apps/photos/faces.py
-          LADO = ("GREATEST((fe.bbox->>'x2')::float - (fe.bbox->>'x1')::float,"
-                  " (fe.bbox->>'y2')::float - (fe.bbox->>'y1')::float)")
-          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
-              cur.execute(f"""SELECT count(*), min({LADO}),
-                       percentile_cont(0.25) WITHIN GROUP (ORDER BY {LADO}),
-                       percentile_cont(0.50) WITHIN GROUP (ORDER BY {LADO}),
-                       percentile_cont(0.75) WITHIN GROUP (ORDER BY {LADO}),
-                       percentile_cont(0.90) WITHIN GROUP (ORDER BY {LADO}), max({LADO})
-                     FROM photos_faceembedding fe JOIN photos_photo p ON p.id=fe.photo_id
-                    WHERE p.event_id=%s""",(eid,))
-              n,mn,p25,p50,p75,p90,mx=cur.fetchone()
-              print(f"=== TAMANO DE LAS {n} CARAS DE ESTE EVENTO (px) ===")
-              if not n:
-                  print("  todavia no hay caras indexadas"); raise SystemExit(0)
-              print(f"  min {mn:.0f} | p25 {p25:.0f} | mediana {p50:.0f} | p75 {p75:.0f} | p90 {p90:.0f} | max {mx:.0f}")
-              print("  (el umbral actual para generar visor es 130 px)")
-
-              cur.execute(f"""SELECT count(*) FILTER (WHERE {LADO} >= 130),
-                                     count(*) FILTER (WHERE {LADO} < 130)
-                                FROM photos_faceembedding fe JOIN photos_photo p ON p.id=fe.photo_id
-                               WHERE p.event_id=%s""",(eid,))
-              grandes, chicas = cur.fetchone()
-              print(f"\n  caras >=130px (pasan el filtro): {grandes}")
-              print(f"  caras <130px (descartadas):      {chicas}")
-
-              print("\n=== CARAS POR FOTO vs AVATARES GENERADOS ===")
-              cur.execute("""SELECT c.caras, count(*) AS fotos, sum(c.avatares) AS avatares
-                               FROM (SELECT fe.photo_id, count(*) AS caras,
-                                            count(*) FILTER (WHERE fe.avatar_key<>'') AS avatares
-                                       FROM photos_faceembedding fe
-                                       JOIN photos_photo p ON p.id=fe.photo_id
-                                      WHERE p.event_id=%s GROUP BY 1) c
-                              GROUP BY 1 ORDER BY 1""",(eid,))
-              print(f"  {'caras en la foto':<18} {'fotos':<8} {'avatares totales':<18} {'avatares/foto'}")
-              for caras, fotos, avat in cur.fetchall():
-                  print(f"  {caras:<18} {fotos:<8} {avat:<18} {avat/fotos:.1f}")
-
-              cur.execute("""SELECT count(*) FROM (
-                               SELECT fe.photo_id FROM photos_faceembedding fe
-                                JOIN photos_photo p ON p.id=fe.photo_id
-                               WHERE p.event_id=%s GROUP BY 1
-                                 HAVING count(*) >= 5 AND count(*) FILTER (WHERE fe.avatar_key<>'') <= 1) t""",(eid,))
-              print(f"\n  FOTOS GRUPALES (5+ caras) que muestran 1 sola cara o ninguna: {cur.fetchone()[0]}")
-              print("  ^ este es exactamente el sintoma que reportaste")
-
-              print("\n=== SIMULACION: cuantas caras se ofrecerian bajando el umbral ===")
-              for umbral in (130, 110, 90, 80, 70, 60, 50):
-                  cur.execute(f"""SELECT count(*) FROM photos_faceembedding fe
-                                   JOIN photos_photo p ON p.id=fe.photo_id
-                                  WHERE p.event_id=%s AND {LADO} >= %s""",(eid, umbral))
-                  caras=cur.fetchone()[0]
-                  cur.execute(f"""SELECT count(*) FROM (
-                                   SELECT fe.photo_id FROM photos_faceembedding fe
-                                    JOIN photos_photo p ON p.id=fe.photo_id
-                                   WHERE p.event_id=%s AND {LADO} >= %s
-                                   GROUP BY 1 HAVING count(*) >= 3) t""",(eid, umbral))
-                  print(f"  umbral {umbral:>3}px -> {caras:>6} caras con visor, "
-                        f"{cur.fetchone()[0]:>5} fotos ofrecerian 3+ personas")
+          print("=" * 58)
+          print("            REPORTE DE OCR")
+          print("=" * 58)
+          print(f"  backend           {os.environ.get('OCR_BACKEND') or '(sin setear -> local)'}")
+          print(f"  GEMINI_API_KEY    {os.environ.get('TIENE_KEY')}")
+          print(f"  modelo            {os.environ.get('MODELO')}")
+          print()
+          print(f"  fotos del evento          {tot}")
+          print(f"  ya procesadas (c/preview) {procesadas}")
+          print(f"  fotos con dorsal leido    {con_bib}")
+          print(f"  dorsales leidos (total)   {bibs}")
+          if procesadas:
+              print(f"  -> {100*con_bib/procesadas:.1f}% de las procesadas tienen dorsal")
+          print()
+          for src, n in por_fuente:
+              print(f"  fuente {src:<20} {n}")
+          if muestra:
+              print("\n  muestra:")
+              for num, conf, src in muestra:
+                  print(f"    #{num:<10} conf={conf:.2f}  {src}")
+          else:
+              print("\n  NINGUN dorsal leido todavia")
+          print(f"\n  referencia Surf City: {sc_bibs} dorsales en {sc_fotos} fotos")
+          print("=" * 58)
           PYX
