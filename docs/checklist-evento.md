@@ -133,9 +133,28 @@ que ese evento tenga caras aún más chicas y haya que bajar el piso.
 
 Cuando ya no se suben más fotos y la auditoría pasó:
 
-- `worker`, `worker_fast` y `beat` → **0 réplicas**.
+- `worker`, `worker_fast` y `beat` → **detenidos**.
 - `fotos` (web), `Postgres` y `Redis` → **siguen arriba**: la galería, la
   búsqueda por dorsal y la búsqueda por cara funcionan sin workers.
+
+**Desde el panel de Railway**: en cada servicio, el deployment activo → *Remove*.
+Queda en "SIN DEPLOY" y deja de facturar cómputo. El servicio, sus variables y su
+configuración quedan intactos.
+
+**Por API** (lo que se usó acá):
+
+```graphql
+mutation($id:String!){ deploymentRemove(id:$id) }
+```
+
+> Dos caminos que NO funcionan y ya nos costaron tiempo:
+> `serviceInstanceUpdate(numReplicas: 0)` lo rechaza Railway ("Invalid input",
+> el mínimo es 1), y `deploymentStop` devuelve `true` pero **el servicio sigue
+> corriendo**. El único que apaga de verdad es `deploymentRemove`.
+
+**Para volver a prenderlos**: un push a `main` redeploya los tres (todos trackean
+esa rama), o *Redeploy* en cada servicio desde el panel. No hay que reconfigurar
+nada.
 
 **Lo que deja de funcionar con los workers apagados**:
 
@@ -155,6 +174,7 @@ Cuando ya no se suben más fotos y la auditoría pasó:
 | Las caras tapaban la foto en el lightbox | Las tiras se partían en varias filas y la barra crecía sobre la imagen |
 | Marca de agua no deseada | Flag `PREVIEW_WATERMARK_ENABLED`; hay que **regenerar** los previews ya hechos |
 | La fecha del evento "se perdía" al editar | Formato del input, no la base — la fecha siempre estuvo bien |
+| "Ya apagué los workers" y seguían corriendo | `numReplicas: 0` lo rechaza la API y `deploymentStop` miente: hay que usar `deploymentRemove` |
 
 > La franja con logos al pie de algunas fotos **no es nuestra**: viene quemada en
 > el archivo original del fotógrafo. No se puede quitar desde el sistema.
