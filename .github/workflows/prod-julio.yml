@@ -7,8 +7,8 @@ concurrency:
   group: prod-julio
   cancel-in-progress: true
 jobs:
-  acelerar:
-    name: Acelerar - levantar el worker liviano dedicado
+  repartir:
+    name: Que el worker liviano tome tambien la cola celery
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -28,59 +28,7 @@ jobs:
 
       - run: pip install --quiet "psycopg[binary]" requests redis
 
-      - name: 1 - Encontrar el servicio worker_fast y copiarle la config
-        run: |
-          python3 - <<'PYX'
-          import os, json, requests
-          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
-          def gql(q, v=None):
-              r=requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=60).json()
-              if r.get("errors"): raise SystemExit(f"GraphQL: {r['errors']}")
-              return r["data"]
-
-          d=gql('query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{'
-                ' serviceId serviceName latestDeployment{ status } } } } } }',
-                {"e":os.environ["ENV_ID"]})
-          objetivo=None
-          print("=== SERVICIOS ===")
-          for e in d["environment"]["serviceInstances"]["edges"]:
-              n=e["node"]; st=(n.get("latestDeployment") or {}).get("status") or "SIN DEPLOY"
-              print(f"  {n['serviceName']:<14} {st:<12} {n['serviceId']}")
-              if n["serviceName"] in ("worker_fast","worker-fast") and objetivo is None:
-                  objetivo=(n["serviceName"], n["serviceId"])
-          if not objetivo:
-              raise SystemExit("no existe el servicio worker_fast")
-          nombre, sid = objetivo
-          print(f"\n  voy a usar: {nombre} ({sid})")
-
-          q='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          base={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"]}
-          wk=gql(q, {**base,"s":os.environ["WORKER_ID"]})["variables"] or {}
-          actuales=gql(q, {**base,"s":sid})["variables"] or {}
-          print(f"  el worker pesado tiene {len(wk)} variables; worker_fast tiene {len(actuales)}")
-
-          # Se copia TODO lo del worker menos lo que Railway inyecta por servicio,
-          # y se pisan las tres que definen este rol.
-          excluir={"RAILWAY_", "PROCESS_TYPE", "WORKER_QUEUES", "CELERY_CONCURRENCY"}
-          copiadas=0
-          M="""mutation($p:String!,$e:String!,$s:String!,$n:String!,$v:String!){
-                 variableUpsert(input:{projectId:$p, environmentId:$e, serviceId:$s, name:$n, value:$v}) }"""
-          for k, v in wk.items():
-              if any(k.startswith(x) or k == x for x in excluir):
-                  continue
-              gql(M, {**base,"s":sid,"n":k,"v":str(v)}); copiadas+=1
-          for k, v in (("PROCESS_TYPE","worker_fast"),
-                       ("CELERY_FAST_CONCURRENCY","4"),
-                       ("PREVIEW_WATERMARK_ENABLED","false")):
-              gql(M, {**base,"s":sid,"n":k,"v":v})
-          print(f"  copiadas {copiadas} variables + PROCESS_TYPE=worker_fast, "
-                f"CELERY_FAST_CONCURRENCY=4, PREVIEW_WATERMARK_ENABLED=false")
-          with open(os.environ["GITHUB_ENV"],"a") as f:
-              f.write(f"FAST_ID={sid}\nFAST_NOMBRE={nombre}\n")
-          PYX
-
-      - name: 2 - Dedicar el worker pesado a las caras y desplegar el liviano
+      - name: 1 - Reconfigurar
         run: |
           python3 - <<'PYX'
           import os, requests
@@ -90,25 +38,39 @@ jobs:
               r=requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=60).json()
               if r.get("errors"): raise SystemExit(f"GraphQL: {r['errors']}")
               return r["data"]
+          d=gql('query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{'
+                ' serviceId serviceName } } } } }', {"e":os.environ["ENV_ID"]})
+          fast_id=next((e["node"]["serviceId"] for e in d["environment"]["serviceInstances"]["edges"]
+                        if e["node"]["serviceName"] in ("worker_fast","worker-fast")), None)
+          if not fast_id: raise SystemExit("no encuentro worker_fast")
+
           base={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"]}
           M="""mutation($p:String!,$e:String!,$s:String!,$n:String!,$v:String!){
                  variableUpsert(input:{projectId:$p, environmentId:$e, serviceId:$s, name:$n, value:$v}) }"""
-          # El pesado deja de competir por `fast`: se queda con las caras y los
-          # avatares (cola `celery`). El liviano toma `fast` en exclusiva.
-          gql(M, {**base,"s":os.environ["WORKER_ID"],"n":"WORKER_QUEUES","v":"faces,celery"})
-          print("  worker (pesado).WORKER_QUEUES = faces,celery")
+          # El rol `worker_fast` del entrypoint tiene la cola fija en `fast`. Con
+          # `fast` ya vacía queda ocioso mientras 848 avatares/previews esperan en
+          # `celery`. Lo pasamos al rol `worker`, que SÍ respeta WORKER_QUEUES, y
+          # le damos fast+celery. Nunca toca `faces`, así que jamás carga
+          # InsightFace: sigue siendo liviano y puede ir a concurrencia 4.
+          for n, v in (("PROCESS_TYPE","worker"),
+                       ("WORKER_QUEUES","fast,celery"),
+                       ("CELERY_CONCURRENCY","4")):
+              gql(M, {**base,"s":fast_id,"n":n,"v":v})
+              print(f"  worker_fast.{n} = {v}")
+          # El pesado se dedica EXCLUSIVAMENTE a las caras.
+          gql(M, {**base,"s":os.environ["WORKER_ID"],"n":"WORKER_QUEUES","v":"faces"})
+          print("  worker.WORKER_QUEUES = faces")
 
           D="""mutation($s:String!,$e:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e) }"""
-          for etiqueta, sid in (("worker_fast", os.environ["FAST_ID"]),
-                                ("worker", os.environ["WORKER_ID"])):
+          for etiqueta, sid in (("worker_fast", fast_id), ("worker", os.environ["WORKER_ID"])):
               gql(D, {"s":sid,"e":os.environ["ENV_ID"]})
-              print(f"  deploy disparado: {etiqueta}")
+              print(f"  deploy: {etiqueta}")
           PYX
 
-      - name: 3 - Esperar que arranque
+      - name: 2 - Esperar
         run: sleep 420
 
-      - name: 4 - Medir la aceleracion
+      - name: 3 - Medir
         if: always()
         run: |
           python3 - <<'PYX'
@@ -118,22 +80,19 @@ jobs:
           def gql(q, v=None):
               return requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=60).json()["data"]
           d=gql('query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{'
-                ' serviceName latestDeployment{ status } } } } } }', {"e":os.environ["ENV_ID"]})
+                ' serviceId serviceName latestDeployment{ status } } } } } }', {"e":os.environ["ENV_ID"]})
           print("=== SERVICIOS ===")
+          rid=None
           for e in d["environment"]["serviceInstances"]["edges"]:
               n=e["node"]; st=(n.get("latestDeployment") or {}).get("status") or "SIN DEPLOY"
               print(f"  {n['serviceName']:<14} {st}")
-
-          pg=gql('query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }',
-                 {"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":os.environ["PG_ID"]})["variables"]
-          db=pg["DATABASE_PUBLIC_URL"]; print(f"::add-mask::{db}")
-          rid=next(e["node"]["serviceId"] for e in gql(
-              'query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{ serviceId serviceName } } } } }',
-              {"e":os.environ["ENV_ID"]})["environment"]["serviceInstances"]["edges"]
-              if e["node"]["serviceName"].lower().startswith("redis"))
-          pub=gql('query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }',
-                  {"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":rid})["variables"]["REDIS_PUBLIC_URL"]
-          print(f"::add-mask::{pub}")
+              if n["serviceName"].lower().startswith("redis"): rid=n["serviceId"]
+          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          db=gql(V, {"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
+                     "s":os.environ["PG_ID"]})["variables"]["DATABASE_PUBLIC_URL"]
+          pub=gql(V, {"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
+                      "s":rid})["variables"]["REDIS_PUBLIC_URL"]
+          print(f"::add-mask::{db}"); print(f"::add-mask::{pub}")
           r=redis.from_url(pub, socket_timeout=15, socket_connect_timeout=15)
 
           SLUG="garmin-runners-girls-5k-social-run"
@@ -158,7 +117,5 @@ jobs:
           b2,c2,a2 = medir()
           print(f"  t+90s  dorsales={b2:<5} caras={c2:<6} visores={a2:<6} "
                 f"| fast={r.llen('fast')} faces={r.llen('faces')} celery={r.llen('celery')}")
-          print(f"\n  dorsales {b2-b1:+d}  ({(b2-b1)*2/3:.0f}/min)")
-          print(f"  caras    {c2-c1:+d}")
-          print(f"  visores  {a2-a1:+d}")
+          print(f"\n  dorsales {b2-b1:+d}   caras {c2-c1:+d}   visores {a2-a1:+d}")
           PYX
