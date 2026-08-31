@@ -53,7 +53,7 @@ jobs:
       - name: Buscar por dorsal y por selfie de verdad
         run: |
           python3 - <<'PYX'
-          import io, os, re, requests, psycopg
+          import html, io, os, re, requests, psycopg
           SITE=os.environ["SITE"]
 
           # Datos REALES sacados de la base: un dorsal que existe y una foto
@@ -65,7 +65,10 @@ jobs:
                   JOIN photos_photo p ON p.id = b.photo_id
                   JOIN events_event e ON e.id = p.event_id
                   WHERE p.status = 'approved'
-                  GROUP BY e.slug, b.number ORDER BY 3 DESC LIMIT 1
+                    AND e.slug = 'garmin-runners-girls-5k-social-run'
+                  GROUP BY e.slug, b.number
+                  HAVING count(*) BETWEEN 3 AND 40
+                  ORDER BY 3 DESC LIMIT 1
               """)
               slug, dorsal, n_dorsal = cur.fetchone()
               cur.execute("""
@@ -94,8 +97,11 @@ jobs:
           m = re.search(r'<img[^>]+src="(https://[^"]+)"', pag.text)
           if not m:
               raise SystemExit("no se encontro la imagen del preview en el lightbox")
-          img = s.get(m.group(1), timeout=120)
+          url_preview = html.unescape(m.group(1))
+          img = s.get(url_preview, timeout=120)
           print(f"[selfie] preview bajado: HTTP {img.status_code} · {len(img.content)//1024} KB")
+          if img.status_code != 200 or len(img.content) < 5000:
+              raise SystemExit("no se pudo bajar el preview para usarlo de selfie")
 
           form = s.get(f"{SITE}/eventos/{slug}/buscar-selfie/", timeout=60)
           csrf = s.cookies.get("csrftoken") or ""
