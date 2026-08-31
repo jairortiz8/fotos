@@ -7,17 +7,16 @@ concurrency:
   group: prod-julio
   cancel-in-progress: true
 jobs:
-  verificar:
-    name: SOLO LECTURA - deploy, integridad y avance
+  acelerar:
+    name: Acelerar - levantar el worker liviano dedicado
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
-      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
       WORKER_ID: 1846c52a-57c3-4a8b-b4ec-1cc200a8e652
     steps:
       - uses: actions/checkout@v4
@@ -29,128 +28,137 @@ jobs:
 
       - run: pip install --quiet "psycopg[binary]" requests redis
 
-      - name: Credenciales
+      - name: 1 - Encontrar el servicio worker_fast y copiarle la config
+        run: |
+          python3 - <<'PYX'
+          import os, json, requests
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          def gql(q, v=None):
+              r=requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=60).json()
+              if r.get("errors"): raise SystemExit(f"GraphQL: {r['errors']}")
+              return r["data"]
+
+          d=gql('query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{'
+                ' serviceId serviceName latestDeployment{ status } } } } } }',
+                {"e":os.environ["ENV_ID"]})
+          objetivo=None
+          print("=== SERVICIOS ===")
+          for e in d["environment"]["serviceInstances"]["edges"]:
+              n=e["node"]; st=(n.get("latestDeployment") or {}).get("status") or "SIN DEPLOY"
+              print(f"  {n['serviceName']:<14} {st:<12} {n['serviceId']}")
+              if n["serviceName"] in ("worker_fast","worker-fast") and objetivo is None:
+                  objetivo=(n["serviceName"], n["serviceId"])
+          if not objetivo:
+              raise SystemExit("no existe el servicio worker_fast")
+          nombre, sid = objetivo
+          print(f"\n  voy a usar: {nombre} ({sid})")
+
+          q='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          base={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"]}
+          wk=gql(q, {**base,"s":os.environ["WORKER_ID"]})["variables"] or {}
+          actuales=gql(q, {**base,"s":sid})["variables"] or {}
+          print(f"  el worker pesado tiene {len(wk)} variables; worker_fast tiene {len(actuales)}")
+
+          # Se copia TODO lo del worker menos lo que Railway inyecta por servicio,
+          # y se pisan las tres que definen este rol.
+          excluir={"RAILWAY_", "PROCESS_TYPE", "WORKER_QUEUES", "CELERY_CONCURRENCY"}
+          copiadas=0
+          M="""mutation($p:String!,$e:String!,$s:String!,$n:String!,$v:String!){
+                 variableUpsert(input:{projectId:$p, environmentId:$e, serviceId:$s, name:$n, value:$v}) }"""
+          for k, v in wk.items():
+              if any(k.startswith(x) or k == x for x in excluir):
+                  continue
+              gql(M, {**base,"s":sid,"n":k,"v":str(v)}); copiadas+=1
+          for k, v in (("PROCESS_TYPE","worker_fast"),
+                       ("CELERY_FAST_CONCURRENCY","4"),
+                       ("PREVIEW_WATERMARK_ENABLED","false")):
+              gql(M, {**base,"s":sid,"n":k,"v":v})
+          print(f"  copiadas {copiadas} variables + PROCESS_TYPE=worker_fast, "
+                f"CELERY_FAST_CONCURRENCY=4, PREVIEW_WATERMARK_ENABLED=false")
+          with open(os.environ["GITHUB_ENV"],"a") as f:
+              f.write(f"FAST_ID={sid}\nFAST_NOMBRE={nombre}\n")
+          PYX
+
+      - name: 2 - Dedicar el worker pesado a las caras y desplegar el liviano
         run: |
           python3 - <<'PYX'
           import os, requests
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
-          q='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          def vf(sid):
-              v={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}
-              return (requests.post(API,headers=H,json={"query":q,"variables":v},timeout=40)
-                      .json().get("data",{}) or {}).get("variables") or {}
-          pg=vf(os.environ["PG_ID"]); wk=vf(os.environ["WORKER_ID"]); web=vf(os.environ["WEB_ID"])
-          q1='query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{ serviceId serviceName } } } } }'
-          d=requests.post(API,headers=H,json={"query":q1,"variables":{"e":os.environ["ENV_ID"]}},timeout=40).json()
-          rid=next((e["node"]["serviceId"] for e in d["data"]["environment"]["serviceInstances"]["edges"]
-                    if e["node"]["serviceName"].lower().startswith("redis")), None)
-          out={"DATABASE_URL":pg.get("DATABASE_PUBLIC_URL"),
-               "REDIS_PUB":vf(rid).get("REDIS_PUBLIC_URL") if rid else None}
-          if [k for k,v in out.items() if not v]: raise SystemExit("faltan credenciales")
-          with open(os.environ["GITHUB_ENV"],"a") as f:
-              for k,v in out.items():
-                  print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
-          print("=== FLAGS EN PROD ===")
-          for etiqueta, dd in (("worker", wk), ("web", web)):
-              for k in ("PREVIEW_WATERMARK_ENABLED","WORKER_QUEUES","OCR_BACKEND",
-                        "FACE_PROCESSING_ENABLED","FACE_SEARCH_ENABLED"):
-                  if k in dd or etiqueta == "worker":
-                      print(f"  {etiqueta:<7}.{k:<26} {dd.get(k,'(sin setear)')}")
+          def gql(q, v=None):
+              r=requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=60).json()
+              if r.get("errors"): raise SystemExit(f"GraphQL: {r['errors']}")
+              return r["data"]
+          base={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"]}
+          M="""mutation($p:String!,$e:String!,$s:String!,$n:String!,$v:String!){
+                 variableUpsert(input:{projectId:$p, environmentId:$e, serviceId:$s, name:$n, value:$v}) }"""
+          # El pesado deja de competir por `fast`: se queda con las caras y los
+          # avatares (cola `celery`). El liviano toma `fast` en exclusiva.
+          gql(M, {**base,"s":os.environ["WORKER_ID"],"n":"WORKER_QUEUES","v":"faces,celery"})
+          print("  worker (pesado).WORKER_QUEUES = faces,celery")
+
+          D="""mutation($s:String!,$e:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e) }"""
+          for etiqueta, sid in (("worker_fast", os.environ["FAST_ID"]),
+                                ("worker", os.environ["WORKER_ID"])):
+              gql(D, {"s":sid,"e":os.environ["ENV_ID"]})
+              print(f"  deploy disparado: {etiqueta}")
           PYX
 
-      - name: 1 - Deploy de cada servicio
+      - name: 3 - Esperar que arranque
+        run: sleep 420
+
+      - name: 4 - Medir la aceleracion
+        if: always()
         run: |
           python3 - <<'PYX'
-          import os, json, urllib.request
+          import os, requests, psycopg, redis, time
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          def gql(q,v=None):
-              body=json.dumps({"query":q,"variables":v or {}}).encode()
-              req=urllib.request.Request(API,data=body,headers={
-                  "Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
-                  "Content-Type":"application/json","User-Agent":"curl/8.0"})
-              return json.load(urllib.request.urlopen(req,timeout=60))
-          q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceName latestDeployment{ status createdAt meta } } } } } }"""
-          d=gql(q,{"e":os.environ["ENV_ID"]})
-          print(f"{'servicio':<12} {'estado':<12} {'desde':<20} commit")
-          for e in d["data"]["environment"]["serviceInstances"]["edges"]:
-              n=e["node"]; dep=n.get("latestDeployment") or {}
-              meta=dep.get("meta") or {}
-              sha=(meta.get("commitHash") or "")[:7]
-              msg=((meta.get("commitMessage") or "").splitlines() or [""])[0][:46]
-              print(f"{n['serviceName']:<12} {dep.get('status') or 'SIN DEPLOY':<12} "
-                    f"{(dep.get('createdAt') or '-')[:19]:<20} {sha} {msg}")
-          PYX
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          def gql(q, v=None):
+              return requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=60).json()["data"]
+          d=gql('query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{'
+                ' serviceName latestDeployment{ status } } } } } }', {"e":os.environ["ENV_ID"]})
+          print("=== SERVICIOS ===")
+          for e in d["environment"]["serviceInstances"]["edges"]:
+              n=e["node"]; st=(n.get("latestDeployment") or {}).get("status") or "SIN DEPLOY"
+              print(f"  {n['serviceName']:<14} {st}")
 
-      - name: 2 - INTEGRIDAD - estan todas las fotos?
-        run: |
-          python3 - <<'PYX'
-          import os, psycopg
+          pg=gql('query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }',
+                 {"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":os.environ["PG_ID"]})["variables"]
+          db=pg["DATABASE_PUBLIC_URL"]; print(f"::add-mask::{db}")
+          rid=next(e["node"]["serviceId"] for e in gql(
+              'query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{ serviceId serviceName } } } } }',
+              {"e":os.environ["ENV_ID"]})["environment"]["serviceInstances"]["edges"]
+              if e["node"]["serviceName"].lower().startswith("redis"))
+          pub=gql('query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }',
+                  {"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":rid})["variables"]["REDIS_PUBLIC_URL"]
+          print(f"::add-mask::{pub}")
+          r=redis.from_url(pub, socket_timeout=15, socket_connect_timeout=15)
+
           SLUG="garmin-runners-girls-5k-social-run"
-          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
-              cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,))
-              eid=cur.fetchone()[0]
-              cur.execute("""SELECT count(*), count(DISTINCT content_hash) FILTER (WHERE content_hash<>''),
-                                    min(created_at), max(created_at)
-                               FROM photos_photo WHERE event_id=%s""",(eid,))
-              tot, unicas, prim, ult = cur.fetchone()
-              print(f"=== FOTOS DEL EVENTO ===")
-              print(f"  total en la base      {tot}")
-              print(f"  contenidos unicos     {unicas}")
-              print(f"  subidas entre         {prim:%H:%M:%S} y {ult:%H:%M:%S}")
-
-              cur.execute("""SELECT status, count(*) FROM photos_photo
-                              WHERE event_id=%s GROUP BY 1 ORDER BY 2 DESC""",(eid,))
-              print("\n  por estado:")
-              for st,n in cur.fetchall(): print(f"    {st:<20} {n}")
-
-              cur.execute("""SELECT count(*) FILTER (WHERE original_key=''),
-                                    count(*) FILTER (WHERE preview_key=''),
-                                    count(*) FILTER (WHERE thumbnail_key='')
-                               FROM photos_photo WHERE event_id=%s""",(eid,))
-              sin_o, sin_p, sin_t = cur.fetchone()
-              print(f"\n  SIN original:  {sin_o}   <- tiene que ser 0")
-              print(f"  SIN preview:   {sin_p}")
-              print(f"  SIN thumbnail: {sin_t}")
-              if sin_o: print("  *** ALERTA: hay fotos sin original ***")
-          PYX
-
-      - name: 3 - AVANCE - OCR y caras
-        run: |
-          python3 - <<'PYX'
-          import os, psycopg, redis, time
-          SLUG="garmin-runners-girls-5k-social-run"
-          r=redis.from_url(os.environ["REDIS_PUB"], socket_timeout=15, socket_connect_timeout=15)
-
           def medir():
-              with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
+              with psycopg.connect(db) as conn, conn.cursor() as cur:
                   cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,))
                   eid=cur.fetchone()[0]
-                  cur.execute("""SELECT count(*) FROM photos_bib b
-                                  JOIN photos_photo p ON p.id=b.photo_id WHERE p.event_id=%s""",(eid,))
+                  cur.execute("""SELECT count(*) FROM photos_bib b JOIN photos_photo p
+                                  ON p.id=b.photo_id WHERE p.event_id=%s""",(eid,))
                   bibs=cur.fetchone()[0]
-                  cur.execute("""SELECT count(*) FILTER (WHERE p.has_bibs_detected)
-                                   FROM photos_photo p WHERE p.event_id=%s""",(eid,))
-                  fotos_bib=cur.fetchone()[0]
                   cur.execute("""SELECT count(*), count(*) FILTER (WHERE fe.avatar_key<>'')
                                    FROM photos_faceembedding fe JOIN photos_photo p ON p.id=fe.photo_id
                                   WHERE p.event_id=%s""",(eid,))
                   caras, avat = cur.fetchone()
-                  return bibs, fotos_bib, caras, avat
+                  return bibs, caras, avat
 
-          b1,f1,c1,a1 = medir()
-          print(f"  t0     dorsales={b1:<5} fotos_con_dorsal={f1:<5} caras={c1:<6} con_visor={a1}")
-          print(f"         colas: fast={r.llen('fast')} faces={r.llen('faces')} celery={r.llen('celery')}")
+          print("\n=== RITMO (90 s) ===")
+          b1,c1,a1 = medir()
+          print(f"  t0     dorsales={b1:<5} caras={c1:<6} visores={a1:<6} "
+                f"| fast={r.llen('fast')} faces={r.llen('faces')} celery={r.llen('celery')}")
           time.sleep(90)
-          b2,f2,c2,a2 = medir()
-          print(f"  t+90s  dorsales={b2:<5} fotos_con_dorsal={f2:<5} caras={c2:<6} con_visor={a2}")
-          print(f"         colas: fast={r.llen('fast')} faces={r.llen('faces')} celery={r.llen('celery')}")
-
-          print("\n=== LECTURA ===")
-          print(f"  dorsales  {b1} -> {b2}  ({b2-b1:+d})")
-          print(f"  caras     {c1} -> {c2}  ({c2-c1:+d})")
-          print(f"  con visor {a1} -> {a2}  ({a2-a1:+d})")
-          activo = (b2>b1) or (c2>c1) or (a2>a1)
-          print(f"\n  el worker esta trabajando: {'SI' if activo else 'no se movio en 90s'}")
+          b2,c2,a2 = medir()
+          print(f"  t+90s  dorsales={b2:<5} caras={c2:<6} visores={a2:<6} "
+                f"| fast={r.llen('fast')} faces={r.llen('faces')} celery={r.llen('celery')}")
+          print(f"\n  dorsales {b2-b1:+d}  ({(b2-b1)*2/3:.0f}/min)")
+          print(f"  caras    {c2-c1:+d}")
+          print(f"  visores  {a2-a1:+d}")
           PYX
