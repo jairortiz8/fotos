@@ -7,16 +7,17 @@ concurrency:
   group: prod-julio
   cancel-in-progress: true
 jobs:
-  avatares:
-    name: Regenerar avatares con el umbral nuevo
+  limpiar:
+    name: Preview sin marca de agua + backfills
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
       WORKER_ID: 1846c52a-57c3-4a8b-b4ec-1cc200a8e652
     steps:
       - uses: actions/checkout@v4
@@ -52,7 +53,38 @@ jobs:
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
           PYX
 
-      - name: 1 - El worker ya tiene el arreglo desplegado?
+      - name: 1 - Apagar la marca de agua en prod
+        run: |
+          python3 - <<'PYX'
+          import os, json, urllib.request
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          def gql(q,v=None):
+              body=json.dumps({"query":q,"variables":v or {}}).encode()
+              req=urllib.request.Request(API,data=body,headers={
+                  "Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
+                  "Content-Type":"application/json","User-Agent":"curl/8.0"})
+              return json.load(urllib.request.urlopen(req,timeout=60))
+          M="""mutation($p:String!,$e:String!,$s:String!,$n:String!,$v:String!){
+                 variableUpsert(input:{projectId:$p, environmentId:$e, serviceId:$s, name:$n, value:$v}) }"""
+          # El preview lo genera el WORKER. Se setea igual en el web por si algún
+          # día se genera desde ahí (regenerar desde el dashboard, por ejemplo).
+          for etiqueta, sid in (("worker", os.environ["WORKER_ID"]), ("web", os.environ["WEB_ID"])):
+              r=gql(M,{"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
+                       "s":sid,"n":"PREVIEW_WATERMARK_ENABLED","v":"false"})
+              print(f"  {etiqueta}.PREVIEW_WATERMARK_ENABLED = false -> {json.dumps(r.get('data'))}")
+              if r.get("errors"): raise SystemExit(f"ERROR: {r['errors']}")
+          D="""mutation($s:String!,$e:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e) }"""
+          r2=gql(D,{"s":os.environ["WORKER_ID"],"e":os.environ["ENV_ID"]})
+          print(f"\n  redeploy del worker disparado -> {json.dumps(r2.get('data'))[:110]}")
+          if r2.get("errors"): print(f"  ERRORES: {r2['errors']}")
+          print("  (el deploy trae ADEMAS el arreglo del visor de caras)")
+          PYX
+
+      - name: 2 - Esperar el deploy
+        run: sleep 420
+
+      - name: 3 - Ya esta el codigo nuevo corriendo?
+        if: always()
         run: |
           python3 - <<'PYX'
           import os, json, urllib.request
@@ -70,62 +102,52 @@ jobs:
           for e in d["data"]["environment"]["serviceInstances"]["edges"]:
               n=e["node"]; dep=n.get("latestDeployment") or {}
               meta=dep.get("meta") or {}
-              msg=((meta.get("commitMessage") or "").splitlines() or [""])[0][:52]
               sha=(meta.get("commitHash") or "")[:7]
+              msg=((meta.get("commitMessage") or "").splitlines() or [""])[0][:50]
               print(f"  {n['serviceName']:<12} {dep.get('status') or 'SIN DEPLOY':<12} {sha} {msg}")
-              if n["serviceName"]=="worker" and "visor" in msg.lower() and dep.get("status")=="SUCCESS":
+              # 52c3599 = "feat(preview): poder apagar la marca de agua"
+              if n["serviceName"]=="worker" and dep.get("status")=="SUCCESS" and (
+                  "marca de agua" in msg.lower() or "visor" in msg.lower()):
                   listo="si"
-          print(f"\n  worker con el arreglo del visor: {listo}")
-          with open(os.environ["GITHUB_ENV"],"a") as f: f.write(f"DESPLEGADO={listo}\n")
+          print(f"\n  worker con el codigo nuevo: {listo}")
+          with open(os.environ["GITHUB_ENV"],"a") as f: f.write(f"LISTO={listo}\n")
           PYX
 
-      - name: 2 - Estado de las fotos (por que 'listas' bajo a 0)
-        run: |
-          python3 - <<'PYX'
-          import os, psycopg
-          SLUG="garmin-runners-girls-5k-social-run"
-          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
-              cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,))
-              eid=cur.fetchone()[0]
-              with open(os.environ["GITHUB_ENV"],"a") as f: f.write(f"EVENT_ID={eid}\n")
-              cur.execute("""SELECT status, count(*) FROM photos_photo
-                              WHERE event_id=%s GROUP BY 1 ORDER BY 2 DESC""",(eid,))
-              print("=== FOTOS POR ESTADO ===")
-              for st,n in cur.fetchall(): print(f"  {st:<20} {n}")
-              cur.execute("""SELECT count(*) FROM photos_bib b
-                              JOIN photos_photo p ON p.id=b.photo_id WHERE p.event_id=%s""",(eid,))
-              print(f"\n  dorsales leidos: {cur.fetchone()[0]}")
-          PYX
-
-      - name: 3 - Re-encolar los avatares
-        if: env.DESPLEGADO == 'si'
+      - name: 4 - Backfill (previews sin marca + avatares de fotos grupales)
+        if: env.LISTO == 'si'
         run: |
           python3 - <<'PYX'
           import os, psycopg
           from celery import Celery
-          eid=int(os.environ["EVENT_ID"])
+          SLUG="garmin-runners-girls-5k-social-run"
           with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
-              # Sólo fotos que tienen caras sin avatar: es lo único que el
-              # umbral nuevo puede cambiar. La task saltea las ya hechas.
-              cur.execute("""SELECT DISTINCT fe.photo_id
-                               FROM photos_faceembedding fe
-                               JOIN photos_photo p ON p.id=fe.photo_id
-                              WHERE p.event_id=%s AND fe.avatar_key=''
-                                AND p.original_key<>''
-                              ORDER BY 1""",(eid,))
-              ids=[r[0] for r in cur.fetchall()]
-          print(f"  fotos con caras sin avatar: {len(ids)}")
-          if not ids:
-              print("  nada para re-encolar"); raise SystemExit(0)
+              cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,))
+              eid=cur.fetchone()[0]
+              cur.execute("""SELECT count(*) FROM photos_photo
+                              WHERE event_id=%s AND status<>'deleted' AND original_key<>''""",(eid,))
+              n_fotos=cur.fetchone()[0]
+              cur.execute("""SELECT DISTINCT fe.photo_id FROM photos_faceembedding fe
+                              JOIN photos_photo p ON p.id=fe.photo_id
+                             WHERE p.event_id=%s AND fe.avatar_key='' AND p.original_key<>''""",(eid,))
+              caras_ids=[r[0] for r in cur.fetchall()]
+
           app=Celery(broker=os.environ["REDIS_PUB"])
-          for pid in ids:
+          # Una sola task: el worker hace el fan-out. include_preview=True es lo
+          # que regenera el preview SIN marca de agua. NO toca el estado de la
+          # foto, así que las aprobaciones de Jair se mantienen.
+          app.send_task("photos.regenerate_event_thumbnails", args=[eid],
+                        kwargs={"include_preview": True})
+          print(f"  encolada la regeneracion de previews de {n_fotos} fotos (sin marca de agua)")
+          print("  las aprobaciones NO se tocan: regenerate_thumbnail no cambia el status")
+
+          for pid in caras_ids:
               app.send_task("photos.generate_face_avatars", args=[pid])
-          print(f"  re-encoladas {len(ids)} tareas de avatares (cola 'celery')")
+          print(f"  encolados {len(caras_ids)} avatares de caras (umbral nuevo de 50px)")
           PYX
 
-      - name: 3b - No desplegado todavia
-        if: env.DESPLEGADO != 'si'
+      - name: 4b - Todavia no
+        if: env.LISTO != 'si'
         run: |
-          echo "El worker todavia no corre el arreglo del visor."
-          echo "No re-encolo avatares: se generarian con el umbral VIEJO."
-          echo "Hay que repetir este paso cuando el deploy termine."
+          echo "El worker todavia no corre el codigo nuevo."
+          echo "NO encolo nada: los previews saldrian otra vez CON marca de agua"
+          echo "y los avatares con el umbral viejo. Repetir cuando el deploy termine."
