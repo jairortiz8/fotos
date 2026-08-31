@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   apagar:
-    name: Apagar workers (deploymentStop)
+    name: Apagar workers (buscar la mutacion correcta)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -21,65 +21,91 @@ jobs:
           python-version: "3.12"
       - run: pip install --quiet requests
 
-      - name: Detener worker, worker_fast y beat
+      - name: Ver que mutaciones existen y probar cada una
         run: |
           python3 - <<'PYX'
-          import os, requests
+          import os, json, time, requests
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
+             "Content-Type":"application/json"}
           def gql(q, v=None):
-              return requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=60).json()
+              return requests.post(API,headers=H,
+                  json={"query":q,"variables":v or {}},timeout=60).json()
 
+          # 1) Introspeccion: que mutaciones hay para apagar algo.
+          INTRO="""query{ __schema{ mutationType{ fields{ name
+                     args{ name type{ kind name ofType{ kind name } } } } } } }"""
+          r=gql(INTRO)
+          campos=r.get("data",{}).get("__schema",{}).get("mutationType",{}).get("fields") or []
+          print(f"=== MUTACIONES CANDIDATAS ({len(campos)} en total) ===")
+          for f in campos:
+              n=f["name"].lower()
+              if any(k in n for k in ("deploymentstop","deploymentremove","deploymentcancel",
+                                      "deploymentrestart","serviceinstanceupdate","servicedelete")):
+                  args=", ".join(a["name"] for a in f["args"])
+                  print(f"  {f['name']}({args})")
+
+          # 2) Estado actual + ids de deployment.
           Q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceName latestDeployment{ id status } } } } } }"""
+                serviceId serviceName latestDeployment{ id status } } } } } }"""
           d=gql(Q,{"e":os.environ["ENV_ID"]})["data"]
           APAGAR={"worker","worker_fast","worker-fast","beat"}
           objetivos=[]
-          print("=== ANTES ===")
+          print("\n=== ANTES ===")
           for e in d["environment"]["serviceInstances"]["edges"]:
               n=e["node"]; dep=n.get("latestDeployment") or {}
               print(f"  {n['serviceName']:<14} {dep.get('status') or 'SIN DEPLOY'}")
               if n["serviceName"] in APAGAR and dep.get("id") and dep.get("status")=="SUCCESS":
-                  objetivos.append((n["serviceName"], dep["id"]))
+                  objetivos.append((n["serviceName"], n["serviceId"], dep["id"]))
 
-          # `numReplicas: 0` lo rechaza Railway ("Invalid input"): el mínimo es 1.
-          # La forma correcta de dejar un servicio sin correr es detener su
-          # deployment. El servicio y su configuración quedan intactos; se revive
-          # con un redeploy (o solo con pushear a main, que los redeploya todos).
+          # 3) Probar deploymentStop mirando la RESPUESTA COMPLETA (la vez pasada
+          #    no dio error pero tampoco apago nada: hay que ver que devuelve).
+          print("\n=== deploymentStop (respuesta cruda) ===")
           M="""mutation($id:String!){ deploymentStop(id:$id) }"""
-          print("\n=== APAGANDO ===")
-          for nombre, dep_id in objetivos:
-              r=gql(M,{"id":dep_id})
-              if r.get("errors"):
-                  print(f"  {nombre}: FALLO -> {r['errors'][0].get('message')}")
-              else:
-                  print(f"  {nombre}: detenido")
-          if not objetivos:
-              print("  (no habia nada corriendo para detener)")
+          for nombre, _sid, dep_id in objetivos:
+              print(f"  {nombre}: {json.dumps(gql(M,{'id':dep_id}))[:300]}")
+
+          time.sleep(20)
+          d=gql(Q,{"e":os.environ["ENV_ID"]})["data"]
+          quedan=[]
+          print("\n=== DESPUES DE stop ===")
+          for e in d["environment"]["serviceInstances"]["edges"]:
+              n=e["node"]; dep=n.get("latestDeployment") or {}
+              st=dep.get("status") or "SIN DEPLOY"
+              print(f"  {n['serviceName']:<14} {st}")
+              if n["serviceName"] in APAGAR and st=="SUCCESS" and dep.get("id"):
+                  quedan.append((n["serviceName"], n["serviceId"], dep["id"]))
+
+          # 4) Si siguen vivos, probar deploymentRemove (el boton "Remove" del panel).
+          if quedan:
+              print("\n=== deploymentRemove (respuesta cruda) ===")
+              M2="""mutation($id:String!){ deploymentRemove(id:$id) }"""
+              for nombre, _sid, dep_id in quedan:
+                  print(f"  {nombre}: {json.dumps(gql(M2,{'id':dep_id}))[:300]}")
+              time.sleep(30)
           PYX
 
-      - name: Esperar y confirmar
-        run: sleep 90
-
       - name: Estado final
-        if: always()
         run: |
           python3 - <<'PYX'
           import os, requests
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
+             "Content-Type":"application/json"}
           Q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
                 serviceName latestDeployment{ status } } } } } }"""
           d=requests.post(API,headers=H,json={"query":Q,"variables":{
               "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
           print("=== ESTADO FINAL ===")
-          apagados=arriba=0
+          apagados=arriba=pendientes=0
           for e in d["environment"]["serviceInstances"]["edges"]:
               n=e["node"]; st=(n.get("latestDeployment") or {}).get("status") or "SIN DEPLOY"
-              debe_estar_apagado = n["serviceName"] in ("worker","worker_fast","worker-fast","beat")
-              ok = (st != "SUCCESS") if debe_estar_apagado else (st == "SUCCESS")
+              debe = n["serviceName"] in ("worker","worker_fast","worker-fast","beat")
+              ok = (st != "SUCCESS") if debe else (st == "SUCCESS")
               print(f"  {'OK ' if ok else '!! '} {n['serviceName']:<14} {st}")
-              if debe_estar_apagado and st != "SUCCESS": apagados+=1
-              if not debe_estar_apagado and st == "SUCCESS": arriba+=1
-          print(f"\n  workers apagados: {apagados}   servicios vivos (web/db/redis): {arriba}")
+              if debe and st != "SUCCESS": apagados+=1
+              elif debe: pendientes+=1
+              elif st == "SUCCESS": arriba+=1
+          print(f"\n  workers apagados: {apagados}  ·  siguen vivos: {pendientes}"
+                f"  ·  servicios que deben seguir arriba: {arriba}")
           PYX
