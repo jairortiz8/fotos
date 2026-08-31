@@ -7,8 +7,8 @@ concurrency:
   group: prod-julio
   cancel-in-progress: true
 jobs:
-  estado:
-    name: SOLO LECTURA - el OCR esta encolado detras de los previews?
+  avatares:
+    name: Regenerar avatares con el umbral nuevo
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install --quiet "psycopg[binary]" requests redis
+      - run: pip install --quiet "psycopg[binary]" requests redis celery
 
       - name: Credenciales
         run: |
@@ -52,53 +52,80 @@ jobs:
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
           PYX
 
-      - name: Avance en dos tomas, separadas por 2 minutos
+      - name: 1 - El worker ya tiene el arreglo desplegado?
         run: |
           python3 - <<'PYX'
-          import os, psycopg, redis, time
-          SLUG="garmin-runners-girls-5k-social-run"
-          r=redis.from_url(os.environ["REDIS_PUB"], socket_timeout=15, socket_connect_timeout=15)
-
-          def foto():
-              with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
-                  cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,))
-                  eid=cur.fetchone()[0]
-                  cur.execute("""SELECT count(*), count(*) FILTER (WHERE preview_key<>''),
-                                        count(*) FILTER (WHERE status='pending_review'),
-                                        count(*) FILTER (WHERE has_faces_detected)
-                                   FROM photos_photo WHERE event_id=%s""",(eid,))
-                  tot,prev,pend,cara=cur.fetchone()
-                  cur.execute("""SELECT count(*) FROM photos_bib b
-                                  JOIN photos_photo p ON p.id=b.photo_id WHERE p.event_id=%s""",(eid,))
-                  bibs=cur.fetchone()[0]
-                  cur.execute("""SELECT count(*) FROM photos_faceembedding fe
-                                  JOIN photos_photo p ON p.id=fe.photo_id WHERE p.event_id=%s""",(eid,))
-                  caras=cur.fetchone()[0]
-                  cur.execute("""SELECT count(*) FROM photos_faceembedding fe
-                                  JOIN photos_photo p ON p.id=fe.photo_id
-                                 WHERE p.event_id=%s AND fe.avatar_key<>''""",(eid,))
-                  return eid,tot,prev,pend,cara,bibs,caras,cur.fetchone()[0]
-
-          def linea(t):
-              eid,tot,prev,pend,cara,bibs,caras,avat = foto()
-              print(f"  [{t}] cola fast={r.llen('fast'):<5} faces={r.llen('faces'):<5} celery={r.llen('celery'):<4}")
-              print(f"        previews={prev}/{tot}  listas={pend}  dorsales={bibs}  "
-                    f"caras={caras} (con visor {avat})")
-              return bibs, caras
-
-          print("=== TOMA 1 ===")
-          b1, c1 = linea("t0")
-          time.sleep(120)
-          print("\n=== TOMA 2 (2 min despues) ===")
-          b2, c2 = linea("t+2m")
-
-          print("\n=== LECTURA ===")
-          print(f"  dorsales: {b1} -> {b2}   (+{b2-b1} en 2 min)")
-          print(f"  caras:    {c1} -> {c2}   (+{c2-c1} en 2 min)")
-          if b2 > b1:
-              print("\n  El OCR ESTA CORRIENDO. Estaba encolado detras de los previews.")
-          elif r.llen("fast") > 0:
-              print("\n  Todavia hay tareas en 'fast': el OCR no llego su turno.")
-          else:
-              print("\n  Cola 'fast' vacia y 0 dorsales -> las tareas de OCR nunca se encolaron.")
+          import os, json, urllib.request
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          def gql(q,v=None):
+              body=json.dumps({"query":q,"variables":v or {}}).encode()
+              req=urllib.request.Request(API,data=body,headers={
+                  "Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
+                  "Content-Type":"application/json","User-Agent":"curl/8.0"})
+              return json.load(urllib.request.urlopen(req,timeout=60))
+          q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
+                serviceName latestDeployment{ status meta } } } } } }"""
+          d=gql(q,{"e":os.environ["ENV_ID"]})
+          listo="no"
+          for e in d["data"]["environment"]["serviceInstances"]["edges"]:
+              n=e["node"]; dep=n.get("latestDeployment") or {}
+              meta=dep.get("meta") or {}
+              msg=((meta.get("commitMessage") or "").splitlines() or [""])[0][:52]
+              sha=(meta.get("commitHash") or "")[:7]
+              print(f"  {n['serviceName']:<12} {dep.get('status') or 'SIN DEPLOY':<12} {sha} {msg}")
+              if n["serviceName"]=="worker" and "visor" in msg.lower() and dep.get("status")=="SUCCESS":
+                  listo="si"
+          print(f"\n  worker con el arreglo del visor: {listo}")
+          with open(os.environ["GITHUB_ENV"],"a") as f: f.write(f"DESPLEGADO={listo}\n")
           PYX
+
+      - name: 2 - Estado de las fotos (por que 'listas' bajo a 0)
+        run: |
+          python3 - <<'PYX'
+          import os, psycopg
+          SLUG="garmin-runners-girls-5k-social-run"
+          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
+              cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,))
+              eid=cur.fetchone()[0]
+              with open(os.environ["GITHUB_ENV"],"a") as f: f.write(f"EVENT_ID={eid}\n")
+              cur.execute("""SELECT status, count(*) FROM photos_photo
+                              WHERE event_id=%s GROUP BY 1 ORDER BY 2 DESC""",(eid,))
+              print("=== FOTOS POR ESTADO ===")
+              for st,n in cur.fetchall(): print(f"  {st:<20} {n}")
+              cur.execute("""SELECT count(*) FROM photos_bib b
+                              JOIN photos_photo p ON p.id=b.photo_id WHERE p.event_id=%s""",(eid,))
+              print(f"\n  dorsales leidos: {cur.fetchone()[0]}")
+          PYX
+
+      - name: 3 - Re-encolar los avatares
+        if: env.DESPLEGADO == 'si'
+        run: |
+          python3 - <<'PYX'
+          import os, psycopg
+          from celery import Celery
+          eid=int(os.environ["EVENT_ID"])
+          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
+              # Sólo fotos que tienen caras sin avatar: es lo único que el
+              # umbral nuevo puede cambiar. La task saltea las ya hechas.
+              cur.execute("""SELECT DISTINCT fe.photo_id
+                               FROM photos_faceembedding fe
+                               JOIN photos_photo p ON p.id=fe.photo_id
+                              WHERE p.event_id=%s AND fe.avatar_key=''
+                                AND p.original_key<>''
+                              ORDER BY 1""",(eid,))
+              ids=[r[0] for r in cur.fetchall()]
+          print(f"  fotos con caras sin avatar: {len(ids)}")
+          if not ids:
+              print("  nada para re-encolar"); raise SystemExit(0)
+          app=Celery(broker=os.environ["REDIS_PUB"])
+          for pid in ids:
+              app.send_task("photos.generate_face_avatars", args=[pid])
+          print(f"  re-encoladas {len(ids)} tareas de avatares (cola 'celery')")
+          PYX
+
+      - name: 3b - No desplegado todavia
+        if: env.DESPLEGADO != 'si'
+        run: |
+          echo "El worker todavia no corre el arreglo del visor."
+          echo "No re-encolo avatares: se generarian con el umbral VIEJO."
+          echo "Hay que repetir este paso cuando el deploy termine."
