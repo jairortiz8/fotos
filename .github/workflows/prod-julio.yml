@@ -7,10 +7,10 @@ concurrency:
   group: prod-julio
   cancel-in-progress: true
 jobs:
-  limpiar:
-    name: Preview sin marca de agua + backfills
+  verificar:
+    name: SOLO LECTURA - deploy, integridad y avance
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install --quiet "psycopg[binary]" requests redis celery
+      - run: pip install --quiet "psycopg[binary]" requests redis
 
       - name: Credenciales
         run: |
@@ -40,7 +40,7 @@ jobs:
               v={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}
               return (requests.post(API,headers=H,json={"query":q,"variables":v},timeout=40)
                       .json().get("data",{}) or {}).get("variables") or {}
-          pg=vf(os.environ["PG_ID"])
+          pg=vf(os.environ["PG_ID"]); wk=vf(os.environ["WORKER_ID"]); web=vf(os.environ["WEB_ID"])
           q1='query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{ serviceId serviceName } } } } }'
           d=requests.post(API,headers=H,json={"query":q1,"variables":{"e":os.environ["ENV_ID"]}},timeout=40).json()
           rid=next((e["node"]["serviceId"] for e in d["data"]["environment"]["serviceInstances"]["edges"]
@@ -51,40 +51,15 @@ jobs:
           with open(os.environ["GITHUB_ENV"],"a") as f:
               for k,v in out.items():
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
+          print("=== FLAGS EN PROD ===")
+          for etiqueta, dd in (("worker", wk), ("web", web)):
+              for k in ("PREVIEW_WATERMARK_ENABLED","WORKER_QUEUES","OCR_BACKEND",
+                        "FACE_PROCESSING_ENABLED","FACE_SEARCH_ENABLED"):
+                  if k in dd or etiqueta == "worker":
+                      print(f"  {etiqueta:<7}.{k:<26} {dd.get(k,'(sin setear)')}")
           PYX
 
-      - name: 1 - Apagar la marca de agua en prod
-        run: |
-          python3 - <<'PYX'
-          import os, json, urllib.request
-          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          def gql(q,v=None):
-              body=json.dumps({"query":q,"variables":v or {}}).encode()
-              req=urllib.request.Request(API,data=body,headers={
-                  "Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
-                  "Content-Type":"application/json","User-Agent":"curl/8.0"})
-              return json.load(urllib.request.urlopen(req,timeout=60))
-          M="""mutation($p:String!,$e:String!,$s:String!,$n:String!,$v:String!){
-                 variableUpsert(input:{projectId:$p, environmentId:$e, serviceId:$s, name:$n, value:$v}) }"""
-          # El preview lo genera el WORKER. Se setea igual en el web por si algún
-          # día se genera desde ahí (regenerar desde el dashboard, por ejemplo).
-          for etiqueta, sid in (("worker", os.environ["WORKER_ID"]), ("web", os.environ["WEB_ID"])):
-              r=gql(M,{"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
-                       "s":sid,"n":"PREVIEW_WATERMARK_ENABLED","v":"false"})
-              print(f"  {etiqueta}.PREVIEW_WATERMARK_ENABLED = false -> {json.dumps(r.get('data'))}")
-              if r.get("errors"): raise SystemExit(f"ERROR: {r['errors']}")
-          D="""mutation($s:String!,$e:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e) }"""
-          r2=gql(D,{"s":os.environ["WORKER_ID"],"e":os.environ["ENV_ID"]})
-          print(f"\n  redeploy del worker disparado -> {json.dumps(r2.get('data'))[:110]}")
-          if r2.get("errors"): print(f"  ERRORES: {r2['errors']}")
-          print("  (el deploy trae ADEMAS el arreglo del visor de caras)")
-          PYX
-
-      - name: 2 - Esperar el deploy
-        run: sleep 420
-
-      - name: 3 - Ya esta el codigo nuevo corriendo?
-        if: always()
+      - name: 1 - Deploy de cada servicio
         run: |
           python3 - <<'PYX'
           import os, json, urllib.request
@@ -96,58 +71,86 @@ jobs:
                   "Content-Type":"application/json","User-Agent":"curl/8.0"})
               return json.load(urllib.request.urlopen(req,timeout=60))
           q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceName latestDeployment{ status meta } } } } } }"""
+                serviceName latestDeployment{ status createdAt meta } } } } } }"""
           d=gql(q,{"e":os.environ["ENV_ID"]})
-          listo="no"
+          print(f"{'servicio':<12} {'estado':<12} {'desde':<20} commit")
           for e in d["data"]["environment"]["serviceInstances"]["edges"]:
               n=e["node"]; dep=n.get("latestDeployment") or {}
               meta=dep.get("meta") or {}
               sha=(meta.get("commitHash") or "")[:7]
-              msg=((meta.get("commitMessage") or "").splitlines() or [""])[0][:50]
-              print(f"  {n['serviceName']:<12} {dep.get('status') or 'SIN DEPLOY':<12} {sha} {msg}")
-              # 52c3599 = "feat(preview): poder apagar la marca de agua"
-              if n["serviceName"]=="worker" and dep.get("status")=="SUCCESS" and (
-                  "marca de agua" in msg.lower() or "visor" in msg.lower()):
-                  listo="si"
-          print(f"\n  worker con el codigo nuevo: {listo}")
-          with open(os.environ["GITHUB_ENV"],"a") as f: f.write(f"LISTO={listo}\n")
+              msg=((meta.get("commitMessage") or "").splitlines() or [""])[0][:46]
+              print(f"{n['serviceName']:<12} {dep.get('status') or 'SIN DEPLOY':<12} "
+                    f"{(dep.get('createdAt') or '-')[:19]:<20} {sha} {msg}")
           PYX
 
-      - name: 4 - Backfill (previews sin marca + avatares de fotos grupales)
-        if: env.LISTO == 'si'
+      - name: 2 - INTEGRIDAD - estan todas las fotos?
         run: |
           python3 - <<'PYX'
           import os, psycopg
-          from celery import Celery
           SLUG="garmin-runners-girls-5k-social-run"
           with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
               cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,))
               eid=cur.fetchone()[0]
-              cur.execute("""SELECT count(*) FROM photos_photo
-                              WHERE event_id=%s AND status<>'deleted' AND original_key<>''""",(eid,))
-              n_fotos=cur.fetchone()[0]
-              cur.execute("""SELECT DISTINCT fe.photo_id FROM photos_faceembedding fe
-                              JOIN photos_photo p ON p.id=fe.photo_id
-                             WHERE p.event_id=%s AND fe.avatar_key='' AND p.original_key<>''""",(eid,))
-              caras_ids=[r[0] for r in cur.fetchall()]
+              cur.execute("""SELECT count(*), count(DISTINCT content_hash) FILTER (WHERE content_hash<>''),
+                                    min(created_at), max(created_at)
+                               FROM photos_photo WHERE event_id=%s""",(eid,))
+              tot, unicas, prim, ult = cur.fetchone()
+              print(f"=== FOTOS DEL EVENTO ===")
+              print(f"  total en la base      {tot}")
+              print(f"  contenidos unicos     {unicas}")
+              print(f"  subidas entre         {prim:%H:%M:%S} y {ult:%H:%M:%S}")
 
-          app=Celery(broker=os.environ["REDIS_PUB"])
-          # Una sola task: el worker hace el fan-out. include_preview=True es lo
-          # que regenera el preview SIN marca de agua. NO toca el estado de la
-          # foto, así que las aprobaciones de Jair se mantienen.
-          app.send_task("photos.regenerate_event_thumbnails", args=[eid],
-                        kwargs={"include_preview": True})
-          print(f"  encolada la regeneracion de previews de {n_fotos} fotos (sin marca de agua)")
-          print("  las aprobaciones NO se tocan: regenerate_thumbnail no cambia el status")
+              cur.execute("""SELECT status, count(*) FROM photos_photo
+                              WHERE event_id=%s GROUP BY 1 ORDER BY 2 DESC""",(eid,))
+              print("\n  por estado:")
+              for st,n in cur.fetchall(): print(f"    {st:<20} {n}")
 
-          for pid in caras_ids:
-              app.send_task("photos.generate_face_avatars", args=[pid])
-          print(f"  encolados {len(caras_ids)} avatares de caras (umbral nuevo de 50px)")
+              cur.execute("""SELECT count(*) FILTER (WHERE original_key=''),
+                                    count(*) FILTER (WHERE preview_key=''),
+                                    count(*) FILTER (WHERE thumbnail_key='')
+                               FROM photos_photo WHERE event_id=%s""",(eid,))
+              sin_o, sin_p, sin_t = cur.fetchone()
+              print(f"\n  SIN original:  {sin_o}   <- tiene que ser 0")
+              print(f"  SIN preview:   {sin_p}")
+              print(f"  SIN thumbnail: {sin_t}")
+              if sin_o: print("  *** ALERTA: hay fotos sin original ***")
           PYX
 
-      - name: 4b - Todavia no
-        if: env.LISTO != 'si'
+      - name: 3 - AVANCE - OCR y caras
         run: |
-          echo "El worker todavia no corre el codigo nuevo."
-          echo "NO encolo nada: los previews saldrian otra vez CON marca de agua"
-          echo "y los avatares con el umbral viejo. Repetir cuando el deploy termine."
+          python3 - <<'PYX'
+          import os, psycopg, redis, time
+          SLUG="garmin-runners-girls-5k-social-run"
+          r=redis.from_url(os.environ["REDIS_PUB"], socket_timeout=15, socket_connect_timeout=15)
+
+          def medir():
+              with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
+                  cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,))
+                  eid=cur.fetchone()[0]
+                  cur.execute("""SELECT count(*) FROM photos_bib b
+                                  JOIN photos_photo p ON p.id=b.photo_id WHERE p.event_id=%s""",(eid,))
+                  bibs=cur.fetchone()[0]
+                  cur.execute("""SELECT count(*) FILTER (WHERE p.has_bibs_detected)
+                                   FROM photos_photo p WHERE p.event_id=%s""",(eid,))
+                  fotos_bib=cur.fetchone()[0]
+                  cur.execute("""SELECT count(*), count(*) FILTER (WHERE fe.avatar_key<>'')
+                                   FROM photos_faceembedding fe JOIN photos_photo p ON p.id=fe.photo_id
+                                  WHERE p.event_id=%s""",(eid,))
+                  caras, avat = cur.fetchone()
+                  return bibs, fotos_bib, caras, avat
+
+          b1,f1,c1,a1 = medir()
+          print(f"  t0     dorsales={b1:<5} fotos_con_dorsal={f1:<5} caras={c1:<6} con_visor={a1}")
+          print(f"         colas: fast={r.llen('fast')} faces={r.llen('faces')} celery={r.llen('celery')}")
+          time.sleep(90)
+          b2,f2,c2,a2 = medir()
+          print(f"  t+90s  dorsales={b2:<5} fotos_con_dorsal={f2:<5} caras={c2:<6} con_visor={a2}")
+          print(f"         colas: fast={r.llen('fast')} faces={r.llen('faces')} celery={r.llen('celery')}")
+
+          print("\n=== LECTURA ===")
+          print(f"  dorsales  {b1} -> {b2}  ({b2-b1:+d})")
+          print(f"  caras     {c1} -> {c2}  ({c2-c1:+d})")
+          print(f"  con visor {a1} -> {a2}  ({a2-a1:+d})")
+          activo = (b2>b1) or (c2>c1) or (a2>a1)
+          print(f"\n  el worker esta trabajando: {'SI' if activo else 'no se movio en 90s'}")
+          PYX
