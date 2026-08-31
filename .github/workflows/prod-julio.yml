@@ -7,59 +7,24 @@ concurrency:
   group: prod-julio
   cancel-in-progress: true
 jobs:
-  apagar:
-    name: Mantener los workers apagados tras el push a main
+  verificar:
+    name: Dorsal y selfie con los workers apagados
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      SITE: https://findyourfoto.com
     steps:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --quiet requests
+      - run: pip install --quiet requests "psycopg[binary]"
 
-      - name: Vigilar y volver a apagar lo que reviva
-        run: |
-          python3 - <<'PYX'
-          import os, time, requests
-          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
-             "Content-Type":"application/json"}
-          def gql(q, v=None):
-              return requests.post(API,headers=H,
-                  json={"query":q,"variables":v or {}},timeout=60).json()
-
-          Q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceName latestDeployment{ id status } } } } } }"""
-          RM="""mutation($id:String!){ deploymentRemove(id:$id) }"""
-          APAGAR={"worker","worker_fast","worker-fast","beat"}
-          # Un push a main redeploya los 3 servicios (todos trackean esa rama).
-          # El build tarda varios minutos, asi que hay que vigilar un rato y
-          # bajar cada deployment nuevo apenas queda vivo.
-          VIVOS={"SUCCESS","DEPLOYING","BUILDING","INITIALIZING","WAITING","QUEUED"}
-          for vuelta in range(16):
-              d=gql(Q,{"e":os.environ["ENV_ID"]})["data"]
-              linea=[]; pendiente=False
-              for e in d["environment"]["serviceInstances"]["edges"]:
-                  n=e["node"]; dep=n.get("latestDeployment") or {}
-                  st=dep.get("status") or "SIN DEPLOY"
-                  linea.append(f"{n['serviceName']}={st}")
-                  if n["serviceName"] in APAGAR and st in VIVOS and dep.get("id"):
-                      pendiente=True
-                      r=gql(RM,{"id":dep["id"]})
-                      ok = r.get("data",{}).get("deploymentRemove")
-                      linea[-1]+=(" -> quitado" if ok else f" -> NO se pudo ({st})")
-              print(f"[{vuelta:02d}] " + " · ".join(linea), flush=True)
-              if not pendiente and vuelta >= 8:
-                  print("\n  Estable: nada revivio en las ultimas vueltas.")
-                  break
-              time.sleep(60)
-          PYX
-
-      - name: Estado final
+      - name: Estado de los servicios y credenciales
         run: |
           python3 - <<'PYX'
           import os, requests
@@ -70,23 +35,90 @@ jobs:
                 serviceName latestDeployment{ status } } } } } }"""
           d=requests.post(API,headers=H,json={"query":Q,"variables":{
               "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
-          print("=== ESTADO FINAL ===")
-          apagados=arriba=pendientes=0
+          print("=== SERVICIOS ===")
           for e in d["environment"]["serviceInstances"]["edges"]:
               n=e["node"]; st=(n.get("latestDeployment") or {}).get("status") or "SIN DEPLOY"
-              debe = n["serviceName"] in ("worker","worker_fast","worker-fast","beat")
-              ok = (st != "SUCCESS") if debe else (st == "SUCCESS")
-              print(f"  {'OK ' if ok else '!! '} {n['serviceName']:<14} {st}")
-              if debe and st != "SUCCESS": apagados+=1
-              elif debe: pendientes+=1
-              elif st == "SUCCESS": arriba+=1
-          print(f"\n  workers apagados: {apagados}  ·  siguen vivos: {pendientes}"
-                f"  ·  servicios que deben seguir arriba: {arriba}")
+              print(f"  {n['serviceName']:<14} {st}")
 
-          # El sitio publico tiene que seguir respondiendo.
-          try:
-              r=requests.get("https://findyourfoto.com/healthz/lite",timeout=30)
-              print(f"\n  healthz/lite: {r.status_code}")
-          except Exception as exc:
-              print(f"\n  healthz/lite: no se pudo consultar ({exc})")
+          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          v=(requests.post(API,headers=H,json={"query":V,"variables":{
+              "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
+              "s":os.environ["PG_ID"]}},timeout=40).json().get("data") or {}).get("variables") or {}
+          url=v.get("DATABASE_PUBLIC_URL")
+          if not url: raise SystemExit("no se pudo leer DATABASE_PUBLIC_URL")
+          print(f"::add-mask::{url}")
+          with open(os.environ["GITHUB_ENV"],"a") as f: f.write(f"DATABASE_URL={url}\n")
+          PYX
+
+      - name: Buscar por dorsal y por selfie de verdad
+        run: |
+          python3 - <<'PYX'
+          import io, os, re, requests, psycopg
+          SITE=os.environ["SITE"]
+
+          # Datos REALES sacados de la base: un dorsal que existe y una foto
+          # aprobada que tiene una cara indexada.
+          with psycopg.connect(os.environ["DATABASE_URL"]) as cx, cx.cursor() as cur:
+              cur.execute("""
+                  SELECT e.slug, b.number, count(*)
+                  FROM photos_bib b
+                  JOIN photos_photo p ON p.id = b.photo_id
+                  JOIN events_event e ON e.id = p.event_id
+                  WHERE p.status = 'approved'
+                  GROUP BY e.slug, b.number ORDER BY 3 DESC LIMIT 1
+              """)
+              slug, dorsal, n_dorsal = cur.fetchone()
+              cur.execute("""
+                  SELECT p.id
+                  FROM photos_faceembedding f
+                  JOIN photos_photo p ON p.id = f.photo_id
+                  JOIN events_event e ON e.id = p.event_id
+                  WHERE e.slug = %s AND p.status = 'approved' AND p.preview_key <> ''
+                  ORDER BY f.id LIMIT 1
+              """, (slug,))
+              (photo_id,) = cur.fetchone()
+
+          print(f"[base] evento '{slug}' · dorsal #{dorsal} en {n_dorsal} fotos"
+                f" · foto con cara id={photo_id}")
+          s = requests.Session()
+
+          # --- 1) BUSQUEDA POR DORSAL ---
+          r = s.get(f"{SITE}/eventos/{slug}/", params={"bib": dorsal}, timeout=60)
+          encontradas = len(set(re.findall(r"/foto/(\d+)", r.text)))
+          print(f"\n[DORSAL] HTTP {r.status_code} · fotos distintas en la pagina: {encontradas}")
+
+          # --- 2) BUSQUEDA POR SELFIE ---
+          # Se baja el preview de una foto publicada y se manda como selfie:
+          # el mismo camino que hace un corredor desde el celular.
+          pag = s.get(f"{SITE}/eventos/{slug}/foto/{photo_id}/", timeout=60)
+          m = re.search(r'<img[^>]+src="(https://[^"]+)"', pag.text)
+          if not m:
+              raise SystemExit("no se encontro la imagen del preview en el lightbox")
+          img = s.get(m.group(1), timeout=120)
+          print(f"[selfie] preview bajado: HTTP {img.status_code} · {len(img.content)//1024} KB")
+
+          form = s.get(f"{SITE}/eventos/{slug}/buscar-selfie/", timeout=60)
+          csrf = s.cookies.get("csrftoken") or ""
+          print(f"[selfie] formulario: HTTP {form.status_code}")
+
+          r = s.post(f"{SITE}/eventos/{slug}/buscar-selfie/",
+                     data={"csrfmiddlewaretoken": csrf},
+                     files={"selfie": ("selfie.jpg", io.BytesIO(img.content), "image/jpeg")},
+                     headers={"Referer": f"{SITE}/eventos/{slug}/buscar-selfie/"},
+                     timeout=240)
+          txt = r.text.lower()
+          halladas = len(set(re.findall(r"/foto/(\d+)", r.text)))
+          print(f"\n[SELFIE] HTTP {r.status_code} · fotos distintas: {halladas}")
+          for pista, etiqueta in (
+              ("varias caras", "respondio 'varias caras' (detecto mas de una)"),
+              ("no detectamos", "respondio 'no detectamos una cara'"),
+              ("no encontramos", "respondio 'no encontramos fotos'"),
+              ("no esta disponible", "la funcion figura como no disponible"),
+          ):
+              if pista in txt: print(f"         -> {etiqueta}")
+
+          modelo_ok = r.status_code == 200 and "no esta disponible" not in txt
+          print("\n  RESULTADO: el modelo facial corre en el WEB y responde"
+                " sin worker." if modelo_ok else
+                "\n  RESULTADO: REVISAR, la busqueda por selfie no respondio bien.")
           PYX
