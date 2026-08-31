@@ -15,7 +15,7 @@
 </div>
 
 {# Foto centrada — el preview de R2 ya viene con watermark #}
-<div class="absolute inset-0 flex items-center justify-center p-4 md:p-20">
+<div class="absolute inset-0 flex items-center justify-center p-4 pb-40 md:px-20 md:py-14 md:pb-44">
   {% if preview_url %}
     <img src="{{ preview_url }}" alt="{% trans 'Foto' %} #{{ photo.id }}"
          class="max-w-full max-h-full object-contain rounded">
@@ -51,22 +51,24 @@
       grupal = saltar a todas las fotos de ese corredor.{% endcomment %}
     {% if bibs %}
     {% comment %}Tope de 8 chips: si una foto tiene una lista rara y larga (p. ej. un
-      OCR que alucinó), NO se llena la pantalla — se muestran los primeros y "+N".{% endcomment %}
-    <div class="flex flex-wrap gap-1.5 shrink-0 max-w-[40vw] max-h-[24vh] overflow-hidden">
+      OCR que alucinó), NO se llena la pantalla — se muestran los primeros y "+N".
+      Una SOLA fila con scroll lateral: con wrap, 7 dorsales en un ancho de 40vw
+      se apilaban en cuatro filas y empujaban la barra sobre la foto.{% endcomment %}
+    <div class="flex flex-nowrap gap-1.5 min-w-0 max-w-[52vw] overflow-x-auto">
       {% for bib in bibs|slice:":8" %}
         {% if bib_filter and bib.number == bib_filter %}
         {# Dorsal buscado (resaltado): click = QUITAR el filtro → galería completa. #}
         <a href="{% url 'events:gallery' slug=event.slug %}"
-           class="rf-bib rf-bib--lg !border-brand !text-brand hover:opacity-80 transition"
+           class="rf-bib rf-bib--lg shrink-0 !border-brand !text-brand hover:opacity-80 transition"
            aria-label="{% blocktrans with n=bib.number %}Quitar el filtro del dorsal {{ n }}{% endblocktrans %}">#{{ bib.number }}</a>
         {% else %}
         <a href="{% url 'events:gallery' slug=event.slug %}?bib={{ bib.number|urlencode }}"
-           class="rf-bib rf-bib--lg hover:!border-brand transition"
+           class="rf-bib rf-bib--lg shrink-0 hover:!border-brand transition"
            aria-label="{% blocktrans with n=bib.number %}Ver todas las fotos del dorsal {{ n }}{% endblocktrans %}">#{{ bib.number }}</a>
         {% endif %}
       {% endfor %}
       {% if bibs|length > 8 %}
-      <span class="rf-bib rf-bib--lg opacity-70">+{{ bibs|length|add:"-8" }}</span>
+      <span class="rf-bib rf-bib--lg shrink-0 opacity-70">+{{ bibs|length|add:"-8" }}</span>
       {% endif %}
     </div>
     {% endif %}

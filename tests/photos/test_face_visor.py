@@ -373,3 +373,40 @@ def test_umbral_del_click_prioriza_encontrar_todas() -> None:
 
     assert FACE_CLICK_THRESHOLD < SIMILARITY_THRESHOLD
     assert FACE_CLICK_THRESHOLD >= 0.40, "demasiado permisivo: entrarían desconocidos"
+
+
+@pytest.mark.django_db
+def test_lightbox_no_apila_caras_ni_dorsales_en_varias_filas(r2) -> None:  # type: ignore[no-untyped-def]
+    """Regresión: con muchas caras la barra crecía y tapaba la foto.
+
+    En una foto de 18 personas el visor se partía en tres filas y los chips de
+    dorsal en cuatro; la barra inferior (absolute bottom-0) se comía la imagen.
+    La cura es que ambas tiras sean UNA sola fila con scroll lateral.
+    """
+    from apps.photos.models import Bib
+
+    event = EventFactory(status=EventStatus.LIVE)
+    okey = "events/e/originals/multitud.jpg"
+    r2.put_object(Bucket=BUCKET, Key=okey, Body=_sharp_photo_bytes())
+    photo = ApprovedPhotoFactory(event=event, original_key=okey)
+
+    for i in range(10):  # muchas caras
+        FaceEmbedding.objects.create(
+            photo=photo,
+            embedding=[0.01 * i] * 512,
+            bbox={"x1": 20 + i * 80, "y1": 150, "x2": 90 + i * 80, "y2": 220},
+        )
+    for n in range(7):  # y muchos dorsales
+        Bib.objects.create(photo=photo, number=f"10{n}", confidence=0.9, source="ocr_gemini")
+    generate_avatars_for_photo(photo)
+
+    body = (
+        Client()
+        .get(reverse("events:lightbox", kwargs={"slug": event.slug, "photo_id": photo.id}))
+        .content.decode()
+    )
+    # Los dorsales van en una fila que NO se parte.
+    assert "flex flex-nowrap gap-1.5" in body
+    assert "flex flex-wrap gap-1.5" not in body
+    # Y la foto reserva el alto de la barra, así no queda tapada.
+    assert "pb-40" in body

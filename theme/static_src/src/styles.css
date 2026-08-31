@@ -350,11 +350,15 @@
      Es el logo convertido en interacción (y lo que nos separa de la competencia,
      que usa círculos genéricos).
      ========================================================================== */
+  /* En columna: la etiqueta arriba y las caras en UNA sola fila. Antes iban
+     lado a lado con wrap y, en una foto de 18 personas, las caras se partían
+     en tres filas, la barra inferior crecía y terminaba tapando la foto. */
   .rf-visor {
     display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.375rem;
+    min-width: 0;
   }
 
   .rf-visor__label {
@@ -365,13 +369,22 @@
     color: var(--color-text-3);
   }
 
+  /* NUNCA wrap: por más caras que tenga la foto, la altura es siempre la de
+     un tile. Si no entran, se scrollea de costado. */
   .rf-visor__row {
     display: flex;
     gap: 0.5rem;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 0.125rem;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
   }
 
   .rf-visor__tile {
+    scroll-snap-align: start;
     position: relative;
     width: 3.25rem;
     height: 3.25rem;
