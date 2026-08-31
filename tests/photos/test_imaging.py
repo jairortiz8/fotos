@@ -254,3 +254,56 @@ def test_parse_capture_time_uses_el_salvador_timezone() -> None:
     assert ct is not None
     # 12:00 El Salvador (UTC-6) == 18:00 UTC.
     assert ct.astimezone(__import__("datetime").timezone.utc).hour == 18
+
+
+# ---------------------------------------------------------------------------
+# Watermark del preview (flag PREVIEW_WATERMARK_ENABLED)
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_preview_lleva_watermark_con_el_flag_prendido(
+    storage: R2Storage, synthetic_jpeg: Path, settings, monkeypatch  # type: ignore[no-untyped-def]
+) -> None:
+    """Comportamiento por defecto: el preview pasa por la marca de agua."""
+    settings.PREVIEW_WATERMARK_ENABLED = True
+    llamadas: list[str] = []
+
+    def _espia(img, text):  # type: ignore[no-untyped-def]
+        llamadas.append(text)
+        return img
+
+    monkeypatch.setattr("apps.photos.imaging.apply_diagonal_watermark", _espia)
+
+    event = EventFactory(slug="con-marca")
+    photo = PhotoFactory(event=event, original_key=f"events/{event.slug}/originals/a.jpg")
+    generate_preview(photo, synthetic_jpeg, storage=storage)
+
+    assert len(llamadas) == 1
+
+
+@pytest.mark.django_db
+def test_preview_sale_limpio_con_el_flag_apagado(
+    storage: R2Storage, synthetic_jpeg: Path, settings, monkeypatch  # type: ignore[no-untyped-def]
+) -> None:
+    """Con el flag apagado (así corre prod) el preview NO lleva marca de agua.
+
+    Decisión de Jair: la marca ensuciaba la foto y no protegía nada, porque la
+    descarga del original es gratis igual.
+    """
+    settings.PREVIEW_WATERMARK_ENABLED = False
+
+    def _no_llamar(img, text):  # type: ignore[no-untyped-def]
+        raise AssertionError("no se debe marcar el preview con el flag apagado")
+
+    monkeypatch.setattr("apps.photos.imaging.apply_diagonal_watermark", _no_llamar)
+
+    event = EventFactory(slug="sin-marca")
+    photo = PhotoFactory(event=event, original_key=f"events/{event.slug}/originals/a.jpg")
+    key = generate_preview(photo, synthetic_jpeg, storage=storage)
+
+    # Y sigue siendo un preview válido: WebP, redimensionado.
+    buf = BytesIO()
+    storage.download_fileobj(key, buf)
+    buf.seek(0)
+    with Image.open(buf) as img:
+        assert img.format == "WEBP"
+        assert max(img.size) <= PREVIEW_LONG_EDGE

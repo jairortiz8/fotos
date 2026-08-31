@@ -233,8 +233,10 @@ def generate_preview(
 ) -> str:
     """Genera preview y lo sube a R2. Devuelve el key.
 
-    Por defecto lleva watermark diagonal. Si el evento tiene `brand_overlay`, en
-    su lugar se pegan los logos de marca en las esquinas (ej. Surf City).
+    Si el evento tiene `brand_overlay`, se pegan los logos de marca en las
+    esquinas (ej. Surf City). Si no, lleva watermark diagonal — salvo que
+    `PREVIEW_WATERMARK_ENABLED` esté en false (así corre prod), y entonces el
+    preview sale limpio.
     Acepta `source_path` (lee de disco) o `img_object` (imagen ya cargada,
     p.ej. con blur de menores aplicado).
     """
@@ -243,8 +245,11 @@ def generate_preview(
 
     final = _try_brand_overlay(img, photo)
     if final is None:
-        watermark_text = f"{settings.SITE_NAME.upper()} · {photo.event.name.upper()}"
-        final = apply_diagonal_watermark(img, watermark_text)
+        if getattr(settings, "PREVIEW_WATERMARK_ENABLED", True):
+            watermark_text = f"{settings.SITE_NAME.upper()} · {photo.event.name.upper()}"
+            final = apply_diagonal_watermark(img, watermark_text)
+        else:
+            final = img
 
     buf = BytesIO()
     final.save(buf, format="WEBP", quality=PREVIEW_QUALITY, method=6)

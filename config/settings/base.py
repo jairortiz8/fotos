@@ -115,6 +115,14 @@ GEMINI_OCR_MODEL = env("GEMINI_OCR_MODEL", default="gemini-2.5-flash-lite")
 # local/tests (mantiene la cobertura de la lógica de blur de Fase 4).
 MINOR_BLUR_ENABLED = env.bool("MINOR_BLUR_ENABLED", default=True)
 
+# Marca de agua diagonal ("SITIO · EVENTO" repetido) sobre el preview público.
+# Decisión de Jair (2026-08): APAGADA en prod — ensucia la foto y, como las
+# descargas son gratis igual, no protegía nada. Se deja como flag y no como
+# borrado para poder volver a prenderla sin tocar código. Default True para
+# local/tests. NO afecta a los logos de marca por evento (`brand_overlay`),
+# que se siguen aplicando si el evento los tiene.
+PREVIEW_WATERMARK_ENABLED = env.bool("PREVIEW_WATERMARK_ENABLED", default=True)
+
 # ----------------------------------------------------------------------------
 # Apps
 # ----------------------------------------------------------------------------
