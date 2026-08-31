@@ -7,8 +7,8 @@ concurrency:
   group: prod-julio
   cancel-in-progress: true
 jobs:
-  logs:
-    name: SOLO LECTURA - por que el OCR devuelve cero
+  gemini:
+    name: SOLO LECTURA - llamar a Gemini con fotos reales del evento
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -16,6 +16,8 @@ jobs:
       API: https://backboard.railway.app/graphql/v2
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
       WORKER_ID: 1846c52a-57c3-4a8b-b4ec-1cc200a8e652
     steps:
       - uses: actions/checkout@v4
@@ -25,52 +27,101 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install --quiet requests
+      - run: pip install --quiet "psycopg[binary]" requests boto3 pillow
 
-      - name: Como llama el codigo a Gemini
-        run: |
-          echo "=== modelo por defecto en settings ==="
-          grep -n "GEMINI" config/settings/base.py
-          echo
-          echo "=== donde se arma la llamada ==="
-          grep -rn "generativelanguage\|GEMINI_OCR_MODEL\|models/\|:generateContent" apps/ml/ | head -20
-
-      - name: Logs del worker filtrados por OCR
+      - name: Credenciales de prod
         run: |
           python3 - <<'PYX'
-          import os, json, urllib.request
+          import os, requests
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          def gql(q,v=None):
-              body=json.dumps({"query":q,"variables":v or {}}).encode()
-              req=urllib.request.Request(API,data=body,headers={
-                  "Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
-                  "Content-Type":"application/json","User-Agent":"curl/8.0"})
-              return json.load(urllib.request.urlopen(req,timeout=60))
-          q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceName latestDeployment{ id status } } } } } }"""
-          d=gql(q,{"e":os.environ["ENV_ID"]})
-          dep=None
-          for e in d["data"]["environment"]["serviceInstances"]["edges"]:
-              if e["node"]["serviceName"]=="worker":
-                  n=e["node"].get("latestDeployment") or {}
-                  dep=n.get("id"); print(f"  worker deploy={dep} estado={n.get('status')}")
-          if not dep: raise SystemExit("sin deploy de worker")
-          ql="""query($d:String!,$n:Int!){ deploymentLogs(deploymentId:$d, limit:$n){ timestamp message } }"""
-          logs=gql(ql,{"d":dep,"n":1500})["data"]["deploymentLogs"]
-          print(f"\n  {len(logs)} lineas de log en total")
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          q='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          def vf(sid):
+              v={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}
+              return (requests.post(API,headers=H,json={"query":q,"variables":v},timeout=40)
+                      .json().get("data",{}) or {}).get("variables") or {}
+          pg=vf(os.environ["PG_ID"]); web=vf(os.environ["WEB_ID"]); wk=vf(os.environ["WORKER_ID"])
+          out={"DATABASE_URL":pg.get("DATABASE_PUBLIC_URL"),
+               "R2_ACCESS_KEY_ID":web.get("R2_ACCESS_KEY_ID"),
+               "R2_SECRET_ACCESS_KEY":web.get("R2_SECRET_ACCESS_KEY"),
+               "R2_BUCKET_NAME":web.get("R2_BUCKET_NAME"),
+               "R2_ENDPOINT_URL":web.get("R2_ENDPOINT_URL"),
+               "GEMINI_API_KEY":wk.get("GEMINI_API_KEY"),
+               "GEMINI_MODEL":wk.get("GEMINI_OCR_MODEL") or "gemini-2.5-flash-lite"}
+          faltan=[k for k,v in out.items() if not v]
+          if faltan: raise SystemExit(f"faltan: {faltan}")
+          with open(os.environ["GITHUB_ENV"],"a") as f:
+              for k,v in out.items():
+                  if k != "GEMINI_MODEL": print(f"::add-mask::{v}")
+                  f.write(f"{k}={v}\n")
+          print(f"  modelo a usar: {out['GEMINI_MODEL']}")
+          PYX
 
-          claves = ("ocr","gemini","bib","dorsal","error","exception","traceback",
-                    "failed","retry","404","403","429","quota","api key","invalid")
-          hits=[l for l in logs
-                if any(k in (l.get("message") or "").lower() for k in claves)]
-          print(f"  {len(hits)} lineas mencionan OCR / Gemini / error\n")
-          print("=== ULTIMAS 60 LINEAS RELEVANTES ===")
-          for l in hits[-60:]:
-              print(f"  {(l.get('timestamp') or '')[:19]} {(l.get('message') or '')[:230]}")
-          if not hits:
-              print("  (ninguna) -> el worker no logueo NADA de OCR:")
-              print("     o la task nunca corrio, o corre y no dice nada.")
-              print("\n=== ULTIMAS 40 LINEAS CUALESQUIERA ===")
-              for l in logs[-40:]:
-                  print(f"  {(l.get('timestamp') or '')[:19]} {(l.get('message') or '')[:230]}")
+      - name: Llamar a Gemini con 4 fotos del evento
+        run: |
+          python3 - <<'PYX'
+          import os, io, json, base64, psycopg, boto3, urllib.request, urllib.error
+          from botocore.config import Config
+          from PIL import Image
+
+          SLUG="garmin-runners-girls-5k-social-run"
+          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
+              cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,))
+              eid=cur.fetchone()[0]
+              cur.execute("""SELECT id, original_key, original_filename, width, height
+                               FROM photos_photo
+                              WHERE event_id=%s AND original_key<>'' AND preview_key<>''
+                              ORDER BY id LIMIT 4""",(eid,))
+              fotos=cur.fetchall()
+
+          s3=boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
+                          aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+                          aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+                          config=Config(signature_version="s3v4"), region_name="auto")
+          bucket=os.environ["R2_BUCKET_NAME"]
+          modelo=os.environ["GEMINI_MODEL"]
+          url=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent"
+
+          # Mismo prompt que usa el worker hoy.
+          PROMPT=("This is a race photo. List the bib numbers worn by runners that are clearly readable "
+                  "(printed bibs pinned on chest/waist). Do NOT include numbers from signs, clocks, "
+                  'banners or cars. Respond ONLY with JSON: {"bibs": ["123"]} — use [] if none readable.')
+          # Alternativo: mas permisivo, para ver si el problema es el prompt.
+          PROMPT2=("Look at this photo from a running event. List EVERY number you can read that a "
+                   "participant is wearing (race bib, number on the shirt, on the arm or the leg), "
+                   "even if it is small or partially covered. Ignore numbers on banners, signs, "
+                   'prices and vehicles. Respond ONLY with JSON: {"bibs": ["123"]} — [] if none.')
+
+          def preguntar(img_bytes, prompt):
+              img=Image.open(io.BytesIO(img_bytes)); img.thumbnail((1600,1600))
+              buf=io.BytesIO(); img.convert("RGB").save(buf,"JPEG",quality=88)
+              body=json.dumps({"contents":[{"parts":[
+                      {"inline_data":{"mime_type":"image/jpeg",
+                                      "data":base64.b64encode(buf.getvalue()).decode()}},
+                      {"text":prompt}]}],
+                  "generationConfig":{"response_mime_type":"application/json","temperature":0}}).encode()
+              req=urllib.request.Request(url, data=body, headers={
+                  "Content-Type":"application/json","x-goog-api-key":os.environ["GEMINI_API_KEY"]})
+              try:
+                  with urllib.request.urlopen(req, timeout=90) as r:
+                      d=json.load(r)
+                  return "OK", d["candidates"][0]["content"]["parts"][0]["text"][:300]
+              except urllib.error.HTTPError as e:
+                  return f"HTTP {e.code}", e.read()[:400].decode("utf-8","replace")
+              except Exception as e:
+                  return type(e).__name__, str(e)[:300]
+
+          print("=" * 62)
+          for pid, key, nombre, w, h in fotos:
+              buf=io.BytesIO(); s3.download_fileobj(bucket, key, buf)
+              data=buf.getvalue()
+              print(f"\nfoto id={pid}  {nombre}  {w}x{h}  {len(data)/1024/1024:.1f}MB")
+              est, resp = preguntar(data, PROMPT)
+              print(f"  prompt ACTUAL     [{est}] {resp}")
+              est2, resp2 = preguntar(data, PROMPT2)
+              print(f"  prompt PERMISIVO  [{est2}] {resp2}")
+          print("\n" + "=" * 62)
+          print("Si ambos dan [] -> el modelo no ve dorsales legibles en estas fotos.")
+          print("Si dan HTTP 4xx -> es config (modelo o API key).")
+          print("Si el permisivo encuentra y el actual no -> hay que ajustar el prompt.")
           PYX
