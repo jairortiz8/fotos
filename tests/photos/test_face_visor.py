@@ -241,33 +241,83 @@ def test_gallery_face_search_returns_that_person(r2) -> None:  # type: ignore[no
 
 # --- Garantía de cobertura --------------------------------------------------
 @pytest.mark.django_db
-def test_photo_with_only_small_faces_still_gets_one_avatar(r2) -> None:  # type: ignore[no-untyped-def]
-    """Si NINGUNA cara pasa los filtros, igual se muestra la más grande.
+def test_caras_medianas_entran_sin_pedirles_nitidez(r2) -> None:  # type: ignore[no-untyped-def]
+    """Entre el piso (50px) y el umbral (130px) las caras SÍ se ofrecen.
 
-    Sin esto, una foto donde todas las caras son chicas quedaba sin visor y
-    para el usuario parecía que la función no anda en esa foto.
+    Antes acá sólo entraba la más grande, por el respaldo. En una foto grupal
+    eso dejaba a todos los demás sin forma de buscarse.
     """
     event = EventFactory(status=EventStatus.LIVE)
     okey = "events/e/originals/foto.jpg"
     r2.put_object(Bucket=BUCKET, Key=okey, Body=_sharp_photo_bytes())
     photo = ApprovedPhotoFactory(event=event, original_key=okey)
 
-    # Las dos por debajo del umbral de tamaño (130px).
     chica = FaceEmbedding.objects.create(
         photo=photo, embedding=[0.1] * 512, bbox={"x1": 10, "y1": 10, "x2": 60, "y2": 60}
     )
-    mas_grande = FaceEmbedding.objects.create(
+    mediana = FaceEmbedding.objects.create(
         photo=photo, embedding=[0.2] * 512, bbox={"x1": 100, "y1": 100, "x2": 220, "y2": 220}
+    )
+
+    stats = generate_avatars_for_photo(photo)
+    assert stats["generated"] == 2
+    assert stats["fallback"] == 0  # no hizo falta el respaldo
+
+    chica.refresh_from_db()
+    mediana.refresh_from_db()
+    assert mediana.avatar_key != ""
+    assert chica.avatar_key != ""
+
+
+@pytest.mark.django_db
+def test_foto_grupal_ofrece_a_todas_las_personas(r2) -> None:  # type: ignore[no-untyped-def]
+    """Regresión del social run de Garmin (2026-08).
+
+    En una foto de grupo cada cara mide ~60px: ninguna llegaba a 130px y la
+    foto terminaba ofreciendo UNA sola persona. Las demás no tenían forma de
+    encontrarse en esa foto.
+    """
+    event = EventFactory(status=EventStatus.LIVE)
+    okey = "events/e/originals/grupal.jpg"
+    r2.put_object(Bucket=BUCKET, Key=okey, Body=_sharp_photo_bytes())
+    photo = ApprovedPhotoFactory(event=event, original_key=okey)
+
+    for i in range(8):  # 8 caras de 60px, en fila
+        FaceEmbedding.objects.create(
+            photo=photo,
+            embedding=[0.1 * i] * 512,
+            bbox={"x1": 20 + i * 100, "y1": 200, "x2": 80 + i * 100, "y2": 260},
+        )
+
+    stats = generate_avatars_for_photo(photo)
+    assert stats["generated"] == 8, "cada persona del grupo tiene que ser clickeable"
+    assert stats["fallback"] == 0
+    assert photo.face_embeddings.exclude(avatar_key="").count() == 8
+
+
+@pytest.mark.django_db
+def test_caras_bajo_el_piso_caen_al_respaldo(r2) -> None:  # type: ignore[no-untyped-def]
+    """Por debajo del piso (50px) la cara ya no se distingue: sólo la mayor."""
+    event = EventFactory(status=EventStatus.LIVE)
+    okey = "events/e/originals/lejos.jpg"
+    r2.put_object(Bucket=BUCKET, Key=okey, Body=_sharp_photo_bytes())
+    photo = ApprovedPhotoFactory(event=event, original_key=okey)
+
+    diminuta = FaceEmbedding.objects.create(
+        photo=photo, embedding=[0.1] * 512, bbox={"x1": 10, "y1": 10, "x2": 32, "y2": 32}
+    )
+    mayor = FaceEmbedding.objects.create(
+        photo=photo, embedding=[0.2] * 512, bbox={"x1": 100, "y1": 100, "x2": 140, "y2": 140}
     )
 
     stats = generate_avatars_for_photo(photo)
     assert stats["generated"] == 1
     assert stats["fallback"] == 1
 
-    chica.refresh_from_db()
-    mas_grande.refresh_from_db()
-    assert mas_grande.avatar_key != ""  # la más grande es la elegida
-    assert chica.avatar_key == ""
+    diminuta.refresh_from_db()
+    mayor.refresh_from_db()
+    assert mayor.avatar_key != ""
+    assert diminuta.avatar_key == ""
 
 
 @pytest.mark.django_db
