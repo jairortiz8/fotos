@@ -7,10 +7,10 @@ concurrency:
   group: prod-julio
   cancel-in-progress: true
 jobs:
-  repartir:
-    name: Que el worker liviano tome tambien la cola celery
+  cierre:
+    name: Auditoria final y apagado de workers
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
@@ -18,6 +18,7 @@ jobs:
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
       WORKER_ID: 1846c52a-57c3-4a8b-b4ec-1cc200a8e652
+      BEAT_ID: 0a364656-8700-4f69-bac0-b91c50cd722b
     steps:
       - uses: actions/checkout@v4
         with: { ref: main }
@@ -28,94 +29,180 @@ jobs:
 
       - run: pip install --quiet "psycopg[binary]" requests redis
 
-      - name: 1 - Reconfigurar
+      - name: Credenciales
         run: |
           python3 - <<'PYX'
           import os, requests
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
-          def gql(q, v=None):
-              r=requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=60).json()
-              if r.get("errors"): raise SystemExit(f"GraphQL: {r['errors']}")
-              return r["data"]
-          d=gql('query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{'
-                ' serviceId serviceName } } } } }', {"e":os.environ["ENV_ID"]})
-          fast_id=next((e["node"]["serviceId"] for e in d["environment"]["serviceInstances"]["edges"]
-                        if e["node"]["serviceName"] in ("worker_fast","worker-fast")), None)
-          if not fast_id: raise SystemExit("no encuentro worker_fast")
-
-          base={"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"]}
-          M="""mutation($p:String!,$e:String!,$s:String!,$n:String!,$v:String!){
-                 variableUpsert(input:{projectId:$p, environmentId:$e, serviceId:$s, name:$n, value:$v}) }"""
-          # El rol `worker_fast` del entrypoint tiene la cola fija en `fast`. Con
-          # `fast` ya vacía queda ocioso mientras 848 avatares/previews esperan en
-          # `celery`. Lo pasamos al rol `worker`, que SÍ respeta WORKER_QUEUES, y
-          # le damos fast+celery. Nunca toca `faces`, así que jamás carga
-          # InsightFace: sigue siendo liviano y puede ir a concurrencia 4.
-          for n, v in (("PROCESS_TYPE","worker"),
-                       ("WORKER_QUEUES","fast,celery"),
-                       ("CELERY_CONCURRENCY","4")):
-              gql(M, {**base,"s":fast_id,"n":n,"v":v})
-              print(f"  worker_fast.{n} = {v}")
-          # El pesado se dedica EXCLUSIVAMENTE a las caras.
-          gql(M, {**base,"s":os.environ["WORKER_ID"],"n":"WORKER_QUEUES","v":"faces"})
-          print("  worker.WORKER_QUEUES = faces")
-
-          D="""mutation($s:String!,$e:String!){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e) }"""
-          for etiqueta, sid in (("worker_fast", fast_id), ("worker", os.environ["WORKER_ID"])):
-              gql(D, {"s":sid,"e":os.environ["ENV_ID"]})
-              print(f"  deploy: {etiqueta}")
+          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          def vf(sid):
+              return (requests.post(API,headers=H,json={"query":V,"variables":{
+                  "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}},timeout=40)
+                  .json().get("data",{}) or {}).get("variables") or {}
+          d=requests.post(API,headers=H,json={"query":
+              'query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{ serviceId serviceName } } } } }',
+              "variables":{"e":os.environ["ENV_ID"]}},timeout=40).json()
+          rid=fast=None
+          for e in d["data"]["environment"]["serviceInstances"]["edges"]:
+              n=e["node"]
+              if n["serviceName"].lower().startswith("redis"): rid=n["serviceId"]
+              if n["serviceName"] in ("worker_fast","worker-fast"): fast=n["serviceId"]
+          out={"DATABASE_URL":vf(os.environ["PG_ID"]).get("DATABASE_PUBLIC_URL"),
+               "REDIS_PUB":vf(rid).get("REDIS_PUBLIC_URL") if rid else None}
+          if [k for k,v in out.items() if not v]: raise SystemExit("faltan credenciales")
+          with open(os.environ["GITHUB_ENV"],"a") as f:
+              for k,v in out.items():
+                  print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
+              f.write(f"FAST_ID={fast or ''}\n")
           PYX
 
-      - name: 2 - Esperar
-        run: sleep 420
-
-      - name: 3 - Medir
-        if: always()
+      - name: AUDITORIA
         run: |
           python3 - <<'PYX'
-          import os, requests, psycopg, redis, time
+          import os, psycopg, redis
+          SLUG="garmin-runners-girls-5k-social-run"
+          r=redis.from_url(os.environ["REDIS_PUB"], socket_timeout=15, socket_connect_timeout=15)
+          problemas=[]
+
+          with psycopg.connect(os.environ["DATABASE_URL"]) as conn, conn.cursor() as cur:
+              cur.execute("SELECT id, name FROM events_event WHERE slug=%s",(SLUG,))
+              eid, nombre = cur.fetchone()
+              print("="*60)
+              print(f"  AUDITORIA FINAL — {nombre}")
+              print("="*60)
+
+              # --- 1. Colas ---
+              print("\n[1] COLAS")
+              for c in ("fast","faces","celery"):
+                  n=r.llen(c)
+                  print(f"    {c:<8} {n}")
+                  if n: problemas.append(f"cola '{c}' con {n} tareas pendientes")
+
+              # --- 2. Estados ---
+              print("\n[2] ESTADO DE LAS FOTOS")
+              cur.execute("""SELECT status, count(*) FROM photos_photo
+                              WHERE event_id=%s GROUP BY 1 ORDER BY 2 DESC""",(eid,))
+              estados=dict(cur.fetchall())
+              total=sum(estados.values())
+              for st,n in estados.items(): print(f"    {st:<20} {n}")
+              for malo in ("processing","uploading","processing_failed"):
+                  if estados.get(malo): problemas.append(f"{estados[malo]} fotos en '{malo}'")
+
+              # --- 3. Derivados ---
+              print("\n[3] ARCHIVOS DERIVADOS")
+              cur.execute("""SELECT count(*) FILTER (WHERE original_key=''),
+                                    count(*) FILTER (WHERE preview_key=''),
+                                    count(*) FILTER (WHERE thumbnail_key='')
+                               FROM photos_photo WHERE event_id=%s""",(eid,))
+              so, sp, st_ = cur.fetchone()
+              print(f"    sin original   {so}")
+              print(f"    sin preview    {sp}")
+              print(f"    sin thumbnail  {st_}")
+              if so: problemas.append(f"{so} fotos sin original")
+              if sp: problemas.append(f"{sp} fotos sin preview")
+              if st_: problemas.append(f"{st_} fotos sin thumbnail")
+
+              # --- 4. OCR ---
+              print("\n[4] OCR (dorsales)")
+              cur.execute("""SELECT count(*) FROM photos_bib b JOIN photos_photo p
+                              ON p.id=b.photo_id WHERE p.event_id=%s""",(eid,))
+              bibs=cur.fetchone()[0]
+              cur.execute("""SELECT count(*) FILTER (WHERE has_bibs_detected)
+                               FROM photos_photo WHERE event_id=%s""",(eid,))
+              con_bib=cur.fetchone()[0]
+              cur.execute("""SELECT b.source, count(*) FROM photos_bib b
+                              JOIN photos_photo p ON p.id=b.photo_id
+                             WHERE p.event_id=%s GROUP BY 1""",(eid,))
+              print(f"    dorsales leidos      {bibs}")
+              print(f"    fotos con dorsal     {con_bib} de {total} ({100*con_bib/total:.0f}%)")
+              for src,n in cur.fetchall(): print(f"    fuente {src:<16} {n}")
+              cur.execute("""SELECT count(DISTINCT number) FROM photos_bib b
+                              JOIN photos_photo p ON p.id=b.photo_id WHERE p.event_id=%s""",(eid,))
+              print(f"    dorsales distintos   {cur.fetchone()[0]}")
+              if bibs == 0: problemas.append("el OCR no leyo ningun dorsal")
+
+              # --- 5. Caras / selfie ---
+              print("\n[5] SELFIE (caras)")
+              cur.execute("""SELECT count(*), count(*) FILTER (WHERE avatar_key<>'')
+                               FROM photos_faceembedding fe JOIN photos_photo p ON p.id=fe.photo_id
+                              WHERE p.event_id=%s""",(eid,))
+              caras, avat = cur.fetchone()
+              cur.execute("""SELECT count(*) FILTER (WHERE has_faces_detected)
+                               FROM photos_photo WHERE event_id=%s""",(eid,))
+              fotos_cara=cur.fetchone()[0]
+              print(f"    caras indexadas      {caras}")
+              print(f"    con visor clickeable {avat} ({100*avat/caras:.0f}%)" if caras else "    sin caras")
+              print(f"    fotos con cara       {fotos_cara} de {total} ({100*fotos_cara/total:.0f}%)")
+              cur.execute("""SELECT count(*) FROM photos_photo p
+                              WHERE p.event_id=%s AND NOT p.has_faces_detected
+                                AND NOT p.has_bibs_detected""",(eid,))
+              print(f"    fotos sin cara NI dorsal: {cur.fetchone()[0]}  (paisajes, carteles, etc.)")
+              if caras == 0: problemas.append("no hay ninguna cara indexada")
+
+              # --- 6. Prueba funcional del buscador por cara ---
+              print("\n[6] PRUEBA FUNCIONAL DEL BUSCADOR POR CARA")
+              cur.execute("""SELECT fe.id, fe.photo_id, fe.embedding FROM photos_faceembedding fe
+                              JOIN photos_photo p ON p.id=fe.photo_id
+                             WHERE p.event_id=%s AND fe.avatar_key<>'' LIMIT 1""",(eid,))
+              fila=cur.fetchone()
+              if not fila:
+                  problemas.append("no hay ninguna cara con avatar para probar")
+              else:
+                  fid, pid, emb = fila
+                  cur.execute("""SELECT p.id, fe.embedding <=> %s AS dist
+                                   FROM photos_faceembedding fe JOIN photos_photo p ON p.id=fe.photo_id
+                                  WHERE p.event_id=%s AND p.status='approved'
+                                  ORDER BY dist LIMIT 5""",(emb, eid))
+                  res=cur.fetchall()
+                  print(f"    busco con la cara {fid} (de la foto {pid}) — 5 mas parecidas:")
+                  for i,(oid, dist) in enumerate(res, 1):
+                      marca = "  <- es su propia foto" if oid == pid else ""
+                      print(f"      {i}. foto {oid}  similitud {100*(1-dist):.0f}%{marca}")
+                  if not res or res[0][0] != pid:
+                      problemas.append("el buscador por cara no devolvio su propia foto primero")
+                  else:
+                      print("    OK: el buscador por cara responde correctamente")
+
+              print("\n" + "="*60)
+              if problemas:
+                  print("  RESULTADO: HAY PROBLEMAS")
+                  for p in problemas: print(f"    - {p}")
+              else:
+                  print("  RESULTADO: TODO COMPLETO")
+              print("="*60)
+              with open(os.environ["GITHUB_ENV"],"a") as f:
+                  f.write(f"AUDITORIA={'ok' if not problemas else 'falla'}\n")
+          PYX
+
+      - name: APAGAR workers (solo si la auditoria paso)
+        if: env.AUDITORIA == 'ok'
+        run: |
+          python3 - <<'PYX'
+          import os, requests
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
-          def gql(q, v=None):
-              return requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=60).json()["data"]
-          d=gql('query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{'
-                ' serviceId serviceName latestDeployment{ status } } } } } }', {"e":os.environ["ENV_ID"]})
-          print("=== SERVICIOS ===")
-          rid=None
-          for e in d["environment"]["serviceInstances"]["edges"]:
-              n=e["node"]; st=(n.get("latestDeployment") or {}).get("status") or "SIN DEPLOY"
-              print(f"  {n['serviceName']:<14} {st}")
-              if n["serviceName"].lower().startswith("redis"): rid=n["serviceId"]
-          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          db=gql(V, {"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
-                     "s":os.environ["PG_ID"]})["variables"]["DATABASE_PUBLIC_URL"]
-          pub=gql(V, {"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
-                      "s":rid})["variables"]["REDIS_PUBLIC_URL"]
-          print(f"::add-mask::{db}"); print(f"::add-mask::{pub}")
-          r=redis.from_url(pub, socket_timeout=15, socket_connect_timeout=15)
-
-          SLUG="garmin-runners-girls-5k-social-run"
-          def medir():
-              with psycopg.connect(db) as conn, conn.cursor() as cur:
-                  cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,))
-                  eid=cur.fetchone()[0]
-                  cur.execute("""SELECT count(*) FROM photos_bib b JOIN photos_photo p
-                                  ON p.id=b.photo_id WHERE p.event_id=%s""",(eid,))
-                  bibs=cur.fetchone()[0]
-                  cur.execute("""SELECT count(*), count(*) FILTER (WHERE fe.avatar_key<>'')
-                                   FROM photos_faceembedding fe JOIN photos_photo p ON p.id=fe.photo_id
-                                  WHERE p.event_id=%s""",(eid,))
-                  caras, avat = cur.fetchone()
-                  return bibs, caras, avat
-
-          print("\n=== RITMO (90 s) ===")
-          b1,c1,a1 = medir()
-          print(f"  t0     dorsales={b1:<5} caras={c1:<6} visores={a1:<6} "
-                f"| fast={r.llen('fast')} faces={r.llen('faces')} celery={r.llen('celery')}")
-          time.sleep(90)
-          b2,c2,a2 = medir()
-          print(f"  t+90s  dorsales={b2:<5} caras={c2:<6} visores={a2:<6} "
-                f"| fast={r.llen('fast')} faces={r.llen('faces')} celery={r.llen('celery')}")
-          print(f"\n  dorsales {b2-b1:+d}   caras {c2-c1:+d}   visores {a2-a1:+d}")
+          M="""mutation($s:String!,$e:String!,$i:ServiceInstanceUpdateInput!){
+                 serviceInstanceUpdate(serviceId:$s, environmentId:$e, input:$i) }"""
+          # A 0 réplicas: el servicio queda creado y configurado, sin consumir.
+          # Se revive poniendo 1. NO se borra nada.
+          objetivos=[("worker", os.environ["WORKER_ID"]),
+                     ("beat",   os.environ["BEAT_ID"])]
+          if os.environ.get("FAST_ID"):
+              objetivos.insert(1, ("worker_fast", os.environ["FAST_ID"]))
+          for nombre, sid in objetivos:
+              r=requests.post(API,headers=H,json={"query":M,"variables":{
+                  "s":sid,"e":os.environ["ENV_ID"],"i":{"numReplicas":0}}},timeout=60).json()
+              if r.get("errors"):
+                  print(f"  {nombre}: NO se pudo apagar -> {r['errors']}")
+              else:
+                  print(f"  {nombre}: apagado (0 replicas)")
+          print("\n  El web (fotos), Postgres y Redis siguen ARRIBA:")
+          print("  la galeria, la busqueda por dorsal y por cara siguen funcionando.")
           PYX
+
+      - name: NO apagar (la auditoria fallo)
+        if: env.AUDITORIA != 'ok'
+        run: |
+          echo "La auditoria encontro problemas: NO apago los workers."
+          echo "Apagarlos con trabajo pendiente dejaria fotos a medio procesar."
