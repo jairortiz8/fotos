@@ -58,7 +58,7 @@ jobs:
           python3 - <<'PYX'
           import io, os, boto3, psycopg
           from pathlib import Path
-          from PIL import Image
+          from PIL import Image, ImageOps
 
           OUT = Path("demo_overlay"); OUT.mkdir(exist_ok=True)
           D = Path("apps/photos/brand_overlays")
@@ -109,19 +109,24 @@ jobs:
               if not eventos: raise SystemExit("no hay eventos de Surf City con fotos aprobadas")
               slug = eventos[0][0]
               # variedad: horizontales y verticales
+              # Solo fotos con >=2 caras indexadas: garantiza corredores de verdad,
+              # no disparos accidentales al piso. Repartidas por todo el evento.
               cur.execute("""
-                  SELECT p.id, p.original_key, p.width, p.height
-                  FROM photos_photo p JOIN events_event e ON e.id=p.event_id
+                  SELECT p.id, p.original_key, p.width, p.height, count(f.id) AS caras
+                  FROM photos_photo p
+                  JOIN events_event e ON e.id = p.event_id
+                  JOIN photos_faceembedding f ON f.photo_id = p.id
                   WHERE e.slug=%s AND p.status='approved' AND p.original_key <> ''
-                    AND p.width > 0
-                  ORDER BY (p.width < p.height), p.id
-                  LIMIT 400
+                  GROUP BY p.id, p.original_key, p.width, p.height
+                  HAVING count(f.id) >= 2
+                  ORDER BY p.id
               """,(slug,))
               filas = cur.fetchall()
 
-          horiz = [f for f in filas if f[2] >= f[3]][:6]
-          vert  = [f for f in filas if f[2] <  f[3]][:3]
-          elegidas = horiz[:4] + vert[:2]
+          print(f"  fotos con 2+ caras: {len(filas)}")
+          paso = max(1, len(filas)//8)
+          muestra = filas[::paso][:8]
+          elegidas = muestra[:5]
           print(f"\nEvento usado: {slug}  ·  {len(filas)} candidatas  ·  demo con {len(elegidas)}")
 
           r2 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
@@ -130,22 +135,24 @@ jobs:
                             region_name="auto")
           B = os.environ["R2_BUCKET_NAME"]
 
-          for pid, key, w, h in elegidas:
+          for pid, key, w, h, caras in elegidas:
               buf = io.BytesIO()
               try:
                   r2.download_fileobj(B, key, buf)
               except Exception as exc:
                   print(f"  foto {pid}: no se pudo bajar ({exc})"); continue
               buf.seek(0)
-              im = Image.open(buf); im = im.convert("RGB")
+              im = Image.open(buf)
+              im = ImageOps.exif_transpose(im)             # como en produccion
+              im = im.convert("RGB")
               im.thumbnail((1600,1600), Image.LANCZOS)     # tamano de preview
-              orient = "H" if w>=h else "V"
+              orient = "H" if im.width >= im.height else "V"
               aplicar(im).save(OUT/f"{orient}_{pid}_medio.jpg", quality=90)
               if pid == elegidas[0][0]:                      # intensidades sobre la 1a
                   for etq,bp,ma in (("suave",0.24,205),("fuerte",0.38,252)):
                       aplicar(im, band_pct=bp, max_alpha=ma).save(OUT/f"H_{pid}_{etq}.jpg", quality=90)
                   im.save(OUT/f"H_{pid}_SIN_overlay.jpg", quality=90)
-              print(f"  foto {pid} ({orient} {w}x{h}) -> ok")
+              print(f"  foto {pid} ({orient} {im.width}x{im.height}, {caras} caras) -> ok")
           print("\nrenderizadas:", sorted(p.name for p in OUT.iterdir()))
           PYX
 
