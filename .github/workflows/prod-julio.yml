@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   demo:
-    name: Altura segura para Instagram
+    name: Barra de pie con meseta (segura para Instagram)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -68,20 +68,27 @@ jobs:
 
           # `seguro` = cuanto se deja libre ABAJO (fraccion del alto).
           # Instagram tapa esa franja con su interfaz.
-          ALTURAS = [("A_actual_8pct", 0.085), ("B_14pct", 0.14),
-                     ("C_18pct", 0.18), ("D_22pct", 0.22)]
+          ALTURAS = [("A_12pct", 0.12), ("B_15pct", 0.15), ("C_18pct", 0.18)]
           IG_TAPA = 0.13          # zona que tapa IG, estimada de la captura de Jair
 
           def cargar(n):
               im = Image.open(D/n).convert("RGBA")
               return im.crop(im.split()[3].getbbox())
 
-          def scrim(size, band_pct, max_alpha=238, curva=1.15):
-              w,h = size; banda = max(1, round(h*band_pct))
+          def scrim(size, banda_pct, meseta_pct, max_alpha=238, curva=1.25):
+              """banda_pct: donde ARRANCA el degradado (desde abajo).
+              meseta_pct: desde donde ya es solido hasta el borde inferior."""
+              w,h = size
+              banda = max(1, round(h*banda_pct))
+              meseta = max(1, round(h*meseta_pct))
+              rampa = max(1, banda - meseta)
               g = Image.new("L",(1,banda))
               for y in range(banda):
-                  t = y/(banda-1) if banda>1 else 1.0
-                  g.putpixel((0,y), round(max_alpha*(t**curva)))
+                  if y < rampa:
+                      t = y/rampa
+                      g.putpixel((0,y), round(max_alpha*(t**curva)))
+                  else:
+                      g.putpixel((0,y), max_alpha)      # meseta solida
               g = g.resize((w,banda))
               capa = Image.new("RGBA",(w,h),(0,0,0,0))
               negro = Image.new("RGBA",(w,banda),(0,0,0,255)); negro.putalpha(g)
@@ -89,10 +96,11 @@ jobs:
 
           def aplicar(img, seguro, logo_h_pct=LOGO_H, margen_pct=0.045):
               base = img.convert("RGBA"); w,h = base.size
-              # La banda arranca bien arriba de los logos y llega hasta el borde:
-              # asi el degradado sigue anclado abajo aunque los logos suban.
-              banda = seguro + logo_h_pct + 0.075
-              base.alpha_composite(scrim((w,h), banda))
+              # La meseta solida arranca un poco ARRIBA de los logos y baja hasta
+              # el borde: los logos apoyan sobre negro en vez de flotar.
+              meseta = seguro + logo_h_pct + 0.022
+              banda  = meseta + 0.11               # 11% de degradado de entrada
+              base.alpha_composite(scrim((w,h), banda, meseta))
               alto = round(h*logo_h_pct); piezas=[]
               for n,f in LOGOS:
                   lg = cargar(n); a = max(1, round(alto*f))
@@ -155,5 +163,5 @@ jobs:
           git checkout --orphan demo-overlay-tmp
           git rm -rq --cached . || true
           git add -f demo_overlay/
-          git commit -qm "demo: alturas seguras para Instagram"
+          git commit -qm "demo: barra de pie con meseta solida"
           git push -f origin demo-overlay-tmp
