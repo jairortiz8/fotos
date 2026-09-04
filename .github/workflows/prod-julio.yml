@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   demo:
-    name: Barra de pie con meseta (segura para Instagram)
+    name: Ancho seguro para Instagram (recorte lateral)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -52,7 +52,7 @@ jobs:
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
           PYX
 
-      - name: Renderizar alturas
+      - name: Renderizar anchos
         run: |
           python3 - <<'PYX'
           import io, os, boto3, psycopg
@@ -64,95 +64,97 @@ jobs:
           LOGOS = [("GU_Secondary_White_Transparent.png",1.00),
                    ("LOGO TASU-01.png",1.05),
                    ("NUGO LOGO WHITE.webp",0.82)]
-          LOGO_H = 0.058          # tamano "chico" que elegimos
-
-          # `seguro` = cuanto se deja libre ABAJO (fraccion del alto).
-          # Instagram tapa esa franja con su interfaz.
-          ALTURAS = [("A_12pct", 0.12), ("B_15pct", 0.15), ("C_18pct", 0.18)]
-          IG_TAPA = 0.13          # zona que tapa IG, estimada de la captura de Jair
+          LOGO_H, SEGURO_Y, BANDA = 0.058, 0.085, 0.19   # altura ORIGINAL, que estaba bien
 
           def cargar(n):
               im = Image.open(D/n).convert("RGBA")
               return im.crop(im.split()[3].getbbox())
 
-          def scrim(size, banda_pct, meseta_pct, max_alpha=238, curva=1.25):
-              """banda_pct: donde ARRANCA el degradado (desde abajo).
-              meseta_pct: desde donde ya es solido hasta el borde inferior."""
-              w,h = size
-              banda = max(1, round(h*banda_pct))
-              meseta = max(1, round(h*meseta_pct))
-              rampa = max(1, banda - meseta)
+          def scrim(size, banda_pct, max_alpha=225, curva=1.2):
+              w,h = size; banda = max(1, round(h*banda_pct))
               g = Image.new("L",(1,banda))
               for y in range(banda):
-                  if y < rampa:
-                      t = y/rampa
-                      g.putpixel((0,y), round(max_alpha*(t**curva)))
-                  else:
-                      g.putpixel((0,y), max_alpha)      # meseta solida
+                  t = y/(banda-1) if banda>1 else 1.0
+                  g.putpixel((0,y), round(max_alpha*(t**curva)))
               g = g.resize((w,banda))
               capa = Image.new("RGBA",(w,h),(0,0,0,0))
               negro = Image.new("RGBA",(w,banda),(0,0,0,255)); negro.putalpha(g)
               capa.paste(negro,(0,h-banda)); return capa
 
-          def aplicar(img, seguro, logo_h_pct=LOGO_H, margen_pct=0.045):
-              base = img.convert("RGBA"); w,h = base.size
-              # La meseta solida arranca un poco ARRIBA de los logos y baja hasta
-              # el borde: los logos apoyan sobre negro en vez de flotar.
-              meseta = seguro + logo_h_pct + 0.022
-              banda  = meseta + 0.11               # 11% de degradado de entrada
-              base.alpha_composite(scrim((w,h), banda, meseta))
-              alto = round(h*logo_h_pct); piezas=[]
+          def piezas_de(h):
+              alto = round(h*LOGO_H); out=[]
               for n,f in LOGOS:
                   lg = cargar(n); a = max(1, round(alto*f))
-                  piezas.append(lg.resize((max(1,round(a*lg.width/lg.height)), a), Image.LANCZOS))
-              m = round(w*margen_pct)
-              base_y = h - round(h*seguro)            # los logos APOYAN sobre la linea segura
-              xs = [m, (w-piezas[1].width)//2, w-piezas[2].width-m]
-              for lg,x in zip(piezas,xs):
-                  base.alpha_composite(lg,(x, base_y-lg.height))
+                  out.append(lg.resize((max(1,round(a*lg.width/lg.height)), a), Image.LANCZOS))
+              return out
+
+          def aplicar(img, modo, margen_pct=0.12, sep_pct=0.05):
+              base = img.convert("RGBA"); w,h = base.size
+              base.alpha_composite(scrim((w,h), BANDA))
+              pz = piezas_de(h)
+              y0 = h - round(h*SEGURO_Y)
+              if modo == "repartidos":
+                  m = round(w*margen_pct)
+                  xs = [m, (w-pz[1].width)//2, w-pz[2].width-m]
+              else:                                   # agrupados al centro
+                  sep = round(w*sep_pct)
+                  total = sum(p.width for p in pz) + sep*(len(pz)-1)
+                  x = (w-total)//2; xs=[]
+                  for p in pz: xs.append(x); x += p.width + sep
+              for lg,x in zip(pz,xs):
+                  base.alpha_composite(lg,(x, y0-lg.height))
               return base.convert("RGB")
 
-          def marcar_ig(img):
-              """Pinta encima la franja que tapa Instagram, para verificar."""
+          def marcar_recorte(img):
+              """Pinta lo que Instagram RECORTA a los costados para llegar a 9:16."""
               out = img.convert("RGBA"); w,h = out.size
+              visible = (h*9/16)/w                    # fraccion del ancho que sobrevive
+              if visible >= 1: return out.convert("RGB")
+              corte = round(w*(1-visible)/2)
               capa = Image.new("RGBA",(w,h),(0,0,0,0)); d = ImageDraw.Draw(capa)
-              y = h - round(h*IG_TAPA)
-              d.rectangle([0,y,w,h], fill=(220,40,40,90))
-              d.line([(0,y),(w,y)], fill=(255,60,60,255), width=max(2,round(h*0.003)))
-              d.text((round(w*0.03), y+round(h*0.012)),
-                     "ZONA QUE TAPA INSTAGRAM", fill=(255,255,255,255))
-              out.alpha_composite(capa)
-              return out.convert("RGB")
+              d.rectangle([0,0,corte,h], fill=(220,40,40,95))
+              d.rectangle([w-corte,0,w,h], fill=(220,40,40,95))
+              gr = max(2,round(w*0.004))
+              d.line([(corte,0),(corte,h)], fill=(255,60,60,255), width=gr)
+              d.line([(w-corte,0),(w-corte,h)], fill=(255,60,60,255), width=gr)
+              d.text((8, round(h*0.03)), "RECORTA IG", fill=(255,255,255,255))
+              out.alpha_composite(capa); return out.convert("RGB")
 
           with psycopg.connect(os.environ["DATABASE_URL"]) as cx, cx.cursor() as cur:
               cur.execute("SELECT id, original_key FROM photos_photo WHERE id=9189")
               pid, key = cur.fetchone()
-
           r2 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
                             aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
                             aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
                             region_name="auto")
-          buf = io.BytesIO(); r2.download_fileobj(os.environ["R2_BUCKET_NAME"], key, buf)
-          buf.seek(0)
+          buf = io.BytesIO(); r2.download_fileobj(os.environ["R2_BUCKET_NAME"], key, buf); buf.seek(0)
           im = ImageOps.exif_transpose(Image.open(buf)).convert("RGB")
           im.thumbnail((1600,1600), Image.LANCZOS)
+          vis = (im.height*9/16)/im.width
+          print(f"foto {im.width}x{im.height} · IG deja visible el {vis*100:.0f}% del ancho"
+                f" · recorta {(1-vis)/2*100:.1f}% por lado")
 
-          recortes = []
-          for etq, seguro in ALTURAS:
-              render = aplicar(im, seguro)
-              render.save(OUT/f"{etq}_limpio.jpg", quality=90)
-              marcado = marcar_ig(render)
-              marcado.save(OUT/f"{etq}_con_zona_IG.jpg", quality=90)
-              recortes.append((etq, marcado.crop((0, round(im.height*0.68), im.width, im.height))))
+          OPCIONES = [
+              ("1_actual_margen_4",     dict(modo="repartidos", margen_pct=0.045)),
+              ("2_repartidos_margen_12",dict(modo="repartidos", margen_pct=0.12)),
+              ("3_repartidos_margen_16",dict(modo="repartidos", margen_pct=0.16)),
+              ("4_agrupados_centro",    dict(modo="agrupados")),
+          ]
+          recortes=[]
+          for etq, kw in OPCIONES:
+              r = aplicar(im, **kw)
+              r.save(OUT/f"{etq}_limpio.jpg", quality=90)
+              mk = marcar_recorte(r); mk.save(OUT/f"{etq}_recorte_IG.jpg", quality=90)
+              recortes.append((etq, mk.crop((0, round(im.height*0.72), im.width, im.height))))
 
           fw, fh = recortes[0][1].size
           LBL, GAP = 40, 10
-          hoja = Image.new("RGB", (fw+GAP*2, (fh+LBL)*len(recortes)+GAP), (24,24,26))
-          d = ImageDraw.Draw(hoja); y = GAP
-          for etq, r in recortes:
-              d.text((GAP+4, y+12), etq.replace("_"," ").upper(), fill=(250,250,250))
-              y += LBL; hoja.paste(r,(GAP,y)); y += fh
-          hoja.save(OUT/"COMPARACION_alturas.jpg", quality=88)
+          hoja = Image.new("RGB",(fw+GAP*2,(fh+LBL)*len(recortes)+GAP),(24,24,26))
+          d = ImageDraw.Draw(hoja); y=GAP
+          for etq,r in recortes:
+              d.text((GAP+4,y+12), etq.replace("_"," ").upper(), fill=(250,250,250))
+              y+=LBL; hoja.paste(r,(GAP,y)); y+=fh
+          hoja.save(OUT/"COMPARACION_ancho.jpg", quality=88)
           print("listo:", sorted(p.name for p in OUT.iterdir()))
           PYX
 
@@ -163,5 +165,5 @@ jobs:
           git checkout --orphan demo-overlay-tmp
           git rm -rq --cached . || true
           git add -f demo_overlay/
-          git commit -qm "demo: barra de pie con meseta solida"
+          git commit -qm "demo: ancho seguro para el recorte de Instagram"
           git push -f origin demo-overlay-tmp
