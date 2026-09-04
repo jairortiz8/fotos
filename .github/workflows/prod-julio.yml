@@ -6,9 +6,11 @@ on:
 concurrency:
   group: prod-julio
   cancel-in-progress: true
+permissions:
+  contents: write
 jobs:
-  verificar:
-    name: Dorsal y selfie con los workers apagados
+  demo:
+    name: Demo del overlay con fotos reales de Surf City
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -17,114 +19,143 @@ jobs:
       ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
       PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
-      SITE: https://findyourfoto.com
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
     steps:
+      - uses: actions/checkout@v4
+        with: { ref: main }          # main tiene los logos que subio Jair
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --quiet requests "psycopg[binary]"
+      - run: pip install --quiet requests "psycopg[binary]" boto3 Pillow
 
-      - name: Estado de los servicios y credenciales
+      - name: Credenciales (Postgres + R2)
         run: |
           python3 - <<'PYX'
           import os, requests
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
              "Content-Type":"application/json"}
-          Q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceName latestDeployment{ status } } } } } }"""
-          d=requests.post(API,headers=H,json={"query":Q,"variables":{
-              "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
-          print("=== SERVICIOS ===")
-          for e in d["environment"]["serviceInstances"]["edges"]:
-              n=e["node"]; st=(n.get("latestDeployment") or {}).get("status") or "SIN DEPLOY"
-              print(f"  {n['serviceName']:<14} {st}")
-
           V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          v=(requests.post(API,headers=H,json={"query":V,"variables":{
-              "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
-              "s":os.environ["PG_ID"]}},timeout=40).json().get("data") or {}).get("variables") or {}
-          url=v.get("DATABASE_PUBLIC_URL")
-          if not url: raise SystemExit("no se pudo leer DATABASE_PUBLIC_URL")
-          print(f"::add-mask::{url}")
-          with open(os.environ["GITHUB_ENV"],"a") as f: f.write(f"DATABASE_URL={url}\n")
+          def vf(sid):
+              return (requests.post(API,headers=H,json={"query":V,"variables":{
+                  "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}},
+                  timeout=40).json().get("data") or {}).get("variables") or {}
+          pg=vf(os.environ["PG_ID"]); web=vf(os.environ["WEB_ID"])
+          out={"DATABASE_URL":pg.get("DATABASE_PUBLIC_URL"),
+               "R2_ENDPOINT_URL":web.get("R2_ENDPOINT_URL"),
+               "R2_ACCESS_KEY_ID":web.get("R2_ACCESS_KEY_ID"),
+               "R2_SECRET_ACCESS_KEY":web.get("R2_SECRET_ACCESS_KEY"),
+               "R2_BUCKET_NAME":web.get("R2_BUCKET_NAME")}
+          faltan=[k for k,v in out.items() if not v]
+          if faltan: raise SystemExit(f"faltan credenciales: {faltan}")
+          with open(os.environ["GITHUB_ENV"],"a") as f:
+              for k,v in out.items():
+                  print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
           PYX
 
-      - name: Buscar por dorsal y por selfie de verdad
+      - name: Elegir fotos reales y renderizar
         run: |
           python3 - <<'PYX'
-          import html, io, os, re, requests, psycopg
-          SITE=os.environ["SITE"]
+          import io, os, boto3, psycopg
+          from pathlib import Path
+          from PIL import Image
 
-          # Datos REALES sacados de la base: un dorsal que existe y una foto
-          # aprobada que tiene una cara indexada.
+          OUT = Path("demo_overlay"); OUT.mkdir(exist_ok=True)
+          D = Path("apps/photos/brand_overlays")
+          LOGOS = [("GU_Secondary_White_Transparent.png",1.00),
+                   ("LOGO TASU-01.png",1.05),
+                   ("NUGO LOGO WHITE.webp",0.82)]
+
+          def cargar(n):
+              im = Image.open(D/n).convert("RGBA")
+              return im.crop(im.split()[3].getbbox())
+
+          def scrim(size, band_pct, max_alpha, curva=1.15):
+              w,h = size; banda = max(1, round(h*band_pct))
+              g = Image.new("L",(1,banda))
+              for y in range(banda):
+                  t = y/(banda-1) if banda>1 else 1.0
+                  g.putpixel((0,y), round(max_alpha*(t**curva)))
+              g = g.resize((w,banda))
+              capa = Image.new("RGBA",(w,h),(0,0,0,0))
+              negro = Image.new("RGBA",(w,banda),(0,0,0,255)); negro.putalpha(g)
+              capa.paste(negro,(0,h-banda)); return capa
+
+          def aplicar(img, band_pct=0.30, max_alpha=238, logo_h_pct=0.105, margen_pct=0.045):
+              base = img.convert("RGBA"); w,h = base.size
+              base.alpha_composite(scrim((w,h), band_pct, max_alpha))
+              alto = round(h*logo_h_pct); piezas=[]
+              for n,f in LOGOS:
+                  lg = cargar(n); a = max(1, round(alto*f))
+                  piezas.append(lg.resize((max(1,round(a*lg.width/lg.height)), a), Image.LANCZOS))
+              m = round(w*margen_pct); y0 = h - round(h*0.085)
+              xs = [m, (w-piezas[1].width)//2, w-piezas[2].width-m]
+              for lg,x in zip(piezas,xs):
+                  base.alpha_composite(lg,(x, y0-lg.height//2))
+              return base.convert("RGB")
+
+          # --- buscar fotos de Surf City (originales LIMPIOS) ---
           with psycopg.connect(os.environ["DATABASE_URL"]) as cx, cx.cursor() as cur:
               cur.execute("""
-                  SELECT e.slug, b.number, count(*)
-                  FROM photos_bib b
-                  JOIN photos_photo p ON p.id = b.photo_id
-                  JOIN events_event e ON e.id = p.event_id
-                  WHERE p.status = 'approved'
-                    AND e.slug = 'garmin-runners-girls-5k-social-run'
-                  GROUP BY e.slug, b.number
-                  HAVING count(*) BETWEEN 3 AND 40
-                  ORDER BY 3 DESC LIMIT 1
+                  SELECT e.slug, e.name, count(p.id)
+                  FROM events_event e JOIN photos_photo p ON p.event_id=e.id
+                  WHERE (e.slug ILIKE '%%surf%%' OR e.name ILIKE '%%surf%%')
+                    AND p.status='approved' AND p.original_key <> ''
+                  GROUP BY e.slug, e.name ORDER BY 3 DESC
               """)
-              slug, dorsal, n_dorsal = cur.fetchone()
+              eventos = cur.fetchall()
+              print("Eventos Surf City encontrados:")
+              for s,n,c in eventos: print(f"   {s:38} {n[:34]:36} {c} fotos")
+              if not eventos: raise SystemExit("no hay eventos de Surf City con fotos aprobadas")
+              slug = eventos[0][0]
+              # variedad: horizontales y verticales
               cur.execute("""
-                  SELECT p.id
-                  FROM photos_faceembedding f
-                  JOIN photos_photo p ON p.id = f.photo_id
-                  JOIN events_event e ON e.id = p.event_id
-                  WHERE e.slug = %s AND p.status = 'approved' AND p.preview_key <> ''
-                  ORDER BY f.id LIMIT 1
-              """, (slug,))
-              (photo_id,) = cur.fetchone()
+                  SELECT p.id, p.original_key, p.width, p.height
+                  FROM photos_photo p JOIN events_event e ON e.id=p.event_id
+                  WHERE e.slug=%s AND p.status='approved' AND p.original_key <> ''
+                    AND p.width > 0
+                  ORDER BY (p.width < p.height), p.id
+                  LIMIT 400
+              """,(slug,))
+              filas = cur.fetchall()
 
-          print(f"[base] evento '{slug}' · dorsal #{dorsal} en {n_dorsal} fotos"
-                f" · foto con cara id={photo_id}")
-          s = requests.Session()
+          horiz = [f for f in filas if f[2] >= f[3]][:6]
+          vert  = [f for f in filas if f[2] <  f[3]][:3]
+          elegidas = horiz[:4] + vert[:2]
+          print(f"\nEvento usado: {slug}  ·  {len(filas)} candidatas  ·  demo con {len(elegidas)}")
 
-          # --- 1) BUSQUEDA POR DORSAL ---
-          r = s.get(f"{SITE}/eventos/{slug}/", params={"bib": dorsal}, timeout=60)
-          encontradas = len(set(re.findall(r"/foto/(\d+)", r.text)))
-          print(f"\n[DORSAL] HTTP {r.status_code} · fotos distintas en la pagina: {encontradas}")
+          r2 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
+                            aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+                            aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+                            region_name="auto")
+          B = os.environ["R2_BUCKET_NAME"]
 
-          # --- 2) BUSQUEDA POR SELFIE ---
-          # Se baja el preview de una foto publicada y se manda como selfie:
-          # el mismo camino que hace un corredor desde el celular.
-          pag = s.get(f"{SITE}/eventos/{slug}/foto/{photo_id}/", timeout=60)
-          m = re.search(r'<img[^>]+src="(https://[^"]+)"', pag.text)
-          if not m:
-              raise SystemExit("no se encontro la imagen del preview en el lightbox")
-          url_preview = html.unescape(m.group(1))
-          img = s.get(url_preview, timeout=120)
-          print(f"[selfie] preview bajado: HTTP {img.status_code} · {len(img.content)//1024} KB")
-          if img.status_code != 200 or len(img.content) < 5000:
-              raise SystemExit("no se pudo bajar el preview para usarlo de selfie")
-
-          form = s.get(f"{SITE}/eventos/{slug}/buscar-selfie/", timeout=60)
-          csrf = s.cookies.get("csrftoken") or ""
-          print(f"[selfie] formulario: HTTP {form.status_code}")
-
-          r = s.post(f"{SITE}/eventos/{slug}/buscar-selfie/",
-                     data={"csrfmiddlewaretoken": csrf},
-                     files={"selfie": ("selfie.jpg", io.BytesIO(img.content), "image/jpeg")},
-                     headers={"Referer": f"{SITE}/eventos/{slug}/buscar-selfie/"},
-                     timeout=240)
-          txt = r.text.lower()
-          halladas = len(set(re.findall(r"/foto/(\d+)", r.text)))
-          print(f"\n[SELFIE] HTTP {r.status_code} · fotos distintas: {halladas}")
-          for pista, etiqueta in (
-              ("varias caras", "respondio 'varias caras' (detecto mas de una)"),
-              ("no detectamos", "respondio 'no detectamos una cara'"),
-              ("no encontramos", "respondio 'no encontramos fotos'"),
-              ("no esta disponible", "la funcion figura como no disponible"),
-          ):
-              if pista in txt: print(f"         -> {etiqueta}")
-
-          modelo_ok = r.status_code == 200 and "no esta disponible" not in txt
-          print("\n  RESULTADO: el modelo facial corre en el WEB y responde"
-                " sin worker." if modelo_ok else
-                "\n  RESULTADO: REVISAR, la busqueda por selfie no respondio bien.")
+          for pid, key, w, h in elegidas:
+              buf = io.BytesIO()
+              try:
+                  r2.download_fileobj(B, key, buf)
+              except Exception as exc:
+                  print(f"  foto {pid}: no se pudo bajar ({exc})"); continue
+              buf.seek(0)
+              im = Image.open(buf); im = im.convert("RGB")
+              im.thumbnail((1600,1600), Image.LANCZOS)     # tamano de preview
+              orient = "H" if w>=h else "V"
+              aplicar(im).save(OUT/f"{orient}_{pid}_medio.jpg", quality=90)
+              if pid == elegidas[0][0]:                      # intensidades sobre la 1a
+                  for etq,bp,ma in (("suave",0.24,205),("fuerte",0.38,252)):
+                      aplicar(im, band_pct=bp, max_alpha=ma).save(OUT/f"H_{pid}_{etq}.jpg", quality=90)
+                  im.save(OUT/f"H_{pid}_SIN_overlay.jpg", quality=90)
+              print(f"  foto {pid} ({orient} {w}x{h}) -> ok")
+          print("\nrenderizadas:", sorted(p.name for p in OUT.iterdir()))
           PYX
+
+      - name: Devolver las imagenes por una rama
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan demo-overlay-tmp
+          git rm -rq --cached . || true
+          git add -f demo_overlay/
+          git commit -qm "demo: overlay sobre fotos reales de Surf City"
+          git push -f origin demo-overlay-tmp
+          echo "rama demo-overlay-tmp actualizada"
