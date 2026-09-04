@@ -10,9 +10,9 @@ permissions:
   contents: write
 jobs:
   demo:
-    name: Demo del overlay con fotos reales de Surf City
+    name: Escala de tamanos del overlay
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       API: https://backboard.railway.app/graphql/v2
@@ -22,7 +22,7 @@ jobs:
       WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
     steps:
       - uses: actions/checkout@v4
-        with: { ref: main }          # main tiene los logos que subio Jair
+        with: { ref: main }
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -53,18 +53,27 @@ jobs:
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
           PYX
 
-      - name: Elegir fotos reales y renderizar
+      - name: Renderizar la escala de tamanos
         run: |
           python3 - <<'PYX'
           import io, os, boto3, psycopg
           from pathlib import Path
-          from PIL import Image, ImageOps
+          from PIL import Image, ImageOps, ImageDraw
 
           OUT = Path("demo_overlay"); OUT.mkdir(exist_ok=True)
           D = Path("apps/photos/brand_overlays")
           LOGOS = [("GU_Secondary_White_Transparent.png",1.00),
                    ("LOGO TASU-01.png",1.05),
                    ("NUGO LOGO WHITE.webp",0.82)]
+
+          # Escala de tamanos. La banda se achica junto con los logos: si no,
+          # queda una franja negra enorme con logos chiquitos flotando.
+          TAMANOS = [
+              ("1_muy_chico", 0.045, 0.14),
+              ("2_chico",     0.058, 0.17),
+              ("3_medio",     0.072, 0.21),
+              ("4_actual",    0.105, 0.30),   # el de la demo anterior, de referencia
+          ]
 
           def cargar(n):
               im = Image.open(D/n).convert("RGBA")
@@ -81,53 +90,29 @@ jobs:
               negro = Image.new("RGBA",(w,banda),(0,0,0,255)); negro.putalpha(g)
               capa.paste(negro,(0,h-banda)); return capa
 
-          def aplicar(img, band_pct=0.30, max_alpha=238, logo_h_pct=0.105, margen_pct=0.045):
+          def aplicar(img, logo_h_pct, band_pct, max_alpha=238, margen_pct=0.045):
               base = img.convert("RGBA"); w,h = base.size
               base.alpha_composite(scrim((w,h), band_pct, max_alpha))
               alto = round(h*logo_h_pct); piezas=[]
               for n,f in LOGOS:
                   lg = cargar(n); a = max(1, round(alto*f))
                   piezas.append(lg.resize((max(1,round(a*lg.width/lg.height)), a), Image.LANCZOS))
-              m = round(w*margen_pct); y0 = h - round(h*0.085)
+              m = round(w*margen_pct)
+              y0 = h - round(h * band_pct * 0.30)      # centrados en el tercio inferior de la banda
               xs = [m, (w-piezas[1].width)//2, w-piezas[2].width-m]
               for lg,x in zip(piezas,xs):
                   base.alpha_composite(lg,(x, y0-lg.height//2))
               return base.convert("RGB")
 
-          # --- buscar fotos de Surf City (originales LIMPIOS) ---
+          # Las MISMAS fotos que la vez pasada, para comparar peras con peras.
+          PINES = [9189, 5669]
           with psycopg.connect(os.environ["DATABASE_URL"]) as cx, cx.cursor() as cur:
               cur.execute("""
-                  SELECT e.slug, e.name, count(p.id)
-                  FROM events_event e JOIN photos_photo p ON p.event_id=e.id
-                  WHERE (e.slug ILIKE '%%surf%%' OR e.name ILIKE '%%surf%%')
-                    AND p.status='approved' AND p.original_key <> ''
-                  GROUP BY e.slug, e.name ORDER BY 3 DESC
-              """)
-              eventos = cur.fetchall()
-              print("Eventos Surf City encontrados:")
-              for s,n,c in eventos: print(f"   {s:38} {n[:34]:36} {c} fotos")
-              if not eventos: raise SystemExit("no hay eventos de Surf City con fotos aprobadas")
-              slug = eventos[0][0]
-              # variedad: horizontales y verticales
-              # Solo fotos con >=2 caras indexadas: garantiza corredores de verdad,
-              # no disparos accidentales al piso. Repartidas por todo el evento.
-              cur.execute("""
-                  SELECT p.id, p.original_key, p.width, p.height, count(f.id) AS caras
-                  FROM photos_photo p
-                  JOIN events_event e ON e.id = p.event_id
-                  JOIN photos_faceembedding f ON f.photo_id = p.id
-                  WHERE e.slug=%s AND p.status='approved' AND p.original_key <> ''
-                  GROUP BY p.id, p.original_key, p.width, p.height
-                  HAVING count(f.id) >= 2
-                  ORDER BY p.id
-              """,(slug,))
+                  SELECT p.id, p.original_key FROM photos_photo p
+                  WHERE p.id = ANY(%s) AND p.original_key <> ''
+              """, (PINES,))
               filas = cur.fetchall()
-
-          print(f"  fotos con 2+ caras: {len(filas)}")
-          paso = max(1, len(filas)//8)
-          muestra = filas[::paso][:8]
-          elegidas = muestra[:5]
-          print(f"\nEvento usado: {slug}  ·  {len(filas)} candidatas  ·  demo con {len(elegidas)}")
+          print("fotos:", [f[0] for f in filas])
 
           r2 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
                             aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
@@ -135,25 +120,27 @@ jobs:
                             region_name="auto")
           B = os.environ["R2_BUCKET_NAME"]
 
-          for pid, key, w, h, caras in elegidas:
-              buf = io.BytesIO()
-              try:
-                  r2.download_fileobj(B, key, buf)
-              except Exception as exc:
-                  print(f"  foto {pid}: no se pudo bajar ({exc})"); continue
-              buf.seek(0)
-              im = Image.open(buf)
-              im = ImageOps.exif_transpose(im)             # como en produccion
-              im = im.convert("RGB")
-              im.thumbnail((1600,1600), Image.LANCZOS)     # tamano de preview
-              orient = "H" if im.width >= im.height else "V"
-              aplicar(im).save(OUT/f"{orient}_{pid}_medio.jpg", quality=90)
-              if pid == elegidas[0][0]:                      # intensidades sobre la 1a
-                  for etq,bp,ma in (("suave",0.24,205),("fuerte",0.38,252)):
-                      aplicar(im, band_pct=bp, max_alpha=ma).save(OUT/f"H_{pid}_{etq}.jpg", quality=90)
-                  im.save(OUT/f"H_{pid}_SIN_overlay.jpg", quality=90)
-              print(f"  foto {pid} ({orient} {im.width}x{im.height}, {caras} caras) -> ok")
-          print("\nrenderizadas:", sorted(p.name for p in OUT.iterdir()))
+          for pid, key in filas:
+              buf = io.BytesIO(); r2.download_fileobj(B, key, buf); buf.seek(0)
+              im = ImageOps.exif_transpose(Image.open(buf)).convert("RGB")
+              im.thumbnail((1600,1600), Image.LANCZOS)
+              recortes = []
+              for etq, lh, bp in TAMANOS:
+                  render = aplicar(im, lh, bp)
+                  render.save(OUT/f"{pid}_{etq}.jpg", quality=90)
+                  # recorte del tercio de abajo para la hoja comparativa
+                  recortes.append((etq, render.crop((0, round(im.height*0.62), im.width, im.height))))
+              # Hoja comparativa: los 4 tamanos apilados y rotulados
+              fw, fh = recortes[0][1].size
+              LBL, GAP = 40, 10
+              hoja = Image.new("RGB", (fw+GAP*2, (fh+LBL)*len(recortes)+GAP), (24,24,26))
+              d = ImageDraw.Draw(hoja); y = GAP
+              for etq, r in recortes:
+                  d.text((GAP+4, y+12), etq.replace("_"," ").upper(), fill=(250,250,250))
+                  y += LBL; hoja.paste(r, (GAP, y)); y += fh
+              hoja.save(OUT/f"COMPARACION_{pid}.jpg", quality=88)
+              print(f"  foto {pid}: 4 tamanos + hoja comparativa")
+          print("listo:", sorted(p.name for p in OUT.iterdir()))
           PYX
 
       - name: Devolver las imagenes por una rama
@@ -163,6 +150,5 @@ jobs:
           git checkout --orphan demo-overlay-tmp
           git rm -rq --cached . || true
           git add -f demo_overlay/
-          git commit -qm "demo: overlay sobre fotos reales de Surf City"
+          git commit -qm "demo: escala de tamanos del overlay"
           git push -f origin demo-overlay-tmp
-          echo "rama demo-overlay-tmp actualizada"
