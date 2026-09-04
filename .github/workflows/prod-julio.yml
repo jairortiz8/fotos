@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   demo:
-    name: Escala de tamanos del overlay
+    name: Altura segura para Instagram
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -28,7 +28,7 @@ jobs:
           python-version: "3.12"
       - run: pip install --quiet requests "psycopg[binary]" boto3 Pillow
 
-      - name: Credenciales (Postgres + R2)
+      - name: Credenciales
         run: |
           python3 - <<'PYX'
           import os, requests
@@ -46,14 +46,13 @@ jobs:
                "R2_ACCESS_KEY_ID":web.get("R2_ACCESS_KEY_ID"),
                "R2_SECRET_ACCESS_KEY":web.get("R2_SECRET_ACCESS_KEY"),
                "R2_BUCKET_NAME":web.get("R2_BUCKET_NAME")}
-          faltan=[k for k,v in out.items() if not v]
-          if faltan: raise SystemExit(f"faltan credenciales: {faltan}")
+          if [k for k,v in out.items() if not v]: raise SystemExit("faltan credenciales")
           with open(os.environ["GITHUB_ENV"],"a") as f:
               for k,v in out.items():
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
           PYX
 
-      - name: Renderizar la escala de tamanos
+      - name: Renderizar alturas
         run: |
           python3 - <<'PYX'
           import io, os, boto3, psycopg
@@ -65,21 +64,19 @@ jobs:
           LOGOS = [("GU_Secondary_White_Transparent.png",1.00),
                    ("LOGO TASU-01.png",1.05),
                    ("NUGO LOGO WHITE.webp",0.82)]
+          LOGO_H = 0.058          # tamano "chico" que elegimos
 
-          # Escala de tamanos. La banda se achica junto con los logos: si no,
-          # queda una franja negra enorme con logos chiquitos flotando.
-          TAMANOS = [
-              ("1_muy_chico", 0.045, 0.14),
-              ("2_chico",     0.058, 0.17),
-              ("3_medio",     0.072, 0.21),
-              ("4_actual",    0.105, 0.30),   # el de la demo anterior, de referencia
-          ]
+          # `seguro` = cuanto se deja libre ABAJO (fraccion del alto).
+          # Instagram tapa esa franja con su interfaz.
+          ALTURAS = [("A_actual_8pct", 0.085), ("B_14pct", 0.14),
+                     ("C_18pct", 0.18), ("D_22pct", 0.22)]
+          IG_TAPA = 0.13          # zona que tapa IG, estimada de la captura de Jair
 
           def cargar(n):
               im = Image.open(D/n).convert("RGBA")
               return im.crop(im.split()[3].getbbox())
 
-          def scrim(size, band_pct, max_alpha, curva=1.15):
+          def scrim(size, band_pct, max_alpha=238, curva=1.15):
               w,h = size; banda = max(1, round(h*band_pct))
               g = Image.new("L",(1,banda))
               for y in range(banda):
@@ -90,65 +87,73 @@ jobs:
               negro = Image.new("RGBA",(w,banda),(0,0,0,255)); negro.putalpha(g)
               capa.paste(negro,(0,h-banda)); return capa
 
-          def aplicar(img, logo_h_pct, band_pct, max_alpha=238, margen_pct=0.045):
+          def aplicar(img, seguro, logo_h_pct=LOGO_H, margen_pct=0.045):
               base = img.convert("RGBA"); w,h = base.size
-              base.alpha_composite(scrim((w,h), band_pct, max_alpha))
+              # La banda arranca bien arriba de los logos y llega hasta el borde:
+              # asi el degradado sigue anclado abajo aunque los logos suban.
+              banda = seguro + logo_h_pct + 0.075
+              base.alpha_composite(scrim((w,h), banda))
               alto = round(h*logo_h_pct); piezas=[]
               for n,f in LOGOS:
                   lg = cargar(n); a = max(1, round(alto*f))
                   piezas.append(lg.resize((max(1,round(a*lg.width/lg.height)), a), Image.LANCZOS))
               m = round(w*margen_pct)
-              y0 = h - round(h * band_pct * 0.30)      # centrados en el tercio inferior de la banda
+              base_y = h - round(h*seguro)            # los logos APOYAN sobre la linea segura
               xs = [m, (w-piezas[1].width)//2, w-piezas[2].width-m]
               for lg,x in zip(piezas,xs):
-                  base.alpha_composite(lg,(x, y0-lg.height//2))
+                  base.alpha_composite(lg,(x, base_y-lg.height))
               return base.convert("RGB")
 
-          # Las MISMAS fotos que la vez pasada, para comparar peras con peras.
-          PINES = [9189, 5669]
+          def marcar_ig(img):
+              """Pinta encima la franja que tapa Instagram, para verificar."""
+              out = img.convert("RGBA"); w,h = out.size
+              capa = Image.new("RGBA",(w,h),(0,0,0,0)); d = ImageDraw.Draw(capa)
+              y = h - round(h*IG_TAPA)
+              d.rectangle([0,y,w,h], fill=(220,40,40,90))
+              d.line([(0,y),(w,y)], fill=(255,60,60,255), width=max(2,round(h*0.003)))
+              d.text((round(w*0.03), y+round(h*0.012)),
+                     "ZONA QUE TAPA INSTAGRAM", fill=(255,255,255,255))
+              out.alpha_composite(capa)
+              return out.convert("RGB")
+
           with psycopg.connect(os.environ["DATABASE_URL"]) as cx, cx.cursor() as cur:
-              cur.execute("""
-                  SELECT p.id, p.original_key FROM photos_photo p
-                  WHERE p.id = ANY(%s) AND p.original_key <> ''
-              """, (PINES,))
-              filas = cur.fetchall()
-          print("fotos:", [f[0] for f in filas])
+              cur.execute("SELECT id, original_key FROM photos_photo WHERE id=9189")
+              pid, key = cur.fetchone()
 
           r2 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
                             aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
                             aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
                             region_name="auto")
-          B = os.environ["R2_BUCKET_NAME"]
+          buf = io.BytesIO(); r2.download_fileobj(os.environ["R2_BUCKET_NAME"], key, buf)
+          buf.seek(0)
+          im = ImageOps.exif_transpose(Image.open(buf)).convert("RGB")
+          im.thumbnail((1600,1600), Image.LANCZOS)
 
-          for pid, key in filas:
-              buf = io.BytesIO(); r2.download_fileobj(B, key, buf); buf.seek(0)
-              im = ImageOps.exif_transpose(Image.open(buf)).convert("RGB")
-              im.thumbnail((1600,1600), Image.LANCZOS)
-              recortes = []
-              for etq, lh, bp in TAMANOS:
-                  render = aplicar(im, lh, bp)
-                  render.save(OUT/f"{pid}_{etq}.jpg", quality=90)
-                  # recorte del tercio de abajo para la hoja comparativa
-                  recortes.append((etq, render.crop((0, round(im.height*0.62), im.width, im.height))))
-              # Hoja comparativa: los 4 tamanos apilados y rotulados
-              fw, fh = recortes[0][1].size
-              LBL, GAP = 40, 10
-              hoja = Image.new("RGB", (fw+GAP*2, (fh+LBL)*len(recortes)+GAP), (24,24,26))
-              d = ImageDraw.Draw(hoja); y = GAP
-              for etq, r in recortes:
-                  d.text((GAP+4, y+12), etq.replace("_"," ").upper(), fill=(250,250,250))
-                  y += LBL; hoja.paste(r, (GAP, y)); y += fh
-              hoja.save(OUT/f"COMPARACION_{pid}.jpg", quality=88)
-              print(f"  foto {pid}: 4 tamanos + hoja comparativa")
+          recortes = []
+          for etq, seguro in ALTURAS:
+              render = aplicar(im, seguro)
+              render.save(OUT/f"{etq}_limpio.jpg", quality=90)
+              marcado = marcar_ig(render)
+              marcado.save(OUT/f"{etq}_con_zona_IG.jpg", quality=90)
+              recortes.append((etq, marcado.crop((0, round(im.height*0.68), im.width, im.height))))
+
+          fw, fh = recortes[0][1].size
+          LBL, GAP = 40, 10
+          hoja = Image.new("RGB", (fw+GAP*2, (fh+LBL)*len(recortes)+GAP), (24,24,26))
+          d = ImageDraw.Draw(hoja); y = GAP
+          for etq, r in recortes:
+              d.text((GAP+4, y+12), etq.replace("_"," ").upper(), fill=(250,250,250))
+              y += LBL; hoja.paste(r,(GAP,y)); y += fh
+          hoja.save(OUT/"COMPARACION_alturas.jpg", quality=88)
           print("listo:", sorted(p.name for p in OUT.iterdir()))
           PYX
 
-      - name: Devolver las imagenes por una rama
+      - name: Devolver por rama
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout --orphan demo-overlay-tmp
           git rm -rq --cached . || true
           git add -f demo_overlay/
-          git commit -qm "demo: escala de tamanos del overlay"
+          git commit -qm "demo: alturas seguras para Instagram"
           git push -f origin demo-overlay-tmp
