@@ -126,8 +126,24 @@ jobs:
               r=s.get(SITE+ruta, timeout=60)
               resumen.append(f"{ruta} -> HTTP {r.status_code}")
 
-          print("\n===== RESUMEN =====")
-          for linea in resumen: print("  "+linea)
-          assert set(codigos)=={200}, "una busqueda repetida fue rechazada"
-          print("  OK: repetir la misma busqueda ya no gasta cupo")
+          ok = set(codigos)=={200}
+          resumen.append("OK: repetir la misma busqueda ya no gasta cupo" if ok
+                         else "FALLA: una busqueda repetida fue rechazada")
+          texto = "\n".join(resumen)
+          print("\n===== RESUMEN =====\n" + texto)
+          from pathlib import Path as _P
+          _P("demo_overlay").mkdir(exist_ok=True)
+          (_P("demo_overlay")/"RESUMEN.txt").write_text(texto + "\n")
+          assert ok
           PYX
+
+      - name: Devolver el resumen por rama
+        if: always()
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -q --orphan demo-overlay-tmp
+          git rm -rq --cached . || true
+          git add -f demo_overlay/
+          git commit -qm "diag: resumen de la verificacion de limites"
+          git push -f origin demo-overlay-tmp
