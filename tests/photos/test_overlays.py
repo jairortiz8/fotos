@@ -220,3 +220,69 @@ def test_download_key_selects_branded_only_for_branded_event() -> None:
         event=EventFactory(brand_overlay=""), original_key="o3", branded_key="b3"
     )
     assert p_plain.download_key() == "o3"
+
+
+# ---------------------------------------------------------------------------
+# Template apilado (SÉPTIMO x CEP): 5 logos en dos filas abajo
+# ---------------------------------------------------------------------------
+SEPTIMO_ASSETS = (
+    "SR2026_whiteP.png",
+    "cep blanco.png",
+    "GU_Secondary_White_Transparent.png",
+    "LOGO TASU-01.png",
+    "NUGO LOGO WHITE.webp",
+)
+
+
+def test_septimo_assets_exist_and_load_rgba() -> None:
+    for name in SEPTIMO_ASSETS:
+        assert (overlays.OVERLAY_DIR / name).exists(), f"falta el asset {name}"
+        assert overlays._load_logo(name).mode == "RGBA"
+
+
+def test_septimo_is_valid_template() -> None:
+    assert overlays.is_valid_template("septimo_cep")
+
+
+def test_septimo_pinta_dos_filas_abajo_y_no_toca_arriba() -> None:
+    """Las dos filas caen en la mitad de abajo y la parte de arriba de la foto
+    queda intacta (el degradado no debe subir hasta ahí)."""
+    out = overlays.apply_brand_overlay(_solid(1067, 1600, (0, 0, 0)), "septimo_cep")
+    assert out.mode == "RGB" and out.size == (1067, 1600)
+    w, h = out.size
+    # Fila de patrocinadores (la más baja): hay blanco a izquierda y a derecha.
+    assert _has_bright(out, 0, w // 3, int(h * 0.90), h)
+    assert _has_bright(out, w * 2 // 3, w, int(h * 0.90), h)
+    # Fila de principales: blanco en el centro, más arriba.
+    assert _has_bright(out, w // 4, w * 3 // 4, int(h * 0.82), int(h * 0.90))
+    # La mitad de arriba de la foto no se toca.
+    assert out.getpixel((w // 2, h // 4)) == (0, 0, 0)
+
+
+def test_septimo_respeta_el_margen_lateral_de_instagram() -> None:
+    """Ningún logo puede entrar en el 12% de cada lado: es lo que recorta IG al
+    poner una foto vertical en una story."""
+    out = overlays.apply_brand_overlay(_solid(1067, 1600, (0, 0, 0)), "septimo_cep")
+    w, h = out.size
+    borde = int(w * 0.11)  # un pelo adentro del margen configurado (12%)
+    assert not _has_bright(out, 0, borde, 0, h)
+    assert not _has_bright(out, w - borde, w, 0, h)
+
+
+def test_septimo_funciona_horizontal_y_vertical() -> None:
+    """En horizontal los logos escalan por el lado corto: mismo alto aparente,
+    sin llenarse de logos gigantes."""
+    vert = overlays.apply_brand_overlay(_solid(1067, 1600, (0, 0, 0)), "septimo_cep")
+    horiz = overlays.apply_brand_overlay(_solid(1600, 1067, (0, 0, 0)), "septimo_cep")
+    assert horiz.size == (1600, 1067)
+    for img in (vert, horiz):
+        w, h = img.size
+        assert _has_bright(img, 0, w // 3, int(h * 0.90), h)
+        assert _has_bright(img, w * 2 // 3, w, int(h * 0.90), h)
+
+
+def test_septimo_no_se_sale_de_la_foto_en_tamanos_chicos() -> None:
+    """Un thumbnail chico no debe romper ni desbordar (todo es proporcional)."""
+    for size in ((400, 600), (600, 400), (200, 200)):
+        out = overlays.apply_brand_overlay(_solid(*size, (0, 0, 0)), "septimo_cep")
+        assert out.size == size
