@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   ops:
-    name: "Prender workers y setear el overlay del evento"
+    name: "Asignar overlay y confirmar workers"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -49,24 +49,33 @@ jobs:
           with open("servicios.json","w") as f: json.dump(filas,f)
           PYX
 
-      - name: Prender worker, worker_fast y beat si hace falta
+      - name: Esperar a que worker, worker_fast y beat queden arriba
         run: |
           python3 - <<'PYX'
-          import json, os, requests, time
+          import os, time, requests
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
              "Content-Type":"application/json"}
-          filas=json.load(open("servicios.json"))
-          VIVO={"SUCCESS","DEPLOYING","BUILDING","INITIALIZING","WAITING","QUEUED","SKIPPED"}
-          objetivo=[f for f in filas if f["nombre"] in ("worker","worker_fast","beat")]
-          M="""mutation($s:String!,$e:String!){
-                 serviceInstanceDeployV2(serviceId:$s, environmentId:$e) }"""
-          for f in objetivo:
-              if f["estado"] in VIVO:
-                  print(f"  {f['nombre']}: ya esta arriba ({f['estado']})"); continue
-              r=requests.post(API,headers=H,json={"query":M,"variables":{
-                  "s":f["serviceId"],"e":os.environ["ENV_ID"]}},timeout=60).json()
-              print(f"  {f['nombre']}: deploy disparado ->", json.dumps(r)[:200])
+          Q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
+                serviceName latestDeployment{ status } } } } } }"""
+          ESPERAN=("worker","worker_fast","beat")
+          for intento in range(30):
+              d=requests.post(API,headers=H,json={"query":Q,"variables":{
+                  "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
+              est={n["node"]["serviceName"]:
+                   (n["node"].get("latestDeployment") or {}).get("status") or "SIN DEPLOY"
+                   for n in d["environment"]["serviceInstances"]["edges"]}
+              linea=" · ".join(f"{k}={est.get(k)}" for k in ESPERAN)
+              print(f"  [{intento:02d}] {linea}")
+              if all(est.get(k)=="SUCCESS" for k in ESPERAN):
+                  print("\n  LISTO: los tres estan arriba."); break
+              if any(est.get(k) in ("FAILED","CRASHED") for k in ESPERAN):
+                  raise SystemExit("algun servicio quedo en FAILED/CRASHED")
+              time.sleep(25)
+          else:
+              print("\n  OJO: se acabo la espera, revisar en el dashboard")
+          print("\n=== TODOS LOS SERVICIOS ===")
+          for k,v in est.items(): print(f"  {k:<14} {v}")
           PYX
 
       - name: Credenciales
@@ -97,36 +106,30 @@ jobs:
         run: |
           python3 - <<'PYX'
           import os, psycopg
+          SLUG = "septimo-x-cep-social-run"
           with psycopg.connect(os.environ["DATABASE_URL"]) as cx, cx.cursor() as cur:
-              cur.execute("""
-                  SELECT id, name, slug, status, brand_overlay, date
-                  FROM events_event
-                  WHERE status <> 'deleted'
-                  ORDER BY date DESC LIMIT 15
-              """)
-              print("=== EVENTOS ===")
-              filas=cur.fetchall()
-              for r in filas:
-                  print(f"  id={r[0]:<4} {r[1][:38]:<38} slug={r[2][:28]:<28}"
-                        f" estado={r[3]:<16} overlay={r[4]!r} fecha={r[5]}")
+              cur.execute(
+                  "UPDATE events_event SET brand_overlay='septimo_cep' "
+                  "WHERE slug=%s AND status <> 'deleted' RETURNING id, name",
+                  (SLUG,),
+              )
+              fila = cur.fetchone()
+              if fila is None:
+                  raise SystemExit(f"no existe el evento {SLUG}")
+              cx.commit()
+              print(f"  overlay asignado -> id={fila[0]} {fila[1]}")
 
-              # Sin acentos para no depender de la collation: "ptimo" cubre
-              # SEPTIMO y SÉPTIMO por igual.
-              cur.execute("""
-                  SELECT id, name, slug FROM events_event
-                  WHERE status <> 'deleted'
-                    AND (name ILIKE '%ptimo%' OR slug ILIKE '%ptimo%'
-                         OR name ILIKE '%social run%' OR slug ILIKE '%social-run%')
-              """)
-              cand=cur.fetchall()
-              print("\n=== CANDIDATOS SEPTIMO/CEP ===", cand)
-              if len(cand) == 1:
-                  cur.execute("UPDATE events_event SET brand_overlay='septimo_cep' WHERE id=%s",
-                              (cand[0][0],))
-                  cx.commit()
-                  print(f"  -> overlay asignado a id={cand[0][0]} ({cand[0][1]})")
-              else:
-                  print("  -> NO se toca nada: hay", len(cand), "candidatos")
+              cur.execute("SELECT id, name, slug, status, brand_overlay FROM events_event "
+                          "WHERE brand_overlay <> '' ORDER BY id")
+              print("\n=== EVENTOS CON LOGOS ===")
+              for r in cur.fetchall():
+                  print(f"  id={r[0]:<3} {r[1][:34]:<34} estado={r[3]:<15} overlay={r[4]}")
+
+              # La migracion 0007 (solo choices) tiene que estar aplicada.
+              cur.execute("SELECT name FROM django_migrations WHERE app='events' "
+                          "ORDER BY id DESC LIMIT 3")
+              print("\n=== ULTIMAS MIGRATIONS DE events ===")
+              for (n,) in cur.fetchall(): print("  ", n)
           PYX
 
       - name: Render real con el codigo de produccion
@@ -172,5 +175,5 @@ jobs:
           git checkout --orphan demo-overlay-tmp
           git rm -rq --cached . || true
           git add -f demo_overlay/
-          git commit -qm "demo: render con el codigo de produccion"
+          git commit -qm "demo: render final vertical y horizontal"
           git push -f origin demo-overlay-tmp
