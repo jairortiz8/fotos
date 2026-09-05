@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   demo:
-    name: Ancho seguro para Instagram (recorte lateral)
+    name: Bajar los logos (margen 12% ya fijado)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -88,11 +88,11 @@ jobs:
                   out.append(lg.resize((max(1,round(a*lg.width/lg.height)), a), Image.LANCZOS))
               return out
 
-          def aplicar(img, modo, margen_pct=0.12, sep_pct=0.05):
+          def aplicar(img, modo, margen_pct=0.12, sep_pct=0.05, seguro_y=SEGURO_Y):
               base = img.convert("RGBA"); w,h = base.size
-              base.alpha_composite(scrim((w,h), BANDA))
+              base.alpha_composite(scrim((w,h), BANDA - (SEGURO_Y - seguro_y)))
               pz = piezas_de(h)
-              y0 = h - round(h*SEGURO_Y)
+              y0 = h - round(h*seguro_y)
               if modo == "repartidos":
                   m = round(w*margen_pct)
                   xs = [m, (w-pz[1].width)//2, w-pz[2].width-m]
@@ -134,18 +134,20 @@ jobs:
           print(f"foto {im.width}x{im.height} · IG deja visible el {vis*100:.0f}% del ancho"
                 f" · recorta {(1-vis)/2*100:.1f}% por lado")
 
+          # Cuanto queda LIBRE debajo de los logos (fraccion del alto).
+          # Mas chico = logos mas abajo.
           OPCIONES = [
-              ("1_actual_margen_4",     dict(modo="repartidos", margen_pct=0.045)),
-              ("2_repartidos_margen_12",dict(modo="repartidos", margen_pct=0.12)),
-              ("3_repartidos_margen_16",dict(modo="repartidos", margen_pct=0.16)),
-              ("4_agrupados_centro",    dict(modo="agrupados")),
+              ("1_muy_abajo_3", 0.030),
+              ("2_abajo_4",     0.042),
+              ("3_abajo_5",     0.055),
+              ("4_anterior_8",  0.085),   # donde estaban, de referencia
           ]
           recortes=[]
-          for etq, kw in OPCIONES:
-              r = aplicar(im, **kw)
+          for etq, sy in OPCIONES:
+              r = aplicar(im, modo="repartidos", margen_pct=0.12, seguro_y=sy)
               r.save(OUT/f"{etq}_limpio.jpg", quality=90)
               mk = marcar_recorte(r); mk.save(OUT/f"{etq}_recorte_IG.jpg", quality=90)
-              recortes.append((etq, mk.crop((0, round(im.height*0.72), im.width, im.height))))
+              recortes.append((etq, r.crop((0, round(im.height*0.76), im.width, im.height))))
 
           fw, fh = recortes[0][1].size
           LBL, GAP = 40, 10
@@ -154,7 +156,7 @@ jobs:
           for etq,r in recortes:
               d.text((GAP+4,y+12), etq.replace("_"," ").upper(), fill=(250,250,250))
               y+=LBL; hoja.paste(r,(GAP,y)); y+=fh
-          hoja.save(OUT/"COMPARACION_ancho.jpg", quality=88)
+          hoja.save(OUT/"COMPARACION_altura.jpg", quality=88)
           print("listo:", sorted(p.name for p in OUT.iterdir()))
           PYX
 
@@ -165,5 +167,5 @@ jobs:
           git checkout --orphan demo-overlay-tmp
           git rm -rq --cached . || true
           git add -f demo_overlay/
-          git commit -qm "demo: ancho seguro para el recorte de Instagram"
+          git commit -qm "demo: bajar los logos"
           git push -f origin demo-overlay-tmp
