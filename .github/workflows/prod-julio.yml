@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   ops:
-    name: "Por que la foto nueva salio sin logos"
+    name: "Ficha de la foto 45833"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -21,17 +21,15 @@ jobs:
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
       WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: main }
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --quiet requests "psycopg[binary]" boto3 Pillow
+      - run: pip install --quiet requests "psycopg[binary]"
 
-      - name: Cuando se desplego cada servicio
+      - name: Deploys y ficha de la foto
         run: |
           python3 - <<'PYX'
-          import os, requests
+          import os, requests, psycopg
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
              "Content-Type":"application/json"}
@@ -39,86 +37,32 @@ jobs:
                 serviceName latestDeployment{ status createdAt meta } } } } } }"""
           d=requests.post(API,headers=H,json={"query":Q,"variables":{
               "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
-          print("=== DEPLOYS ===")
+          print("=== DEPLOYS (hora UTC) ===")
           for e in d["environment"]["serviceInstances"]["edges"]:
               n=e["node"]; dep=n.get("latestDeployment") or {}
-              meta=dep.get("meta") or {}
-              sha=(meta.get("commitHash") or "")[:8]
+              sha=((dep.get("meta") or {}).get("commitHash") or "")[:8]
               print(f"  {n['serviceName']:<14} {dep.get('status','SIN DEPLOY'):<10}"
                     f" {dep.get('createdAt','')}  commit={sha}")
-          PYX
 
-      - name: Credenciales
-        run: |
-          python3 - <<'PYX'
-          import os, requests
-          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
-             "Content-Type":"application/json"}
           V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          def vf(sid):
-              return (requests.post(API,headers=H,json={"query":V,"variables":{
-                  "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}},
-                  timeout=40).json().get("data") or {}).get("variables") or {}
-          pg=vf(os.environ["PG_ID"]); web=vf(os.environ["WEB_ID"])
-          out={"DATABASE_URL":pg.get("DATABASE_PUBLIC_URL"),
-               "R2_ENDPOINT_URL":web.get("R2_ENDPOINT_URL"),
-               "R2_ACCESS_KEY_ID":web.get("R2_ACCESS_KEY_ID"),
-               "R2_SECRET_ACCESS_KEY":web.get("R2_SECRET_ACCESS_KEY"),
-               "R2_BUCKET_NAME":web.get("R2_BUCKET_NAME")}
-          if [k for k,v in out.items() if not v]: raise SystemExit("faltan credenciales")
-          with open(os.environ["GITHUB_ENV"],"a") as f:
-              for k,v in out.items():
-                  print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
-          PYX
+          pg=(requests.post(API,headers=H,json={"query":V,"variables":{
+              "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
+              "s":os.environ["PG_ID"]}},timeout=40).json().get("data") or {}).get("variables") or {}
+          url=pg.get("DATABASE_PUBLIC_URL")
+          print(f"::add-mask::{url}")
 
-      - name: Las ultimas fotos subidas
-        run: |
-          python3 - <<'PYX'
-          import io, os, boto3, psycopg
-          from pathlib import Path
-          OUT = Path("demo_overlay"); OUT.mkdir(exist_ok=True)
-          with psycopg.connect(os.environ["DATABASE_URL"]) as cx, cx.cursor() as cur:
+          with psycopg.connect(url) as cx, cx.cursor() as cur:
               cur.execute("""
                   SELECT p.id, e.slug, e.brand_overlay, p.status, p.created_at,
-                         p.preview_key, p.branded_key, p.original_key
+                         p.updated_at, p.preview_key, p.branded_key, p.original_key
                   FROM photos_photo p JOIN events_event e ON e.id = p.event_id
-                  ORDER BY p.id DESC LIMIT 8
+                  ORDER BY p.id DESC LIMIT 5
               """)
-              filas = cur.fetchall()
-          print("=== ULTIMAS 8 FOTOS ===")
-          for r in filas:
-              print(f"  id={r[0]:<6} evento={r[1][:26]:<26} overlay={r[2]!r:<15}"
-                    f" estado={r[3]:<18} subida={r[4]:%Y-%m-%d %H:%M:%S}")
-              print(f"          preview={r[5] or '(vacio)'}")
-              print(f"          branded={r[6] or '(vacio)'}")
-
-          r2 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
-                            aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
-                            aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
-                            region_name="auto")
-          # Se baja el preview de la mas reciente que lo tenga, para verlo.
-          for r in filas:
-              if not r[5]: continue
-              buf = io.BytesIO()
-              r2.download_fileobj(os.environ["R2_BUCKET_NAME"], r[5], buf)
-              (OUT/f"ULTIMA_{r[0]}_preview.webp").write_bytes(buf.getvalue())
-              print(f"\n  bajado el preview de la foto {r[0]} ({len(buf.getvalue())//1024} KB)")
-              if r[6]:
-                  b = io.BytesIO()
-                  r2.download_fileobj(os.environ["R2_BUCKET_NAME"], r[6], b)
-                  (OUT/f"ULTIMA_{r[0]}_branded.jpg").write_bytes(b.getvalue())
-                  print(f"  bajado el original con logos ({len(b.getvalue())//1024} KB)")
-              break
-          print("\nlisto:", sorted(p.name for p in OUT.iterdir()))
+              print("\n=== ULTIMAS 5 FOTOS (hora UTC) ===")
+              for r in cur.fetchall():
+                  print(f"  id={r[0]}  evento={r[1]}  overlay={r[2]!r}  estado={r[3]}")
+                  print(f"      subida  {r[4]:%Y-%m-%d %H:%M:%S}   procesada {r[5]:%Y-%m-%d %H:%M:%S}")
+                  print(f"      original={r[8]}")
+                  print(f"      preview ={r[6] or '(vacio)'}")
+                  print(f"      branded ={r[7] or '(vacio)'}")
           PYX
-
-      - name: Devolver por rama
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout --orphan demo-overlay-tmp
-          git rm -rq --cached . || true
-          git add -f demo_overlay/
-          git commit -qm "diag: preview de la ultima foto subida"
-          git push -f origin demo-overlay-tmp
