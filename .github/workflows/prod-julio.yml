@@ -103,33 +103,31 @@ jobs:
                   ORDER BY 3 DESC LIMIT 1
               """)
               slug, dorsal, n = cur.fetchone()
-          print(f"[base] evento '{slug}' · dorsal #{dorsal} en {n} fotos\n")
           s=requests.Session()
+          resumen=[f"evento '{slug}' · dorsal #{dorsal} en {n} fotos"]
 
-          # 1) El MISMO dorsal 30 veces: con el limite viejo daba 429 en la 11a.
           codigos=[]
           for i in range(30):
               r=s.get(f"{SITE}/eventos/{slug}/", params={"bib":dorsal}, timeout=60)
               codigos.append(r.status_code)
-              if r.status_code!=200:
-                  print(f"  corto en el intento {i+1} con HTTP {r.status_code}"); break
+              if r.status_code!=200: break
           fotos=len(set(re.findall(r"/foto/(\d+)", r.text)))
-          print(f"[MISMO DORSAL x30] codigos distintos: {sorted(set(codigos))}"
-                f" · {len(codigos)} intentos · fotos en la ultima pagina: {fotos}")
-          assert set(codigos)=={200}, "alguna busqueda repetida fue rechazada"
+          resumen.append(f"MISMO dorsal x{len(codigos)}: codigos={sorted(set(codigos))}"
+                         f" · fotos encontradas={fotos}")
 
-          # 2) Dorsales DISTINTOS: siguen consumiendo cupo (anti-scraping vivo).
-          #    Con 200/h no deberia cortar en 30, pero se mide igual.
           distintos=[]
           for i in range(30):
               r=s.get(f"{SITE}/eventos/{slug}/", params={"bib":str(90000+i)}, timeout=60)
               distintos.append(r.status_code)
               if r.status_code!=200: break
-          print(f"[30 DORSALES DISTINTOS] codigos: {sorted(set(distintos))}")
+          resumen.append(f"30 dorsales DISTINTOS: codigos={sorted(set(distintos))}")
 
-          # 3) El sitio en general.
           for ruta in ("/healthz/lite","/","/eventos/septimo-x-cep-social-run/"):
               r=s.get(SITE+ruta, timeout=60)
-              print(f"  {ruta:<40} HTTP {r.status_code}")
-          print("\n  RESULTADO: repetir la misma busqueda ya no gasta cupo.")
+              resumen.append(f"{ruta} -> HTTP {r.status_code}")
+
+          print("\n===== RESUMEN =====")
+          for linea in resumen: print("  "+linea)
+          assert set(codigos)=={200}, "una busqueda repetida fue rechazada"
+          print("  OK: repetir la misma busqueda ya no gasta cupo")
           PYX
