@@ -328,3 +328,26 @@ def test_septimo_respeta_los_altos_pedidos_por_el_template() -> None:
         for pieza, spec in zip(piezas, fila.logos, strict=True):
             esperado = round(corto * fila.h_pct * spec.scale)
             assert abs(pieza.height - esperado) <= 1, (spec.filename, pieza.height, esperado)
+
+
+def test_fila_justificada_deja_el_logo_del_medio_en_el_eje() -> None:
+    """En una fila justificada el primero va al margen izquierdo, el último al
+    derecho y el del medio EN EL CENTRO de la foto. Repartir con huecos iguales
+    lo corría casi un 9% del ancho, porque NuGo es mucho más ancho que GU."""
+    cfg = overlays.TEMPLATES["septimo_cep"]
+    assert isinstance(cfg, overlays.StackedTemplate)
+    fila = cfg.rows[1]
+    ancho = 1067
+    piezas = overlays._row_pieces(fila, ancho)
+    xs = overlays._row_positions(
+        piezas,
+        ancho,
+        round(ancho * cfg.margin_x_pct),
+        round(ancho * cfg.center_gap_pct),
+        fila.spread,
+    )
+    margen = round(ancho * cfg.margin_x_pct)
+    assert xs[0] == margen
+    assert xs[-1] + piezas[-1].width == ancho - margen
+    centro_medio = xs[1] + piezas[1].width // 2
+    assert abs(centro_medio - ancho // 2) <= 1

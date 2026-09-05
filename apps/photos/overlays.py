@@ -210,20 +210,34 @@ def _row_pieces(row: LogoRow, short: int, escala: float = 1.0) -> list[Image.Ima
 def _row_positions(
     pieces: list[Image.Image], w: int, margin: int, gap: int, spread: str
 ) -> list[int]:
-    """Los x de cada logo de la fila."""
-    total = sum(p.width for p in pieces)
-    if spread == "centrado":
-        ancho = total + gap * (len(pieces) - 1)
+    """Los x de cada logo de la fila.
+
+    "centrado": el grupo entero va al medio, con `gap` entre logos.
+
+    "justificado": el primero pegado al margen izquierdo, el último al derecho,
+    y los del medio centrados en la foto. Repartir con huecos iguales NO sirve:
+    como los logos tienen anchos muy distintos (NuGo es 3 veces más ancho que
+    GU), el del medio terminaba corrido casi un 9% del ancho hacia la izquierda.
+    """
+    if spread == "centrado" or len(pieces) == 1:
+        ancho = sum(p.width for p in pieces) + gap * (len(pieces) - 1)
         x = (w - ancho) // 2
-    else:  # justificado: del margen izquierdo al derecho, con aire igual en medio
-        usable = w - 2 * margin
-        if len(pieces) > 1:
-            gap = max(0, (usable - total) // (len(pieces) - 1))
-        x = margin
-    xs = []
-    for piece in pieces:
-        xs.append(x)
-        x += piece.width + gap
+        xs = []
+        for piece in pieces:
+            xs.append(x)
+            x += piece.width + gap
+        return xs
+
+    xs = [0] * len(pieces)
+    xs[0] = margin
+    xs[-1] = w - pieces[-1].width - margin
+    medio = pieces[1:-1]
+    if medio:
+        ancho = sum(p.width for p in medio) + gap * (len(medio) - 1)
+        x = (w - ancho) // 2
+        for i, piece in enumerate(medio, start=1):
+            xs[i] = x
+            x += piece.width + gap
     return xs
 
 
