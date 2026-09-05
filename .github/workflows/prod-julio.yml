@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   ops:
-    name: "Borrar las fotos de prueba del evento"
+    name: "Verificar los limites de busqueda en produccion"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -21,10 +21,53 @@ jobs:
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
       WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
     steps:
+      - uses: actions/checkout@v4
+        with: { ref: main }
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --quiet requests "psycopg[binary]" boto3
+      - run: pip install --quiet requests "psycopg[binary]"
+
+      - name: El web tiene que estar en el commit nuevo
+        run: |
+          SHA=$(git rev-parse HEAD)
+          echo "main esta en $SHA"
+          python3 - "$SHA" <<'PYX'
+          import os, sys, time, requests
+          sha=sys.argv[1]
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
+             "Content-Type":"application/json"}
+          Q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
+                serviceId serviceName latestDeployment{ status meta } } } } } }"""
+          def estado():
+              d=requests.post(API,headers=H,json={"query":Q,"variables":{
+                  "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
+              return {n["node"]["serviceName"]:{
+                        "id":n["node"]["serviceId"],
+                        "status":(n["node"].get("latestDeployment") or {}).get("status") or "SIN DEPLOY",
+                        "commit":(((n["node"].get("latestDeployment") or {}).get("meta") or {})
+                                  .get("commitHash") or "")[:8]} for n in d["environment"]["serviceInstances"]["edges"]}
+          st=estado()
+          print("=== SERVICIOS ===")
+          for k,v in st.items(): print(f"  {k:<14} {v['status']:<10} commit={v['commit']}")
+          if not (st["fotos"]["status"]=="SUCCESS" and st["fotos"]["commit"]==sha[:8]):
+              print("\n  el web no esta en el commit nuevo, lo deployo")
+              M="""mutation($s:String!,$e:String!,$c:String){
+                     serviceInstanceDeployV2(serviceId:$s, environmentId:$e, commitSha:$c) }"""
+              requests.post(API,headers=H,json={"query":M,"variables":{
+                  "s":st["fotos"]["id"],"e":os.environ["ENV_ID"],"c":sha}},timeout=60)
+              for i in range(45):
+                  time.sleep(20)
+                  a=estado()["fotos"]
+                  print(f"  [{i:02d}] fotos={a['status']}/{a['commit']}")
+                  if a["status"]=="SUCCESS" and a["commit"]==sha[:8]:
+                      print("  LISTO"); break
+                  if a["status"] in ("FAILED","CRASHED"): raise SystemExit("el deploy fallo")
+              else: raise SystemExit("se acabo la espera")
+          else:
+              print("\n  el web ya esta en el commit nuevo")
+          PYX
 
       - name: Credenciales
         run: |
@@ -34,96 +77,59 @@ jobs:
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
              "Content-Type":"application/json"}
           V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          def vf(sid):
-              return (requests.post(API,headers=H,json={"query":V,"variables":{
-                  "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}},
-                  timeout=40).json().get("data") or {}).get("variables") or {}
-          pg=vf(os.environ["PG_ID"]); web=vf(os.environ["WEB_ID"])
-          out={"DATABASE_URL":pg.get("DATABASE_PUBLIC_URL"),
-               "R2_ENDPOINT_URL":web.get("R2_ENDPOINT_URL"),
-               "R2_ACCESS_KEY_ID":web.get("R2_ACCESS_KEY_ID"),
-               "R2_SECRET_ACCESS_KEY":web.get("R2_SECRET_ACCESS_KEY"),
-               "R2_BUCKET_NAME":web.get("R2_BUCKET_NAME")}
-          if [k for k,v in out.items() if not v]: raise SystemExit("faltan credenciales")
-          with open(os.environ["GITHUB_ENV"],"a") as f:
-              for k,v in out.items():
-                  print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
+          pg=(requests.post(API,headers=H,json={"query":V,"variables":{
+              "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
+              "s":os.environ["PG_ID"]}},timeout=40).json().get("data") or {}).get("variables") or {}
+          url=pg.get("DATABASE_PUBLIC_URL")
+          if not url: raise SystemExit("no se pudo leer DATABASE_PUBLIC_URL")
+          print(f"::add-mask::{url}")
+          with open(os.environ["GITHUB_ENV"],"a") as f: f.write(f"DATABASE_URL={url}\n")
           PYX
 
-      - name: Borrar SOLO las fotos del evento septimo-x-cep-social-run
+      - name: Buscar de verdad, muchas veces seguidas
         run: |
           python3 - <<'PYX'
-          import os, boto3, psycopg
-          SLUG = "septimo-x-cep-social-run"
-          TOPE = 5   # freno: si hubiera mas fotos de las esperadas, no borra nada
-
+          import os, re, psycopg, requests
+          SITE="https://findyourfoto.com"
           with psycopg.connect(os.environ["DATABASE_URL"]) as cx, cx.cursor() as cur:
-              cur.execute("SELECT id FROM events_event WHERE slug=%s", (SLUG,))
-              fila = cur.fetchone()
-              if fila is None: raise SystemExit(f"no existe el evento {SLUG}")
-              (evento_id,) = fila
               cur.execute("""
-                  SELECT id, status, created_at, original_key, preview_key,
-                         thumbnail_key, branded_key
-                  FROM photos_photo WHERE event_id=%s ORDER BY id
-              """, (evento_id,))
-              fotos = cur.fetchall()
+                  SELECT e.slug, b.number, count(*)
+                  FROM photos_bib b
+                  JOIN photos_photo p ON p.id=b.photo_id
+                  JOIN events_event e ON e.id=p.event_id
+                  WHERE p.status='approved' AND b.rejected=false
+                  GROUP BY e.slug, b.number
+                  HAVING count(*) BETWEEN 2 AND 40
+                  ORDER BY 3 DESC LIMIT 1
+              """)
+              slug, dorsal, n = cur.fetchone()
+          print(f"[base] evento '{slug}' · dorsal #{dorsal} en {n} fotos\n")
+          s=requests.Session()
 
-              print(f"=== FOTOS EN {SLUG} ({len(fotos)}) ===")
-              for f in fotos:
-                  print(f"  id={f[0]}  estado={f[1]}  subida {f[2]:%Y-%m-%d %H:%M:%S}")
-              if not fotos:
-                  raise SystemExit(0)
-              if len(fotos) > TOPE:
-                  raise SystemExit(f"NO BORRO NADA: hay {len(fotos)} fotos, mas de las "
-                                   f"{TOPE} esperadas. Revisar a mano.")
+          # 1) El MISMO dorsal 30 veces: con el limite viejo daba 429 en la 11a.
+          codigos=[]
+          for i in range(30):
+              r=s.get(f"{SITE}/eventos/{slug}/", params={"bib":dorsal}, timeout=60)
+              codigos.append(r.status_code)
+              if r.status_code!=200:
+                  print(f"  corto en el intento {i+1} con HTTP {r.status_code}"); break
+          fotos=len(set(re.findall(r"/foto/(\d+)", r.text)))
+          print(f"[MISMO DORSAL x30] codigos distintos: {sorted(set(codigos))}"
+                f" · {len(codigos)} intentos · fotos en la ultima pagina: {fotos}")
+          assert set(codigos)=={200}, "alguna busqueda repetida fue rechazada"
 
-              ids = [f[0] for f in fotos]
-              keys = [k for f in fotos for k in f[3:7] if k]
+          # 2) Dorsales DISTINTOS: siguen consumiendo cupo (anti-scraping vivo).
+          #    Con 200/h no deberia cortar en 30, pero se mide igual.
+          distintos=[]
+          for i in range(30):
+              r=s.get(f"{SITE}/eventos/{slug}/", params={"bib":str(90000+i)}, timeout=60)
+              distintos.append(r.status_code)
+              if r.status_code!=200: break
+          print(f"[30 DORSALES DISTINTOS] codigos: {sorted(set(distintos))}")
 
-              cur.execute("SELECT count(*) FROM photos_faceembedding WHERE photo_id = ANY(%s)", (ids,))
-              (n_emb,) = cur.fetchone()
-              cur.execute("SELECT count(*) FROM photos_bib WHERE photo_id = ANY(%s)", (ids,))
-              (n_bib,) = cur.fetchone()
-
-              r2 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
-                                aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
-                                aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
-                                region_name="auto")
-              print(f"\nborrando {len(keys)} archivos de R2...")
-              for k in keys:
-                  r2.delete_object(Bucket=os.environ["R2_BUCKET_NAME"], Key=k)
-                  print(f"   borrado {k}")
-
-              cur.execute("DELETE FROM photos_faceembedding WHERE photo_id = ANY(%s)", (ids,))
-              cur.execute("DELETE FROM photos_bib WHERE photo_id = ANY(%s)", (ids,))
-              cur.execute("DELETE FROM photos_photo WHERE id = ANY(%s)", (ids,))
-              print(f"\nbase: {len(ids)} fotos, {n_emb} caras, {n_bib} dorsales")
-
-              # Bitacora (toda accion de admin queda registrada).
-              cur.execute("""
-                  INSERT INTO core_auditlog (action, target_type, target_id, metadata,
-                                             created_at, updated_at, user_id, ip_address)
-                  VALUES ('photo.deleted', 'Event', %s, %s::jsonb, now(), now(), NULL, NULL)
-              """, (str(evento_id),
-                    '{"motivo": "fotos de prueba del overlay", "photo_ids": %s}' % ids))
-
-              # Contadores del evento al dia.
-              cur.execute("""
-                  UPDATE events_event e SET
-                    photo_count = (SELECT count(*) FROM photos_photo p
-                                   WHERE p.event_id=e.id AND p.status <> 'deleted'),
-                    pending_count = (SELECT count(*) FROM photos_photo p
-                                     WHERE p.event_id=e.id AND p.status='pending_review')
-                  WHERE e.id=%s
-                  RETURNING photo_count, pending_count
-              """, (evento_id,))
-              pc, pend = cur.fetchone()
-              cx.commit()
-              print(f"contadores del evento: {pc} fotos, {pend} pendientes")
-
-              cur.execute("SELECT count(*) FROM photos_photo WHERE event_id=%s", (evento_id,))
-              (quedan,) = cur.fetchone()
-              print(f"\nRESULTADO: quedan {quedan} fotos en el evento"
-                    f" ({'limpio' if quedan==0 else 'REVISAR'})")
+          # 3) El sitio en general.
+          for ruta in ("/healthz/lite","/","/eventos/septimo-x-cep-social-run/"):
+              r=s.get(SITE+ruta, timeout=60)
+              print(f"  {ruta:<40} HTTP {r.status_code}")
+          print("\n  RESULTADO: repetir la misma busqueda ya no gasta cupo.")
           PYX
