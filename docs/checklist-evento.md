@@ -154,7 +154,19 @@ mutation($id:String!){ deploymentRemove(id:$id) }
 
 **Para volver a prenderlos**: un push a `main` redeploya los tres (todos trackean
 esa rama), o *Redeploy* en cada servicio desde el panel. No hay que reconfigurar
-nada.
+nada. Por API, uno por servicio:
+
+```graphql
+mutation($s:String!,$e:String!){
+  serviceInstanceDeployV2(serviceId:$s, environmentId:$e)
+}
+```
+
+Verde en Railway no alcanza como prueba: la forma real de saber que están
+consumiendo la cola es preguntárselo. Con `REDIS_PUBLIC_URL` (proxy público de
+Redis), un `Celery(broker=url).control.ping(timeout=8)` devuelve una respuesta
+**por cada worker** que esté escuchando. Con `worker` y `worker_fast` arriba
+tienen que contestar **dos**.
 
 > **Ojo con el orden**: como cualquier push a `main` los revive, apagalos
 > **después** del último push. Si hacés un push con los workers ya apagados
