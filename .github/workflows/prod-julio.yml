@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   ops:
-    name: "Probar el overlay de punta a punta en prod"
+    name: "El original que se descarga lleva los logos?"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --quiet requests "psycopg[binary]" boto3 Pillow celery redis
+      - run: pip install --quiet requests "psycopg[binary]" boto3 Pillow
 
       - name: Credenciales
         run: |
@@ -33,25 +33,13 @@ jobs:
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
              "Content-Type":"application/json"}
-          Q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceId serviceName latestDeployment{ status meta } } } } } }"""
-          d=requests.post(API,headers=H,json={"query":Q,"variables":{
-              "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
-          ids={}
-          print("=== SERVICIOS ===")
-          for e in d["environment"]["serviceInstances"]["edges"]:
-              n=e["node"]; dep=n.get("latestDeployment") or {}
-              sha=((dep.get("meta") or {}).get("commitHash") or "")[:8]
-              print(f"  {n['serviceName']:<14} {dep.get('status','SIN DEPLOY'):<10} commit={sha}")
-              ids[n["serviceName"]]=n["serviceId"]
           V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
           def vf(sid):
               return (requests.post(API,headers=H,json={"query":V,"variables":{
                   "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}},
                   timeout=40).json().get("data") or {}).get("variables") or {}
-          pg=vf(os.environ["PG_ID"]); web=vf(ids["fotos"]); rd=vf(ids["Redis"])
+          pg=vf(os.environ["PG_ID"]); web=vf(os.environ["WEB_ID"])
           out={"DATABASE_URL":pg.get("DATABASE_PUBLIC_URL"),
-               "BROKER_URL":rd.get("REDIS_PUBLIC_URL"),
                "R2_ENDPOINT_URL":web.get("R2_ENDPOINT_URL"),
                "R2_ACCESS_KEY_ID":web.get("R2_ACCESS_KEY_ID"),
                "R2_SECRET_ACCESS_KEY":web.get("R2_SECRET_ACCESS_KEY"),
@@ -62,68 +50,60 @@ jobs:
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
           PYX
 
-      - name: Reprocesar la foto 45833 y mirar el preview
+      - name: Medir preview, original y original-con-logos
         run: |
           python3 - <<'PYX'
-          import io, os, time, boto3, psycopg
-          from celery import Celery
+          import io, os, boto3, psycopg
           from pathlib import Path
           from PIL import Image
-
           FOTO = 45833
-          app = Celery(broker=os.environ["BROKER_URL"])
-          print("workers que contestan:", len(app.control.ping(timeout=8) or []))
-
           with psycopg.connect(os.environ["DATABASE_URL"]) as cx, cx.cursor() as cur:
-              cur.execute("SELECT preview_key, updated_at FROM photos_photo WHERE id=%s", (FOTO,))
-              key_antes, upd_antes = cur.fetchone()
-          print(f"preview antes: {key_antes}  (procesada {upd_antes:%H:%M:%S})")
-
-          app.send_task("photos.process_photo", args=[FOTO], queue="fast")
-          print("task encolada, esperando a que el worker la termine...")
-
-          for i in range(30):
-              time.sleep(10)
-              with psycopg.connect(os.environ["DATABASE_URL"]) as cx, cx.cursor() as cur:
-                  cur.execute("SELECT status, preview_key, updated_at FROM photos_photo "
-                              "WHERE id=%s", (FOTO,))
-                  st, key, upd = cur.fetchone()
-              print(f"  [{i:02d}] estado={st} procesada={upd:%H:%M:%S}")
-              if upd > upd_antes and st not in ("processing", "pending"):
-                  break
+              cur.execute("SELECT status, width, height, preview_key, branded_key, "
+                          "original_key, thumbnail_key FROM photos_photo WHERE id=%s", (FOTO,))
+              st, W, Hh, prev, brand, orig, thumb = cur.fetchone()
+          print(f"foto {FOTO}: estado={st}  tamano guardado={W}x{Hh}")
+          print(f"  preview={prev}")
+          print(f"  branded={brand or '(VACIO -> el original que se baja NO lleva logos)'}")
 
           r2 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
                             aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
                             aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
                             region_name="auto")
           OUT = Path("demo_overlay"); OUT.mkdir(exist_ok=True)
-          buf = io.BytesIO(); r2.download_fileobj(os.environ["R2_BUCKET_NAME"], key, buf)
-          buf.seek(0)
-          im = Image.open(buf).convert("RGB")
-          im.save(OUT/"PROD_reprocesada.jpg", quality=90)
-          print(f"\npreview nuevo: {key}  {im.size}")
 
-          # Chequeo automatico: en la franja de abajo tiene que haber blanco (logos).
-          w, h = im.size
-          def hay_blanco(x0, x1, y0, y1):
-              return any(all(c > 180 for c in im.getpixel((x, y)))
-                         for x in range(x0, x1, 4) for y in range(y0, y1, 4))
-          izq = hay_blanco(0, w // 3, int(h * 0.90), h)
-          der = hay_blanco(w * 2 // 3, w, int(h * 0.90), h)
-          centro = hay_blanco(w // 4, w * 3 // 4, int(h * 0.80), int(h * 0.90))
-          print(f"logos abajo-izq={izq}  abajo-der={der}  principales-centro={centro}")
-          print("RESULTADO:", "OVERLAY APLICADO" if (izq and der and centro)
-                else "REVISAR, no se ven los logos donde deberian")
+          def bajar(key, nombre):
+              if not key: return None
+              b = io.BytesIO(); r2.download_fileobj(os.environ["R2_BUCKET_NAME"], key, b)
+              b.seek(0); im = Image.open(b)
+              print(f"\n  {nombre}: {im.size[0]}x{im.size[1]}  {len(b.getvalue())//1024} KB")
+              return im
+
+          for key, nombre, archivo in ((orig,"original subido","A_original.jpg"),
+                                       (brand,"original CON logos","B_original_con_logos.jpg"),
+                                       (prev,"preview de la galeria","C_preview.jpg")):
+              im = bajar(key, nombre)
+              if im is None: continue
+              im.convert("RGB").save(OUT/archivo, quality=88)
+              w,h = im.size
+              rgb = im.convert("RGB")
+              ys=[y for y in range(int(h*0.78), h)
+                  if any(all(c>200 for c in rgb.getpixel((x,y))) for x in range(0,w,max(1,w//300)))]
+              if ys:
+                  alto = max(ys)-min(ys)+1
+                  print(f"     franja de logos: {round(alto/w*100,2)}% del ancho"
+                        f" · pegada al borde de abajo a {round((h-1-max(ys))/w*100,2)}% del ancho")
+              else:
+                  print("     NO se detectan logos")
+          print("\nlisto:", sorted(p.name for p in OUT.iterdir()))
           PYX
 
       - name: Devolver por rama
-        if: always()
         run: |
-          git init -q . 2>/dev/null || true
+          git init -q .
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git remote add origin https://x-access-token:${{ github.token }}@github.com/${{ github.repository }} 2>/dev/null || true
+          git remote add origin https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}
           git checkout -q --orphan demo-overlay-tmp
           git add -f demo_overlay/
-          git commit -qm "diag: preview tras reprocesar con el codigo nuevo"
+          git commit -qm "diag: preview vs original con logos"
           git push -f origin demo-overlay-tmp
