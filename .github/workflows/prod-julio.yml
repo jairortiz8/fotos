@@ -97,28 +97,30 @@ jobs:
               capa.paste(negro,(0, 0 if arriba else h-banda))
               return capa
 
-          def aplicar(img, reparto_arriba):
+          def aplicar(img, reparto):
               base = img.convert("RGBA"); w,h = base.size
-              base.alpha_composite(scrim((w,h), SEGURO_TOP + H_ARRIBA + 0.06, arriba=True))
-              base.alpha_composite(scrim((w,h), SEGURO_BOT + H_ABAJO + 0.085))
+              bloque = SEGURO_BOT + H_FILA2 + SEPARACION + H_FILA1
+              base.alpha_composite(scrim((w,h), bloque + 0.10))
               m = round(w*MARGEN_X)
 
-              pa = piezas(ARRIBA, h, H_ARRIBA)
-              y_top = round(h*SEGURO_TOP)
-              if reparto_arriba == "extremos":
-                  xs = [m, w - pa[1].width - m]
-              else:                                        # juntos al centro
-                  sep = round(w*0.06)
-                  tot = sum(p.width for p in pa) + sep
-                  x = (w-tot)//2; xs=[x, x+pa[0].width+sep]
-              for lg,x in zip(pa,xs):
-                  base.alpha_composite(lg, (x, y_top))
+              # Fila de abajo: los 3 patrocinadores (izq / centro / der)
+              p2 = piezas(FILA_2, h, H_FILA2)
+              y2 = h - round(h*SEGURO_BOT)
+              xs2 = [m, (w-p2[1].width)//2, w-p2[2].width-m]
+              for lg,x in zip(p2,xs2):
+                  base.alpha_composite(lg, (x, y2-lg.height))
 
-              pb = piezas(ABAJO, h, H_ABAJO)
-              y_bot = h - round(h*SEGURO_BOT)
-              xs = [m, (w-pb[1].width)//2, w-pb[2].width-m]
-              for lg,x in zip(pb,xs):
-                  base.alpha_composite(lg, (x, y_bot-lg.height))
+              # Fila de arriba: los 2 principales, justo encima de los anteriores
+              p1 = piezas(FILA_1, h, H_FILA1)
+              y1 = y2 - max(p.height for p in p2) - round(h*SEPARACION)
+              if reparto == "extremos":
+                  xs1 = [m, w - p1[1].width - m]
+              else:
+                  sep = round(w*0.055)
+                  tot = sum(p.width for p in p1) + sep
+                  x = (w-tot)//2; xs1 = [x, x+p1[0].width+sep]
+              for lg,x in zip(p1,xs1):
+                  base.alpha_composite(lg, (x, y1-lg.height))
               return base.convert("RGB")
 
           def marcar(img):
