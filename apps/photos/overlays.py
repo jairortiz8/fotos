@@ -84,11 +84,13 @@ class StackedTemplate:
     scrim_factor: float = 1.6  # alto del degradado respecto al bloque de logos
     scrim_alpha: int = 225  # opacidad máxima del degradado (0-255)
     # Ajustes SÓLO para fotos horizontales (ancho ≥ alto). Una horizontal es
-    # mucho más ancha: con el mismo margen la fila queda desparramada de punta a
-    # punta, y con el mismo alto los logos se ven chicos. Estos dos la vuelven a
-    # dejar con la misma proporción que la vertical.
+    # más ancha y más baja: con el mismo margen la fila queda desparramada de
+    # punta a punta, y las mismas filas apiladas comen casi la mitad del alto.
+    # `landscape_rows` permite darle otra distribución (ej. todo en una fila,
+    # que es lo que pide un cuadro apaisado); si es None se usan las mismas.
     landscape_margin_x_pct: float = 0.20
     landscape_scale: float = 1.15
+    landscape_rows: tuple[LogoRow, ...] | None = None
 
 
 TEMPLATES: dict[str, CornersTemplate | StackedTemplate] = {
@@ -123,6 +125,22 @@ TEMPLATES: dict[str, CornersTemplate | StackedTemplate] = {
                 spread="justificado",
             ),
         ),
+        # En horizontal sobra ancho y falta alto: los 5 entran en una sola fila,
+        # con los principales un toque más grandes para mantener la jerarquía.
+        landscape_rows=(
+            LogoRow(
+                logos=(
+                    LogoSpec("SR2026_whiteP.png", scale=1.15),
+                    LogoSpec("cep blanco.png", scale=0.92),
+                    LogoSpec("GU_Secondary_White_Transparent.png"),
+                    LogoSpec("LOGO TASU-01.png", scale=1.05),
+                    LogoSpec("NUGO LOGO WHITE.webp", scale=0.82),
+                ),
+                h_pct=0.072,
+                spread="justificado",
+            ),
+        ),
+        landscape_margin_x_pct=0.07,
     ),
 }
 
@@ -202,19 +220,20 @@ def _apply_stacked(base: Image.Image, cfg: StackedTemplate) -> Image.Image:
     horizontal = w >= h
     escala = cfg.landscape_scale if horizontal else 1.0
     margin = round(w * (cfg.landscape_margin_x_pct if horizontal else cfg.margin_x_pct))
+    rows = cfg.landscape_rows if (horizontal and cfg.landscape_rows) else cfg.rows
     center_gap = round(w * cfg.center_gap_pct)
     row_gap = round(short * cfg.row_gap_pct)
     bottom = round(short * cfg.bottom_pct)
 
     # Se arma de abajo hacia arriba: primero se sabe cuánto ocupa todo (para el
     # degradado), después se pega cada fila.
-    filas = [_row_pieces(row, short, escala) for row in cfg.rows]
+    filas = [_row_pieces(row, short, escala) for row in rows]
     altos = [max(p.height for p in fila) for fila in filas]
     bloque = bottom + sum(altos) + row_gap * (len(filas) - 1)
     base.alpha_composite(_scrim((w, h), round(bloque * cfg.scrim_factor), cfg.scrim_alpha))
 
     y = h - bottom  # borde de abajo de la fila más baja
-    filas_abajo_arriba = zip(reversed(cfg.rows), reversed(filas), reversed(altos), strict=True)
+    filas_abajo_arriba = zip(reversed(rows), reversed(filas), reversed(altos), strict=True)
     for row, pieces, alto in filas_abajo_arriba:
         xs = _row_positions(pieces, w, margin, center_gap, row.spread)
         for piece, x in zip(pieces, xs, strict=True):

@@ -286,3 +286,16 @@ def test_septimo_no_se_sale_de_la_foto_en_tamanos_chicos() -> None:
     for size in ((400, 600), (600, 400), (200, 200)):
         out = overlays.apply_brand_overlay(_solid(*size, (0, 0, 0)), "septimo_cep")
         assert out.size == size
+
+
+def test_septimo_horizontal_usa_una_sola_fila() -> None:
+    """En apaisado los 5 logos van en una fila: entran a lo ancho y el degradado
+    no se come media foto (con dos filas cubría casi la mitad del alto)."""
+    gris = (60, 60, 60)
+    out = overlays.apply_brand_overlay(_solid(1600, 1067, gris), "septimo_cep")
+    w, h = out.size
+    # Los 5 logos, repartidos: hay blanco a la izquierda, al centro y a la derecha.
+    for x0, x1 in ((0, w // 4), (w * 3 // 8, w * 5 // 8), (w * 3 // 4, w)):
+        assert _has_bright(out, x0, x1, int(h * 0.86), h), f"falta logo en {x0}-{x1}"
+    # A media altura la foto sigue intacta: el degradado no llega hasta ahí.
+    assert out.getpixel((w // 2, h // 2)) == gris
