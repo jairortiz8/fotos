@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   demo:
-    name: "Overlay - 2 principales sobre los 3 patrocinadores"
+    name: "Overlay B - equilibrio de tamanos"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -68,7 +68,7 @@ jobs:
                     ("LOGO TASU-01.png",1.05),
                     ("NUGO LOGO WHITE.webp",0.82)]                           # patrocinadores
 
-          H_FILA1, H_FILA2 = 0.058, 0.034      # alto de logo / alto de foto
+          H_FILA1 = 0.056                      # alto de logo / alto de foto
           SEPARACION = 0.030                   # aire entre las dos filas
           MARGEN_X   = 0.12                    # margen lateral (recorte de IG)
           SEGURO_BOT = 0.042                   # libre debajo de todo
@@ -97,30 +97,27 @@ jobs:
               capa.paste(negro,(0, 0 if arriba else h-banda))
               return capa
 
-          def aplicar(img, reparto):
+          def aplicar(img, h_fila2):
               base = img.convert("RGBA"); w,h = base.size
-              bloque = SEGURO_BOT + H_FILA2 + SEPARACION + H_FILA1
+              bloque = SEGURO_BOT + h_fila2 + SEPARACION + H_FILA1
               base.alpha_composite(scrim((w,h), bloque + 0.10))
               m = round(w*MARGEN_X)
 
               # Fila de abajo: los 3 patrocinadores (izq / centro / der)
-              p2 = piezas(FILA_2, h, H_FILA2)
+              p2 = piezas(FILA_2, h, h_fila2)
               y2 = h - round(h*SEGURO_BOT)
               xs2 = [m, (w-p2[1].width)//2, w-p2[2].width-m]
               for lg,x in zip(p2,xs2):
                   base.alpha_composite(lg, (x, y2-lg.height))
 
-              # Fila de arriba: los 2 principales, justo encima de los anteriores
+              # Fila de arriba: los 2 principales juntos al centro
               p1 = piezas(FILA_1, h, H_FILA1)
               y1 = y2 - max(p.height for p in p2) - round(h*SEPARACION)
-              if reparto == "extremos":
-                  xs1 = [m, w - p1[1].width - m]
-              else:
-                  sep = round(w*0.055)
-                  tot = sum(p.width for p in p1) + sep
-                  x = (w-tot)//2; xs1 = [x, x+p1[0].width+sep]
-              for lg,x in zip(p1,xs1):
-                  base.alpha_composite(lg, (x, y1-lg.height))
+              sep = round(w*0.055)
+              tot = sum(p.width for p in p1) + sep
+              x = (w-tot)//2
+              for lg,xx in zip(p1,[x, x+p1[0].width+sep]):
+                  base.alpha_composite(lg, (xx, y1-lg.height))
               return base.convert("RGB")
 
           def marcar(img):
@@ -146,9 +143,10 @@ jobs:
           im = ImageOps.exif_transpose(Image.open(buf)).convert("RGB")
           im.thumbnail((1600,1600), Image.LANCZOS)
 
-          for etq, rep in (("A_principales_a_los_lados","extremos"),
-                           ("B_principales_al_centro","juntos")):
-              r = aplicar(im, rep)
+          for etq, h2 in (("B1_patrocinadores_042", 0.042),
+                          ("B2_patrocinadores_048", 0.048),
+                          ("B3_patrocinadores_054", 0.054)):
+              r = aplicar(im, h2)
               r.save(OUT/f"{etq}_limpio.jpg", quality=90)
               marcar(r).save(OUT/f"{etq}_zonas_IG.jpg", quality=90)
               print(f"  {etq} ok")
@@ -162,5 +160,5 @@ jobs:
           git checkout --orphan demo-overlay-tmp
           git rm -rq --cached . || true
           git add -f demo_overlay/
-          git commit -qm "demo: 5 logos abajo en dos filas"
+          git commit -qm "demo: variante B con tres tamanos de patrocinadores"
           git push -f origin demo-overlay-tmp
