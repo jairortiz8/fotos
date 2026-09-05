@@ -308,10 +308,11 @@ def test_los_logos_se_recortan_a_su_contenido() -> None:
     hasta la mitad de chico de lo que pide el template."""
     casos = {
         "LOGO TASU-01.png": (287, 183),
-        "NUGO LOGO WHITE.webp": (2293, 568),
         "SR2026_whiteP.png": (3853, 2493),
         "cep blanco.png": (1378, 471),
-        "GU_Secondary_White_Transparent.png": (5983, 6128),  # este no tiene relleno
+        # Estos dos no tienen relleno del todo transparente y quedan enteros.
+        "GU_Secondary_White_Transparent.png": (5983, 6128),
+        "NUGO LOGO WHITE.webp": (2444, 1038),
     }
     for nombre, esperado in casos.items():
         assert overlays._load_logo(nombre).size == esperado, nombre
@@ -351,3 +352,42 @@ def test_fila_justificada_deja_el_logo_del_medio_en_el_eje() -> None:
     assert xs[-1] + piezas[-1].width == ancho - margen
     centro_medio = xs[1] + piezas[1].width // 2
     assert abs(centro_medio - ancho // 2) <= 1
+
+
+def test_septimo_calca_el_diseno_aprobado() -> None:
+    """Guarda de regresión: posición y tamaño EXACTOS de los 5 logos en una foto
+    vertical de 1067x1600, tal como quedaron en el diseño que se aprobó.
+
+    Los números salen de esa maqueta. Si alguien toca un porcentaje, el recorte
+    de los logos o el reparto de una fila, este test lo caza."""
+    ancho, alto = 1067, 1600
+    esperado = {
+        "SR2026_whiteP.png": (329, 1314, 139, 90),
+        "cep blanco.png": (527, 1332, 211, 72),
+        "GU_Secondary_White_Transparent.png": (128, 1456, 75, 77),
+        "LOGO TASU-01.png": (470, 1452, 127, 81),
+        "NUGO LOGO WHITE.webp": (791, 1470, 148, 63),
+    }
+    cfg = overlays.TEMPLATES["septimo_cep"]
+    assert isinstance(cfg, overlays.StackedTemplate)
+    corto = min(ancho, alto)
+    filas = [overlays._row_pieces(f, corto) for f in cfg.rows]
+    altos = [max(p.height for p in fila) for fila in filas]
+
+    obtenido = {}
+    y = alto - round(corto * cfg.bottom_pct)
+    for fila, piezas, alto_fila in zip(
+        reversed(cfg.rows), reversed(filas), reversed(altos), strict=True
+    ):
+        xs = overlays._row_positions(
+            piezas,
+            ancho,
+            round(ancho * cfg.margin_x_pct),
+            round(ancho * cfg.center_gap_pct),
+            fila.spread,
+        )
+        for spec, pieza, x in zip(fila.logos, piezas, xs, strict=True):
+            obtenido[spec.filename] = (x, y - pieza.height, pieza.width, pieza.height)
+        y -= alto_fila + round(corto * cfg.row_gap_pct)
+
+    assert obtenido == esperado

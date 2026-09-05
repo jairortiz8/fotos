@@ -81,7 +81,7 @@ class StackedTemplate:
     bottom_pct: float = 0.063  # aire libre debajo de todo
     row_gap_pct: float = 0.045  # aire entre una fila y la siguiente
     center_gap_pct: float = 0.055  # aire entre logos de una fila "centrada"
-    scrim_factor: float = 1.6  # alto del degradado respecto al bloque de logos
+    scrim_factor: float = 1.545  # alto del degradado respecto al bloque de logos
     scrim_alpha: int = 225  # opacidad máxima del degradado (0-255)
     # Ajustes SÓLO para fotos horizontales (ancho ≥ alto). Una horizontal es
     # más ancha y más baja: con el mismo margen la fila queda desparramada de
@@ -159,14 +159,15 @@ def _load_logo(filename: str) -> Image.Image:
     queda flotando en vez de apoyado en su línea. Recortando, el porcentaje que
     pide el template es el del logo de verdad.
 
-    El recorte ignora el alpha casi transparente (< 10 de 255): algunos archivos
-    traen restos de antialias hasta el borde del lienzo, y con el `getbbox()`
-    normal el recorte no haría nada (le pasaba a NuGo).
+    El recorte es el de `getbbox()`: saca sólo lo COMPLETAMENTE transparente.
+    No se usa un umbral para descartar el alpha casi invisible — con umbral
+    también se recortaría NuGo (su archivo tiene restos de antialias hasta el
+    borde del lienzo) y saldría más grande y más ancho que en el diseño
+    aprobado. Cada logo entra con el aire que trae su archivo.
 
     lru_cache → se lee y recorta una sola vez por proceso del worker."""
     logo = Image.open(OVERLAY_DIR / filename).convert("RGBA")
-    visible = logo.split()[3].point(lambda v: 255 if v > 10 else 0)
-    caja = visible.getbbox()
+    caja = logo.split()[3].getbbox()
     return logo.crop(caja) if caja else logo
 
 
