@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   demo:
-    name: Overlay completo (2 arriba + 3 abajo)
+    name: Overlay: 2 principales sobre los 3 patrocinadores, todo abajo
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -62,18 +62,16 @@ jobs:
           OUT = Path("demo_overlay"); OUT.mkdir(exist_ok=True)
           D = Path("apps/photos/brand_overlays")
 
-          # Principales, ARRIBA. (archivo, factor optico de altura)
-          ARRIBA = [("SR2026_whiteP.png", 1.00), ("cep blanco.png", 0.78)]
-          # Patrocinadores, ABAJO, mas chicos que antes.
-          ABAJO  = [("GU_Secondary_White_Transparent.png",1.00),
+          # Los 5 van ABAJO: los principales en una fila ENCIMA de los patrocinadores.
+          FILA_1 = [("SR2026_whiteP.png", 1.00), ("cep blanco.png", 0.80)]   # principales
+          FILA_2 = [("GU_Secondary_White_Transparent.png",1.00),
                     ("LOGO TASU-01.png",1.05),
-                    ("NUGO LOGO WHITE.webp",0.82)]
+                    ("NUGO LOGO WHITE.webp",0.82)]                           # patrocinadores
 
-          H_ARRIBA, H_ABAJO = 0.095, 0.036     # alto de logo / alto de foto
+          H_FILA1, H_FILA2 = 0.058, 0.034      # alto de logo / alto de foto
+          SEPARACION = 0.030                   # aire entre las dos filas
           MARGEN_X   = 0.12                    # margen lateral (recorte de IG)
-          SEGURO_TOP = 0.075                   # libre arriba (barra de IG)
-          SEGURO_BOT = 0.042                   # libre abajo
-          IG_TOP, IG_LADO = 0.12, None         # zonas que tapa/recorta IG
+          SEGURO_BOT = 0.042                   # libre debajo de todo
 
           def cargar(n):
               im = Image.open(D/n).convert("RGBA")
@@ -131,10 +129,8 @@ jobs:
                   c = round(w*(1-vis)/2)
                   d.rectangle([0,0,c,h], fill=(220,40,40,90))
                   d.rectangle([w-c,0,w,h], fill=(220,40,40,90))
-              yt = round(h*IG_TOP)
-              d.rectangle([0,0,w,yt], fill=(40,90,220,90))
-              d.line([(0,yt),(w,yt)], fill=(80,140,255,255), width=max(2,round(h*0.003)))
-              d.text((round(w*0.03), yt+8), "ARRIBA: barra de IG", fill=(255,255,255,255))
+              d.text((round(w*0.03), round(h*0.03)), "rojo = lo que recorta IG",
+                     fill=(255,255,255,255))
               out.alpha_composite(capa); return out.convert("RGB")
 
           with psycopg.connect(os.environ["DATABASE_URL"]) as cx, cx.cursor() as cur:
@@ -148,7 +144,8 @@ jobs:
           im = ImageOps.exif_transpose(Image.open(buf)).convert("RGB")
           im.thumbnail((1600,1600), Image.LANCZOS)
 
-          for etq, rep in (("A_extremos","extremos"), ("B_juntos_centro","juntos")):
+          for etq, rep in (("A_principales_a_los_lados","extremos"),
+                           ("B_principales_al_centro","juntos")):
               r = aplicar(im, rep)
               r.save(OUT/f"{etq}_limpio.jpg", quality=90)
               marcar(r).save(OUT/f"{etq}_zonas_IG.jpg", quality=90)
@@ -163,5 +160,5 @@ jobs:
           git checkout --orphan demo-overlay-tmp
           git rm -rq --cached . || true
           git add -f demo_overlay/
-          git commit -qm "demo: overlay completo 2 arriba + 3 abajo"
+          git commit -qm "demo: 5 logos abajo en dos filas"
           git push -f origin demo-overlay-tmp
