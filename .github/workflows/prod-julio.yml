@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   ops:
-    name: "Ficha de la foto 45833"
+    name: "Redeployar workers en el commit nuevo"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -21,48 +21,77 @@ jobs:
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
       WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
     steps:
+      - uses: actions/checkout@v4
+        with: { ref: main }
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --quiet requests "psycopg[binary]"
+      - run: pip install --quiet requests
 
-      - name: Deploys y ficha de la foto
+      - name: Que argumentos acepta el deploy
         run: |
           python3 - <<'PYX'
-          import os, requests, psycopg
+          import json, os, requests
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
+             "Content-Type":"application/json"}
+          Q="""query{ __schema{ mutationType{ fields{ name
+                args{ name type{ name kind ofType{ name } } } } } } }"""
+          d=requests.post(API,headers=H,json={"query":Q},timeout=60).json()["data"]
+          for f in d["__schema"]["mutationType"]["fields"]:
+              if f["name"] in ("serviceInstanceDeployV2","serviceInstanceDeploy"):
+                  args=[(a["name"], a["type"].get("name") or
+                         (a["type"].get("ofType") or {}).get("name")) for a in f["args"]]
+                  print(f"  {f['name']}: {args}")
+          PYX
+
+      - name: Redeployar worker y worker_fast en el commit actual de main
+        run: |
+          SHA=$(git rev-parse HEAD)
+          echo "main esta en $SHA"
+          python3 - "$SHA" <<'PYX'
+          import os, sys, time, requests
+          sha=sys.argv[1]
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
              "Content-Type":"application/json"}
           Q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceName latestDeployment{ status createdAt meta } } } } } }"""
-          d=requests.post(API,headers=H,json={"query":Q,"variables":{
-              "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
-          print("=== DEPLOYS (hora UTC) ===")
-          for e in d["environment"]["serviceInstances"]["edges"]:
-              n=e["node"]; dep=n.get("latestDeployment") or {}
-              sha=((dep.get("meta") or {}).get("commitHash") or "")[:8]
-              print(f"  {n['serviceName']:<14} {dep.get('status','SIN DEPLOY'):<10}"
-                    f" {dep.get('createdAt','')}  commit={sha}")
+                serviceId serviceName latestDeployment{ status createdAt meta } } } } } }"""
+          def estado():
+              d=requests.post(API,headers=H,json={"query":Q,"variables":{
+                  "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
+              out={}
+              for e in d["environment"]["serviceInstances"]["edges"]:
+                  n=e["node"]; dep=n.get("latestDeployment") or {}
+                  out[n["serviceName"]]={
+                      "id":n["serviceId"],
+                      "status":dep.get("status") or "SIN DEPLOY",
+                      "commit":((dep.get("meta") or {}).get("commitHash") or "")[:8]}
+              return out
 
-          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          pg=(requests.post(API,headers=H,json={"query":V,"variables":{
-              "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
-              "s":os.environ["PG_ID"]}},timeout=40).json().get("data") or {}).get("variables") or {}
-          url=pg.get("DATABASE_PUBLIC_URL")
-          print(f"::add-mask::{url}")
+          ANTES=estado()
+          OBJETIVO=("worker","worker_fast")
+          print("=== ANTES ===")
+          for k in OBJETIVO: print(f"  {k:<12} {ANTES[k]['status']:<10} commit={ANTES[k]['commit']}")
 
-          with psycopg.connect(url) as cx, cx.cursor() as cur:
-              cur.execute("""
-                  SELECT p.id, e.slug, e.brand_overlay, p.status, p.created_at,
-                         p.updated_at, p.preview_key, p.branded_key, p.original_key
-                  FROM photos_photo p JOIN events_event e ON e.id = p.event_id
-                  ORDER BY p.id DESC LIMIT 5
-              """)
-              print("\n=== ULTIMAS 5 FOTOS (hora UTC) ===")
-              for r in cur.fetchall():
-                  print(f"  id={r[0]}  evento={r[1]}  overlay={r[2]!r}  estado={r[3]}")
-                  print(f"      subida  {r[4]:%Y-%m-%d %H:%M:%S}   procesada {r[5]:%Y-%m-%d %H:%M:%S}")
-                  print(f"      original={r[8]}")
-                  print(f"      preview ={r[6] or '(vacio)'}")
-                  print(f"      branded ={r[7] or '(vacio)'}")
+          M="""mutation($s:String!,$e:String!,$c:String){
+                 serviceInstanceDeployV2(serviceId:$s, environmentId:$e, commitSha:$c) }"""
+          for k in OBJETIVO:
+              r=requests.post(API,headers=H,json={"query":M,"variables":{
+                  "s":ANTES[k]["id"],"e":os.environ["ENV_ID"],"c":sha}},timeout=60).json()
+              print(f"  deploy {k} ->", str(r)[:180])
+
+          print("\n=== ESPERANDO ===")
+          for i in range(40):
+              time.sleep(20)
+              ahora=estado()
+              linea=" · ".join(f"{k}={ahora[k]['status']}/{ahora[k]['commit']}" for k in OBJETIVO)
+              print(f"  [{i:02d}] {linea}")
+              if all(ahora[k]["status"]=="SUCCESS" and ahora[k]["commit"]==sha[:8]
+                     for k in OBJETIVO):
+                  print("\n  LISTO: los dos corren el commit nuevo."); break
+              if any(ahora[k]["status"] in ("FAILED","CRASHED") for k in OBJETIVO):
+                  raise SystemExit("un deploy fallo")
+          else:
+              raise SystemExit("se acabo la espera sin llegar al commit nuevo")
           PYX
