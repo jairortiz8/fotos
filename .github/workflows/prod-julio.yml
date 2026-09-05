@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   demo:
-    name: Overlay: 2 principales sobre los 3 patrocinadores, todo abajo
+    name: "Overlay - 2 principales sobre los 3 patrocinadores"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
