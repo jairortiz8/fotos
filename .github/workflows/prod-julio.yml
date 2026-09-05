@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   ops:
-    name: "Deployar el fix y reprocesar la foto"
+    name: "Borrar las fotos de prueba del evento"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -21,52 +21,10 @@ jobs:
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
       WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: main }
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --quiet requests "psycopg[binary]" boto3 Pillow celery redis
-
-      - name: Deployar web, worker y worker_fast en el commit nuevo
-        run: |
-          SHA=$(git rev-parse HEAD)
-          echo "main esta en $SHA"
-          python3 - "$SHA" <<'PYX'
-          import os, sys, time, requests
-          sha=sys.argv[1]
-          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
-             "Content-Type":"application/json"}
-          Q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceId serviceName latestDeployment{ status meta } } } } } }"""
-          def estado():
-              d=requests.post(API,headers=H,json={"query":Q,"variables":{
-                  "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
-              return {n["node"]["serviceName"]:{
-                        "id":n["node"]["serviceId"],
-                        "status":(n["node"].get("latestDeployment") or {}).get("status") or "SIN DEPLOY",
-                        "commit":(((n["node"].get("latestDeployment") or {}).get("meta") or {})
-                                  .get("commitHash") or "")[:8]}
-                      for n in d["environment"]["serviceInstances"]["edges"]}
-          st=estado(); OBJ=("fotos","worker","worker_fast")
-          M="""mutation($s:String!,$e:String!,$c:String){
-                 serviceInstanceDeployV2(serviceId:$s, environmentId:$e, commitSha:$c) }"""
-          for k in OBJ:
-              requests.post(API,headers=H,json={"query":M,"variables":{
-                  "s":st[k]["id"],"e":os.environ["ENV_ID"],"c":sha}},timeout=60)
-              print(f"  deploy {k} disparado")
-          for i in range(45):
-              time.sleep(20)
-              a=estado()
-              print("  [%02d] " % i + " · ".join(f"{k}={a[k]['status']}/{a[k]['commit']}" for k in OBJ))
-              if all(a[k]["status"]=="SUCCESS" and a[k]["commit"]==sha[:8] for k in OBJ):
-                  print("\n  LISTO: los tres en el commit nuevo."); break
-              if any(a[k]["status"] in ("FAILED","CRASHED") for k in OBJ):
-                  raise SystemExit("un deploy fallo")
-          else:
-              raise SystemExit("se acabo la espera")
-          PYX
+      - run: pip install --quiet requests "psycopg[binary]" boto3
 
       - name: Credenciales
         run: |
@@ -75,20 +33,13 @@ jobs:
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
              "Content-Type":"application/json"}
-          Q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceId serviceName } } } } }"""
-          d=requests.post(API,headers=H,json={"query":Q,"variables":{
-              "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
-          ids={n["node"]["serviceName"]:n["node"]["serviceId"]
-               for n in d["environment"]["serviceInstances"]["edges"]}
           V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
           def vf(sid):
               return (requests.post(API,headers=H,json={"query":V,"variables":{
                   "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}},
                   timeout=40).json().get("data") or {}).get("variables") or {}
-          pg=vf(os.environ["PG_ID"]); web=vf(ids["fotos"]); rd=vf(ids["Redis"])
+          pg=vf(os.environ["PG_ID"]); web=vf(os.environ["WEB_ID"])
           out={"DATABASE_URL":pg.get("DATABASE_PUBLIC_URL"),
-               "BROKER_URL":rd.get("REDIS_PUBLIC_URL"),
                "R2_ENDPOINT_URL":web.get("R2_ENDPOINT_URL"),
                "R2_ACCESS_KEY_ID":web.get("R2_ACCESS_KEY_ID"),
                "R2_SECRET_ACCESS_KEY":web.get("R2_SECRET_ACCESS_KEY"),
@@ -99,64 +50,80 @@ jobs:
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
           PYX
 
-      - name: Reprocesar y medir preview + original con logos
+      - name: Borrar SOLO las fotos del evento septimo-x-cep-social-run
         run: |
           python3 - <<'PYX'
-          import io, os, time, boto3, psycopg
-          from celery import Celery
-          from pathlib import Path
-          from PIL import Image
-          FOTO=45833
-          app=Celery(broker=os.environ["BROKER_URL"])
-          print("workers que contestan:", len(app.control.ping(timeout=8) or []))
-          with psycopg.connect(os.environ["DATABASE_URL"]) as cx, cx.cursor() as cur:
-              cur.execute("SELECT updated_at FROM photos_photo WHERE id=%s",(FOTO,))
-              (antes,)=cur.fetchone()
-          app.send_task("photos.process_photo", args=[FOTO], queue="fast")
-          for i in range(30):
-              time.sleep(10)
-              with psycopg.connect(os.environ["DATABASE_URL"]) as cx, cx.cursor() as cur:
-                  cur.execute("SELECT status, preview_key, branded_key, updated_at "
-                              "FROM photos_photo WHERE id=%s",(FOTO,))
-                  st,prev,brand,upd=cur.fetchone()
-              print(f"  [{i:02d}] estado={st}")
-              if upd>antes and st not in ("processing","uploading"): break
-          print(f"\n  preview={prev}\n  branded={brand or '(VACIO)'}")
-          r2=boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
-                          aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
-                          aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
-                          region_name="auto")
-          OUT=Path("demo_overlay"); OUT.mkdir(exist_ok=True)
-          for key,nombre,arch in ((prev,"preview de la galeria","PROD_preview.jpg"),
-                                  (brand,"original CON logos","PROD_original_con_logos.jpg")):
-              if not key: continue
-              b=io.BytesIO(); r2.download_fileobj(os.environ["R2_BUCKET_NAME"],key,b); b.seek(0)
-              im=Image.open(b); rgb=im.convert("RGB")
-              rgb.save(OUT/arch, quality=88)
-              w,h=im.size
-              paso=max(1,w//300)
-              def alto_pct(x0,x1):
-                  ys=[y for y in range(int(h*0.78),h)
-                      if any(all(c>200 for c in rgb.getpixel((x,y))) for x in range(x0,x1,paso))]
-                  if not ys: return None
-                  gr=[];ini=ys[0];pv=ys[0]
-                  for y in ys[1:]:
-                      if y-pv>h*0.012: gr.append((ini,pv)); ini=y
-                      pv=y
-                  gr.append((ini,pv))
-                  return [round((b2-a2+1)/w*100,2) for a2,b2 in gr]
-              print(f"\n  {nombre}: {w}x{h} · {len(b.getvalue())//1024} KB")
-              print(f"     izq(GU)={alto_pct(0,int(w*0.30))}  centro={alto_pct(int(w*0.30),int(w*0.70))}"
-                    f"  der(NuGo)={alto_pct(int(w*0.70),w)}")
-              print("     esperado: patrocinadores ~7.2% · principales ~8.4% del ancho")
-          PYX
+          import os, boto3, psycopg
+          SLUG = "septimo-x-cep-social-run"
+          TOPE = 5   # freno: si hubiera mas fotos de las esperadas, no borra nada
 
-      - name: Devolver por rama
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -q --orphan demo-overlay-tmp
-          git rm -rq --cached . || true
-          git add -f demo_overlay/
-          git commit -qm "diag: overlay con el fix del recorte"
-          git push -f origin demo-overlay-tmp
+          with psycopg.connect(os.environ["DATABASE_URL"]) as cx, cx.cursor() as cur:
+              cur.execute("SELECT id FROM events_event WHERE slug=%s", (SLUG,))
+              fila = cur.fetchone()
+              if fila is None: raise SystemExit(f"no existe el evento {SLUG}")
+              (evento_id,) = fila
+              cur.execute("""
+                  SELECT id, status, created_at, original_key, preview_key,
+                         thumbnail_key, branded_key
+                  FROM photos_photo WHERE event_id=%s ORDER BY id
+              """, (evento_id,))
+              fotos = cur.fetchall()
+
+              print(f"=== FOTOS EN {SLUG} ({len(fotos)}) ===")
+              for f in fotos:
+                  print(f"  id={f[0]}  estado={f[1]}  subida {f[2]:%Y-%m-%d %H:%M:%S}")
+              if not fotos:
+                  raise SystemExit(0)
+              if len(fotos) > TOPE:
+                  raise SystemExit(f"NO BORRO NADA: hay {len(fotos)} fotos, mas de las "
+                                   f"{TOPE} esperadas. Revisar a mano.")
+
+              ids = [f[0] for f in fotos]
+              keys = [k for f in fotos for k in f[3:7] if k]
+
+              cur.execute("SELECT count(*) FROM photos_faceembedding WHERE photo_id = ANY(%s)", (ids,))
+              (n_emb,) = cur.fetchone()
+              cur.execute("SELECT count(*) FROM photos_bib WHERE photo_id = ANY(%s)", (ids,))
+              (n_bib,) = cur.fetchone()
+
+              r2 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
+                                aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+                                aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+                                region_name="auto")
+              print(f"\nborrando {len(keys)} archivos de R2...")
+              for k in keys:
+                  r2.delete_object(Bucket=os.environ["R2_BUCKET_NAME"], Key=k)
+                  print(f"   borrado {k}")
+
+              cur.execute("DELETE FROM photos_faceembedding WHERE photo_id = ANY(%s)", (ids,))
+              cur.execute("DELETE FROM photos_bib WHERE photo_id = ANY(%s)", (ids,))
+              cur.execute("DELETE FROM photos_photo WHERE id = ANY(%s)", (ids,))
+              print(f"\nbase: {len(ids)} fotos, {n_emb} caras, {n_bib} dorsales")
+
+              # Bitacora (toda accion de admin queda registrada).
+              cur.execute("""
+                  INSERT INTO core_auditlog (action, target_type, target_id, metadata,
+                                             created_at, updated_at, user_id, ip_address)
+                  VALUES ('photo.deleted', 'Event', %s, %s::jsonb, now(), now(), NULL, NULL)
+              """, (str(evento_id),
+                    '{"motivo": "fotos de prueba del overlay", "photo_ids": %s}' % ids))
+
+              # Contadores del evento al dia.
+              cur.execute("""
+                  UPDATE events_event e SET
+                    photo_count = (SELECT count(*) FROM photos_photo p
+                                   WHERE p.event_id=e.id AND p.status <> 'deleted'),
+                    pending_count = (SELECT count(*) FROM photos_photo p
+                                     WHERE p.event_id=e.id AND p.status='pending_review')
+                  WHERE e.id=%s
+                  RETURNING photo_count, pending_count
+              """, (evento_id,))
+              pc, pend = cur.fetchone()
+              cx.commit()
+              print(f"contadores del evento: {pc} fotos, {pend} pendientes")
+
+              cur.execute("SELECT count(*) FROM photos_photo WHERE event_id=%s", (evento_id,))
+              (quedan,) = cur.fetchone()
+              print(f"\nRESULTADO: quedan {quedan} fotos en el evento"
+                    f" ({'limpio' if quedan==0 else 'REVISAR'})")
+          PYX
