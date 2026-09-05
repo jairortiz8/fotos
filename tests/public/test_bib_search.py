@@ -137,27 +137,45 @@ def test_search_excludes_rejected_bibs(client: Client) -> None:
 
 
 @pytest.mark.django_db
-def test_bib_specific_rate_limit_10_per_day(client: Client) -> None:
-    """La 11ª búsqueda del MISMO dorsal por la misma IP da 429."""
+def test_repetir_la_misma_busqueda_no_gasta_cupo(client: Client) -> None:
+    """Recargar / volver atrás / reabrir el link del mismo dorsal sale de la
+    caché y NO consume el límite: son gratis para el servidor. Sin esto, un
+    corredor mirando sus fotos se comía el cupo del día sin hacer nada raro."""
     event, _ = _event_with_bib("1042")
     url = reverse("events:gallery", args=[event.slug])
-    # 10 OK
-    for _ in range(10):
+    for _ in range(80):  # muy por encima de los 60/día del mismo dorsal
+        r = client.get(url, {"bib": "1042"}, REMOTE_ADDR="7.7.7.7")
+        assert r.status_code == 200
+
+
+@pytest.mark.django_db
+def test_bib_specific_rate_limit_60_per_day(client: Client) -> None:
+    """La 61ª búsqueda del MISMO dorsal por la misma IP da 429.
+
+    Se borra a mano la caché de búsqueda entre pedidos (es lo que pasaría con
+    búsquedas separadas en el tiempo): sólo las que NO salen de la caché gastan
+    cupo, así que sin esto el límite no se tocaría nunca."""
+    event, _ = _event_with_bib("1042")
+    url = reverse("events:gallery", args=[event.slug])
+    clave = f"search:bib:{event.id}:1042"
+    for _ in range(60):
+        cache.delete(clave)
         r = client.get(url, {"bib": "1042"}, REMOTE_ADDR="9.9.9.9")
         assert r.status_code == 200
-    # 11ª → 429
+    cache.delete(clave)
     r = client.get(url, {"bib": "1042"}, REMOTE_ADDR="9.9.9.9")
     assert r.status_code == 429
 
 
 @pytest.mark.django_db
-def test_general_rate_limit_blocks_after_60(client: Client) -> None:
-    """Búsquedas de dorsales DISTINTOS comparten el límite general 60/h por IP."""
+def test_general_rate_limit_blocks_after_200(client: Client) -> None:
+    """Búsquedas de dorsales DISTINTOS comparten el límite general 200/h por IP.
+    Es el que frena el scrapeo: bajarse un evento entero exige justamente eso,
+    muchos dorsales distintos."""
     event = EventFactory(status=EventStatus.LIVE)
     url = reverse("events:gallery", args=[event.slug])
-    # 60 dorsales distintos (cada uno cuenta para el límite general).
     last_status = 200
-    for i in range(62):
+    for i in range(202):
         r = client.get(url, {"bib": str(1000 + i)}, REMOTE_ADDR="8.8.8.8")
         last_status = r.status_code
         if last_status == 429:

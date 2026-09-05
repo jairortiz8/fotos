@@ -137,12 +137,18 @@ def generate_ocr_variants(query: str, *, max_variants: int = 40) -> list[str]:
 # de las vistas (la galería sin búsqueda no debe rate-limitear).
 # ---------------------------------------------------------------------------
 def check_general_search_rate_limit(request: HttpRequest) -> bool:
-    """60 búsquedas/hora por IP. Devuelve True si está PERMITIDO."""
+    """200 búsquedas/hora por IP. Devuelve True si está PERMITIDO.
+
+    Generoso a propósito: en la región es normal que varios celulares de la
+    misma operadora salgan con la MISMA IP pública, así que el cupo se reparte
+    entre corredores distintos. Además cada clic en una cara de la galería
+    también consume de acá. Para raspar un evento entero igual hacen falta
+    cientos de búsquedas distintas, y ahí sí topa."""
     limited = is_ratelimited(
         request,
         group="search-general",
         key="ip",
-        rate="60/h",
+        rate="200/h",
         method=("GET",),
         increment=True,
     )
@@ -150,7 +156,12 @@ def check_general_search_rate_limit(request: HttpRequest) -> bool:
 
 
 def check_bib_specific_rate_limit(request: HttpRequest, event_id: int, bib: str) -> bool:
-    """10 búsquedas/día por (IP, evento, dorsal). Devuelve True si PERMITIDO."""
+    """60 búsquedas/día por (IP, evento, dorsal). Devuelve True si PERMITIDO.
+
+    Antes eran 10 y se gastaban sin hacer nada raro: cada carga de la página con
+    el dorsal contaba una. Sólo llega acá la búsqueda que NO salió de la caché
+    (ver `_handle_bib_search`), así que 60 al día del mismo dorsal es muchísimo
+    para un corredor y sigue frenando el machaque automatizado."""
 
     def _key(group: str, req: HttpRequest) -> str:
         return f"{get_client_ip(req)}:{event_id}:{bib}"
@@ -159,7 +170,7 @@ def check_bib_specific_rate_limit(request: HttpRequest, event_id: int, bib: str)
         request,
         group="search-bib",
         key=_key,
-        rate="10/d",
+        rate="60/d",
         method=("GET",),
         increment=True,
     )

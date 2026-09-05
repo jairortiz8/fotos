@@ -171,18 +171,21 @@ class EventGalleryView(View):
                 {"event": event, "bib_query": bib_query, "error": "invalid_format"},
             )
 
-        # Rate limit general (60/h por IP).
-        if not check_general_search_rate_limit(request):
-            return render(request, "public/rate_limited.html", {"event": event}, status=429)
-
-        # Rate limit específico (10/día por IP+evento+dorsal).
-        if not check_bib_specific_rate_limit(request, event.id, bib_query):
-            return render(request, "public/rate_limited.html", {"event": event}, status=429)
-
         # Cache 5 min: guardamos IDs (no objetos, para no cachear signed URLs).
+        # Se consulta ANTES del rate limit a propósito: repetir la misma búsqueda
+        # (recargar, volver atrás, abrir el link que te pasaron) sale de la caché
+        # y no le cuesta nada al servidor, así que no gasta cupo. El anti-scraping
+        # no se debilita: bajarse un evento entero exige dorsales DISTINTOS, y
+        # cada uno de esos sí pasa por el límite.
         cache_key = f"search:bib:{event.id}:{bib_query}"
         photo_ids = cache.get(cache_key)
+
         if photo_ids is None:
+            if not check_general_search_rate_limit(request):
+                return render(request, "public/rate_limited.html", {"event": event}, status=429)
+            if not check_bib_specific_rate_limit(request, event.id, bib_query):
+                return render(request, "public/rate_limited.html", {"event": event}, status=429)
+
             photo_ids = list(
                 Photo.objects.filter(
                     event=event,
