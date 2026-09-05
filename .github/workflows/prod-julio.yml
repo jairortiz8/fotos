@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   ops:
-    name: "Confirmacion final: workers vivos y sitio arriba"
+    name: "Que flags de imagen tiene prod"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -24,9 +24,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --quiet requests celery redis
+      - run: pip install --quiet requests
 
-      - name: Estado de los servicios
+      - name: Flags de imagen en web y worker
         run: |
           python3 - <<'PYX'
           import os, requests
@@ -34,49 +34,21 @@ jobs:
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
              "Content-Type":"application/json"}
           Q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceId serviceName latestDeployment{ status } } } } } }"""
+                serviceId serviceName } } } } }"""
           d=requests.post(API,headers=H,json={"query":Q,"variables":{
               "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
-          print("=== SERVICIOS ===")
-          redis_id=None
-          for e in d["environment"]["serviceInstances"]["edges"]:
-              n=e["node"]; st=(n.get("latestDeployment") or {}).get("status") or "SIN DEPLOY"
-              print(f"  {n['serviceName']:<14} {st}")
-              if n["serviceName"]=="Redis": redis_id=n["serviceId"]
-          with open(os.environ["GITHUB_ENV"],"a") as f: f.write(f"REDIS_ID={redis_id}\n")
-          PYX
-
-      - name: Preguntarle al worker si esta escuchando
-        run: |
-          python3 - <<'PYX'
-          import os, requests
-          from celery import Celery
-          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
-          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
-             "Content-Type":"application/json"}
+          ids={n["node"]["serviceName"]: n["node"]["serviceId"]
+               for n in d["environment"]["serviceInstances"]["edges"]}
           V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          v=(requests.post(API,headers=H,json={"query":V,"variables":{
-              "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
-              "s":os.environ["REDIS_ID"]}},timeout=40).json().get("data") or {}).get("variables") or {}
-          url=v.get("REDIS_PUBLIC_URL")
-          if not url: raise SystemExit("no se pudo leer REDIS_PUBLIC_URL")
-          print(f"::add-mask::{url}")
-          app=Celery(broker=url)
-          # ping por broadcast: contesta CADA worker que este consumiendo la cola.
-          respuestas = app.control.ping(timeout=8) or []
-          print(f"\n=== WORKERS QUE CONTESTARON: {len(respuestas)} ===")
-          for r in respuestas:
-              for nombre, estado in r.items():
-                  print(f"  {nombre} -> {estado}")
-          if not respuestas:
-              raise SystemExit("NINGUN worker contesto el ping")
-          PYX
-
-      - name: El sitio responde
-        run: |
-          python3 - <<'PYX'
-          import requests
-          for ruta in ("/healthz/lite", "/", "/eventos/septimo-x-cep-social-run/"):
-              r = requests.get("https://findyourfoto.com"+ruta, timeout=60)
-              print(f"  {ruta:<40} HTTP {r.status_code}")
+          INTERES=("PREVIEW_WATERMARK_ENABLED","FACE_SEARCH_ENABLED",
+                   "FACE_PROCESSING_ENABLED","MINOR_BLUR_ENABLED","SITE_NAME")
+          for nombre in ("fotos","worker","worker_fast"):
+              sid=ids.get(nombre)
+              if not sid: continue
+              v=(requests.post(API,headers=H,json={"query":V,"variables":{
+                  "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}},
+                  timeout=40).json().get("data") or {}).get("variables") or {}
+              print(f"=== {nombre} ===")
+              for k in INTERES:
+                  print(f"   {k:<28} {v.get(k, '(sin setear -> default del codigo)')}")
           PYX
