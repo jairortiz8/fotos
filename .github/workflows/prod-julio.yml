@@ -69,7 +69,7 @@ jobs:
                     ("LOGO TASU-01.png",1.05),
                     ("NUGO LOGO WHITE.webp",0.82)]
 
-          H_ARRIBA, H_ABAJO = 0.075, 0.045     # alto de logo / alto de foto
+          H_ARRIBA, H_ABAJO = 0.095, 0.036     # alto de logo / alto de foto
           MARGEN_X   = 0.12                    # margen lateral (recorte de IG)
           SEGURO_TOP = 0.075                   # libre arriba (barra de IG)
           SEGURO_BOT = 0.042                   # libre abajo
@@ -102,7 +102,7 @@ jobs:
           def aplicar(img, reparto_arriba):
               base = img.convert("RGBA"); w,h = base.size
               base.alpha_composite(scrim((w,h), SEGURO_TOP + H_ARRIBA + 0.06, arriba=True))
-              base.alpha_composite(scrim((w,h), SEGURO_BOT + H_ABAJO + 0.10))
+              base.alpha_composite(scrim((w,h), SEGURO_BOT + H_ABAJO + 0.085))
               m = round(w*MARGEN_X)
 
               pa = piezas(ARRIBA, h, H_ARRIBA)
