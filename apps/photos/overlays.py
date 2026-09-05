@@ -151,9 +151,23 @@ def is_valid_template(template: str) -> bool:
 
 @lru_cache(maxsize=8)
 def _load_logo(filename: str) -> Image.Image:
-    """Carga (y cachea) un logo PNG en RGBA. lru_cache → se lee una sola vez por
-    proceso del worker."""
-    return Image.open(OVERLAY_DIR / filename).convert("RGBA")
+    """Carga (y cachea) un logo PNG en RGBA, RECORTADO a su contenido.
+
+    Varios logos vienen con relleno transparente alrededor (ej. TASU: lienzo de
+    369x369 con sólo 287x183 de dibujo). Sin recortar, al escalarlos por el alto
+    se escala el lienzo entero: el logo se ve la mitad de grande de lo pedido y
+    queda flotando en vez de apoyado en su línea. Recortando, el porcentaje que
+    pide el template es el del logo de verdad.
+
+    El recorte ignora el alpha casi transparente (< 10 de 255): algunos archivos
+    traen restos de antialias hasta el borde del lienzo, y con el `getbbox()`
+    normal el recorte no haría nada (le pasaba a NuGo).
+
+    lru_cache → se lee y recorta una sola vez por proceso del worker."""
+    logo = Image.open(OVERLAY_DIR / filename).convert("RGBA")
+    visible = logo.split()[3].point(lambda v: 255 if v > 10 else 0)
+    caja = visible.getbbox()
+    return logo.crop(caja) if caja else logo
 
 
 def _soft_shadow(logo: Image.Image, blur: int, alpha: int = 150) -> Image.Image:

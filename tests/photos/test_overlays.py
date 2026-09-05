@@ -299,3 +299,32 @@ def test_septimo_horizontal_usa_una_sola_fila() -> None:
         assert _has_bright(out, x0, x1, int(h * 0.86), h), f"falta logo en {x0}-{x1}"
     # A media altura la foto sigue intacta: el degradado no llega hasta ahí.
     assert out.getpixel((w // 2, h // 2)) == gris
+
+
+def test_los_logos_se_recortan_a_su_contenido() -> None:
+    """Varios archivos vienen con relleno transparente alrededor (TASU: lienzo de
+    369x369 con 287x183 de dibujo; NuGo: restos de antialias hasta el borde).
+    Si no se recorta, al escalar por el alto se escala el lienzo y el logo sale
+    hasta la mitad de chico de lo que pide el template."""
+    casos = {
+        "LOGO TASU-01.png": (287, 183),
+        "NUGO LOGO WHITE.webp": (2293, 568),
+        "SR2026_whiteP.png": (3853, 2493),
+        "cep blanco.png": (1378, 471),
+        "GU_Secondary_White_Transparent.png": (5983, 6128),  # este no tiene relleno
+    }
+    for nombre, esperado in casos.items():
+        assert overlays._load_logo(nombre).size == esperado, nombre
+
+
+def test_septimo_respeta_los_altos_pedidos_por_el_template() -> None:
+    """El alto de cada fila tiene que ser el % del lado corto que pide el
+    template (dentro de un pixel de redondeo), no el del lienzo del archivo."""
+    cfg = overlays.TEMPLATES["septimo_cep"]
+    assert isinstance(cfg, overlays.StackedTemplate)
+    corto = 1067
+    for fila in cfg.rows:
+        piezas = overlays._row_pieces(fila, corto)
+        for pieza, spec in zip(piezas, fila.logos, strict=True):
+            esperado = round(corto * fila.h_pct * spec.scale)
+            assert abs(pieza.height - esperado) <= 1, (spec.filename, pieza.height, esperado)
