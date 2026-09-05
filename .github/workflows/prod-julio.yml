@@ -9,8 +9,8 @@ concurrency:
 permissions:
   contents: write
 jobs:
-  demo:
-    name: "Overlay B - equilibrio de tamanos"
+  ops:
+    name: "Prender workers y setear el overlay del evento"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -27,6 +27,47 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install --quiet requests "psycopg[binary]" boto3 Pillow
+
+      - name: Estado de los servicios
+        run: |
+          python3 - <<'PYX'
+          import json, os, requests
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
+             "Content-Type":"application/json"}
+          Q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
+                id serviceId serviceName latestDeployment{ id status } } } } } }"""
+          d=requests.post(API,headers=H,json={"query":Q,"variables":{
+              "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
+          filas=[]
+          print("=== SERVICIOS ===")
+          for e in d["environment"]["serviceInstances"]["edges"]:
+              n=e["node"]; dep=n.get("latestDeployment") or {}
+              st=dep.get("status") or "SIN DEPLOY"
+              print(f"  {n['serviceName']:<14} {st}")
+              filas.append({"nombre":n["serviceName"],"serviceId":n["serviceId"],"estado":st})
+          with open("servicios.json","w") as f: json.dump(filas,f)
+          PYX
+
+      - name: Prender worker, worker_fast y beat si hace falta
+        run: |
+          python3 - <<'PYX'
+          import json, os, requests, time
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
+             "Content-Type":"application/json"}
+          filas=json.load(open("servicios.json"))
+          VIVO={"SUCCESS","DEPLOYING","BUILDING","INITIALIZING","WAITING","QUEUED","SKIPPED"}
+          objetivo=[f for f in filas if f["nombre"] in ("worker","worker_fast","beat")]
+          M="""mutation($s:String!,$e:String!){
+                 serviceInstanceDeployV2(serviceId:$s, environmentId:$e) }"""
+          for f in objetivo:
+              if f["estado"] in VIVO:
+                  print(f"  {f['nombre']}: ya esta arriba ({f['estado']})"); continue
+              r=requests.post(API,headers=H,json={"query":M,"variables":{
+                  "s":f["serviceId"],"e":os.environ["ENV_ID"]}},timeout=60).json()
+              print(f"  {f['nombre']}: deploy disparado ->", json.dumps(r)[:200])
+          PYX
 
       - name: Credenciales
         run: |
@@ -52,104 +93,75 @@ jobs:
                   print(f"::add-mask::{v}"); f.write(f"{k}={v}\n")
           PYX
 
-      - name: Renderizar
+      - name: Asignar el template al evento
+        run: |
+          python3 - <<'PYX'
+          import os, psycopg
+          with psycopg.connect(os.environ["DATABASE_URL"]) as cx, cx.cursor() as cur:
+              cur.execute("""
+                  SELECT id, name, slug, status, brand_overlay, date
+                  FROM events_event
+                  WHERE status <> 'deleted'
+                  ORDER BY date DESC LIMIT 15
+              """)
+              print("=== EVENTOS ===")
+              filas=cur.fetchall()
+              for r in filas:
+                  print(f"  id={r[0]:<4} {r[1][:38]:<38} slug={r[2][:28]:<28}"
+                        f" estado={r[3]:<16} overlay={r[4]!r} fecha={r[5]}")
+
+              # Sin acentos para no depender de la collation: "ptimo" cubre
+              # SEPTIMO y SÉPTIMO por igual.
+              cur.execute("""
+                  SELECT id, name, slug FROM events_event
+                  WHERE status <> 'deleted'
+                    AND (name ILIKE '%ptimo%' OR slug ILIKE '%ptimo%'
+                         OR name ILIKE '%social run%' OR slug ILIKE '%social-run%')
+              """)
+              cand=cur.fetchall()
+              print("\n=== CANDIDATOS SEPTIMO/CEP ===", cand)
+              if len(cand) == 1:
+                  cur.execute("UPDATE events_event SET brand_overlay='septimo_cep' WHERE id=%s",
+                              (cand[0][0],))
+                  cx.commit()
+                  print(f"  -> overlay asignado a id={cand[0][0]} ({cand[0][1]})")
+              else:
+                  print("  -> NO se toca nada: hay", len(cand), "candidatos")
+          PYX
+
+      - name: Render real con el codigo de produccion
         run: |
           python3 - <<'PYX'
           import io, os, boto3, psycopg
           from pathlib import Path
-          from PIL import Image, ImageOps, ImageDraw
+          os.environ.setdefault("DJANGO_SETTINGS_MODULE","x")
+          # Se usa el modulo REAL del repo, con settings stubbeado (solo necesita BASE_DIR).
+          import sys, types
+          conf = types.ModuleType("django.conf")
+          class _S: BASE_DIR = os.getcwd()
+          conf.settings = _S()
+          dj = types.ModuleType("django"); dj.conf = conf
+          sys.modules.setdefault("django", dj); sys.modules["django.conf"] = conf
+          from PIL import Image, ImageOps
+          from apps.photos.overlays import apply_brand_overlay
 
           OUT = Path("demo_overlay"); OUT.mkdir(exist_ok=True)
-          D = Path("apps/photos/brand_overlays")
-
-          # Los 5 van ABAJO: los principales en una fila ENCIMA de los patrocinadores.
-          FILA_1 = [("SR2026_whiteP.png", 1.00), ("cep blanco.png", 0.80)]   # principales
-          FILA_2 = [("GU_Secondary_White_Transparent.png",1.00),
-                    ("LOGO TASU-01.png",1.05),
-                    ("NUGO LOGO WHITE.webp",0.82)]                           # patrocinadores
-
-          H_FILA1 = 0.056                      # alto de logo / alto de foto
-          SEPARACION = 0.030                   # aire entre las dos filas
-          MARGEN_X   = 0.12                    # margen lateral (recorte de IG)
-          SEGURO_BOT = 0.042                   # libre debajo de todo
-
-          def cargar(n):
-              im = Image.open(D/n).convert("RGBA")
-              return im.crop(im.split()[3].getbbox())
-
-          def piezas(lista, h, alto_pct):
-              alto = round(h*alto_pct); out=[]
-              for n,f in lista:
-                  lg = cargar(n); a = max(1, round(alto*f))
-                  out.append(lg.resize((max(1,round(a*lg.width/lg.height)), a), Image.LANCZOS))
-              return out
-
-          def scrim(size, banda_pct, arriba=False, max_alpha=225, curva=1.2):
-              w,h = size; banda = max(1, round(h*banda_pct))
-              g = Image.new("L",(1,banda))
-              for y in range(banda):
-                  t = y/(banda-1) if banda>1 else 1.0
-                  if arriba: t = 1-t                      # oscuro arriba, se aclara al bajar
-                  g.putpixel((0,y), round(max_alpha*(t**curva)))
-              g = g.resize((w,banda))
-              capa = Image.new("RGBA",(w,h),(0,0,0,0))
-              negro = Image.new("RGBA",(w,banda),(0,0,0,255)); negro.putalpha(g)
-              capa.paste(negro,(0, 0 if arriba else h-banda))
-              return capa
-
-          def aplicar(img, h_fila2):
-              base = img.convert("RGBA"); w,h = base.size
-              bloque = SEGURO_BOT + h_fila2 + SEPARACION + H_FILA1
-              base.alpha_composite(scrim((w,h), bloque + 0.10))
-              m = round(w*MARGEN_X)
-
-              # Fila de abajo: los 3 patrocinadores (izq / centro / der)
-              p2 = piezas(FILA_2, h, h_fila2)
-              y2 = h - round(h*SEGURO_BOT)
-              xs2 = [m, (w-p2[1].width)//2, w-p2[2].width-m]
-              for lg,x in zip(p2,xs2):
-                  base.alpha_composite(lg, (x, y2-lg.height))
-
-              # Fila de arriba: los 2 principales juntos al centro
-              p1 = piezas(FILA_1, h, H_FILA1)
-              y1 = y2 - max(p.height for p in p2) - round(h*SEPARACION)
-              sep = round(w*0.055)
-              tot = sum(p.width for p in p1) + sep
-              x = (w-tot)//2
-              for lg,xx in zip(p1,[x, x+p1[0].width+sep]):
-                  base.alpha_composite(lg, (xx, y1-lg.height))
-              return base.convert("RGB")
-
-          def marcar(img):
-              out = img.convert("RGBA"); w,h = out.size
-              capa = Image.new("RGBA",(w,h),(0,0,0,0)); d = ImageDraw.Draw(capa)
-              vis = (h*9/16)/w
-              if vis < 1:
-                  c = round(w*(1-vis)/2)
-                  d.rectangle([0,0,c,h], fill=(220,40,40,90))
-                  d.rectangle([w-c,0,w,h], fill=(220,40,40,90))
-              d.text((round(w*0.03), round(h*0.03)), "rojo = lo que recorta IG",
-                     fill=(255,255,255,255))
-              out.alpha_composite(capa); return out.convert("RGB")
-
           with psycopg.connect(os.environ["DATABASE_URL"]) as cx, cx.cursor() as cur:
-              cur.execute("SELECT id, original_key FROM photos_photo WHERE id=9189")
-              pid, key = cur.fetchone()
+              cur.execute("SELECT original_key FROM photos_photo WHERE id=9189")
+              (key,) = cur.fetchone()
           r2 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
                             aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
                             aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
                             region_name="auto")
           buf = io.BytesIO(); r2.download_fileobj(os.environ["R2_BUCKET_NAME"], key, buf); buf.seek(0)
-          im = ImageOps.exif_transpose(Image.open(buf)).convert("RGB")
-          im.thumbnail((1600,1600), Image.LANCZOS)
-
-          for etq, h2 in (("B1_patrocinadores_042", 0.042),
-                          ("B2_patrocinadores_048", 0.048),
-                          ("B3_patrocinadores_054", 0.054)):
-              r = aplicar(im, h2)
-              r.save(OUT/f"{etq}_limpio.jpg", quality=90)
-              marcar(r).save(OUT/f"{etq}_zonas_IG.jpg", quality=90)
-              print(f"  {etq} ok")
+          vert = ImageOps.exif_transpose(Image.open(buf)).convert("RGB")
+          vert.thumbnail((1600,1600), Image.LANCZOS)
+          apply_brand_overlay(vert, "septimo_cep").save(OUT/"PROD_vertical.jpg", quality=90)
+          # Version horizontal: se recorta la misma foto a 3:2 apaisado.
+          w,h = vert.size
+          alto = round(w*2/3)
+          horiz = vert.crop((0, (h-alto)//3, w, (h-alto)//3 + alto))
+          apply_brand_overlay(horiz, "septimo_cep").save(OUT/"PROD_horizontal.jpg", quality=90)
           print("listo:", sorted(p.name for p in OUT.iterdir()))
           PYX
 
@@ -160,5 +172,5 @@ jobs:
           git checkout --orphan demo-overlay-tmp
           git rm -rq --cached . || true
           git add -f demo_overlay/
-          git commit -qm "demo: variante B con tres tamanos de patrocinadores"
+          git commit -qm "demo: render con el codigo de produccion"
           git push -f origin demo-overlay-tmp
