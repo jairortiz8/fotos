@@ -21,6 +21,8 @@ jobs:
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
       WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
     steps:
+      - uses: actions/checkout@v4
+        with: { ref: main }
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -166,9 +168,8 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git init -q . 2>/dev/null || true
-          git remote add origin https://x-access-token:${{ github.token }}@github.com/${{ github.repository }} 2>/dev/null || true
           git checkout -q --orphan demo-overlay-tmp
+          git rm -rq --cached . || true
           git add -f demo_overlay/
           git commit -qm "chequeo en vivo de la subida"
           git push -f origin demo-overlay-tmp
