@@ -150,7 +150,52 @@ jobs:
                   add("   NO se detectan logos  <-- REVISAR")
               add(f"   original con logos: {'SI' if brand_k else 'NO  <-- REVISAR'}")
 
-          add(); add("5) EL SITIO")
+          with psycopg.connect(pg["DATABASE_PUBLIC_URL"]) as cx, cx.cursor() as cur:
+              cur.execute("""
+                  SELECT count(*),
+                         count(*) FILTER (WHERE f.avatar_key <> ''),
+                         count(*) FILTER (WHERE f.avatar_key = '')
+                  FROM photos_faceembedding f
+                  JOIN photos_photo p ON p.id = f.photo_id
+                  WHERE p.event_id=%s
+              """,(ev_id,))
+              t_car, con_av, sin_av = cur.fetchone()
+              # Tamano de cada cara = lado mayor del bbox, en px del original.
+              cur.execute("""
+                  SELECT
+                    count(*) FILTER (WHERE lado >= 130) AS grandes,
+                    count(*) FILTER (WHERE lado >= 50 AND lado < 130) AS medianas,
+                    count(*) FILTER (WHERE lado < 50) AS chicas,
+                    round(min(lado)::numeric,0), round(percentile_cont(0.5)
+                      WITHIN GROUP (ORDER BY lado)::numeric,0), round(max(lado)::numeric,0)
+                  FROM (
+                    SELECT greatest((f.bbox->>'w')::float, (f.bbox->>'h')::float) AS lado
+                    FROM photos_faceembedding f
+                    JOIN photos_photo p ON p.id=f.photo_id
+                    WHERE p.event_id=%s AND f.bbox IS NOT NULL
+                  ) q
+              """,(ev_id,))
+              gr, me, ch, mn, med, mx = cur.fetchone()
+              cur.execute("""
+                  SELECT count(*) FILTER (WHERE lado >= 50 AND ak = ''),
+                         count(*) FILTER (WHERE lado < 50 AND ak = '')
+                  FROM (
+                    SELECT greatest((f.bbox->>'w')::float,(f.bbox->>'h')::float) AS lado,
+                           f.avatar_key AS ak
+                    FROM photos_faceembedding f
+                    JOIN photos_photo p ON p.id=f.photo_id
+                    WHERE p.event_id=%s AND f.bbox IS NOT NULL
+                  ) q
+              """,(ev_id,))
+              falta_grande, falta_chica = cur.fetchone()
+          add(); add("5) CARATULAS DE CARAS (los recuadritos del visor)")
+          add(f"   caras detectadas: {t_car} · CON caratula: {con_av} · SIN caratula: {sin_av}")
+          add(f"   por tamano (lado en px del original): >=130: {gr} · 50-129: {me} · <50: {ch}")
+          add(f"   tamano de cara: min {mn} · mediana {med} · max {mx}")
+          add(f"   sin caratula y >=50px (deberian tenerla): {falta_grande}")
+          add(f"   sin caratula y <50px (por diseno no llevan): {falta_chica}")
+
+          add(); add("6) EL SITIO")
           se=requests.Session()
           for ruta in ("/healthz", f"/eventos/{SLUG}/"):
               rr=se.get("https://findyourfoto.com"+ruta, timeout=60)
