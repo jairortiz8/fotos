@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   ops:
-    name: "Chequeo previo al evento (solo lectura)"
+    name: "Como va la subida en vivo (solo lectura)"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -21,132 +21,144 @@ jobs:
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
       WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: main }
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --quiet requests "psycopg[binary]" boto3 celery redis
+      - run: pip install --quiet requests "psycopg[binary]" boto3 celery redis Pillow
 
-      - name: Chequeo completo
+      - name: Estado de la subida
         run: |
-          SHA=$(git rev-parse HEAD)
-          python3 - "$SHA" <<'PYX'
-          import os, sys, json, re, boto3, psycopg, requests
+          python3 - <<'PYX'
+          import io, os, json, boto3, psycopg, requests, redis as _r
           from celery import Celery
-          from datetime import datetime, timezone as tz
-          sha = sys.argv[1][:8]
+          from pathlib import Path
+          from PIL import Image
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
              "Content-Type":"application/json"}
-          R=[]   # lineas del informe
+          R=[]
           def add(x=""): R.append(x); print(x)
 
-          # ---------- 1. Servicios ----------
           Q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceId serviceName latestDeployment{ status meta } } } } } }"""
+                serviceId serviceName latestDeployment{ status } } } } } }"""
           d=requests.post(API,headers=H,json={"query":Q,"variables":{
               "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
-          svc={}
-          add("1) SERVICIOS DE RAILWAY")
-          for e in d["environment"]["serviceInstances"]["edges"]:
-              n=e["node"]; dep=n.get("latestDeployment") or {}
-              c=((dep.get("meta") or {}).get("commitHash") or "")[:8]
-              st=dep.get("status") or "SIN DEPLOY"
-              svc[n["serviceName"]]={"id":n["serviceId"],"status":st,"commit":c}
-              marca = "" if n["serviceName"] in ("Postgres","Redis","worker-fast") else (
-                  "  <-- codigo viejo" if c and c!=sha else "")
-              add(f"   {n['serviceName']:<13} {st:<10} {c or '-':<9}{marca}")
-          add(f"   (main esta en {sha})")
-
-          # ---------- 2. Variables ----------
+          svc={n["node"]["serviceName"]:{"id":n["node"]["serviceId"],
+               "status":(n["node"].get("latestDeployment") or {}).get("status") or "SIN DEPLOY"}
+               for n in d["environment"]["serviceInstances"]["edges"]}
           V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
           def vf(sid):
               return (requests.post(API,headers=H,json={"query":V,"variables":{
                   "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}},
                   timeout=40).json().get("data") or {}).get("variables") or {}
-          web=vf(svc["fotos"]["id"]); wk=vf(svc["worker"]["id"]); rd=vf(svc["Redis"]["id"])
-          pg=vf(os.environ["PG_ID"])
-          add(); add("2) FLAGS")
-          for k in ("FACE_SEARCH_ENABLED","PREVIEW_WATERMARK_ENABLED","PHOTO_UPLOAD_MAX_MB"):
-              add(f"   web    {k:<26} {web.get(k,'(default)')}")
-          for k in ("FACE_PROCESSING_ENABLED","MINOR_BLUR_ENABLED"):
-              add(f"   worker {k:<26} {wk.get(k,'(default)')}")
+          web=vf(svc["fotos"]["id"]); rd=vf(svc["Redis"]["id"]); pg=vf(os.environ["PG_ID"])
 
-          # ---------- 3. Workers escuchando ----------
+          add("1) SERVICIOS")
+          for k in ("fotos","worker","worker_fast","beat","Postgres","Redis"):
+              add(f"   {k:<12} {svc[k]['status']}")
+
           app=Celery(broker=rd["REDIS_PUBLIC_URL"])
           pings=app.control.ping(timeout=8) or []
-          add(); add("3) WORKERS QUE CONTESTAN EL PING")
-          for r0 in pings:
-              for nom,est in r0.items(): add(f"   {nom} -> {est}")
-          add(f"   total: {len(pings)} (esperado 2: worker y worker_fast)")
-          import redis as _r
           rc=_r.from_url(rd["REDIS_PUBLIC_URL"])
           colas={c: rc.llen(c) for c in ("celery","fast")}
-          add(f"   tareas encoladas: {colas} (0 = nada atrasado)")
+          add(); add("2) WORKERS Y COLA")
+          add(f"   workers contestando: {len(pings)}")
+          add(f"   tareas esperando: {colas}")
 
-          # ---------- 4. El evento ----------
-          add(); add("4) EVENTO SEPTIMO X CEP")
+          SLUG="septimo-x-cep-social-run"
           with psycopg.connect(pg["DATABASE_PUBLIC_URL"]) as cx, cx.cursor() as cur:
-              cur.execute("""SELECT id,name,slug,status,visibility,brand_overlay,date,
-                                    public_until,searchable_until,permanent_archive,
-                                    photo_count,pending_count
-                             FROM events_event WHERE slug='septimo-x-cep-social-run'""")
-              ev=cur.fetchone()
-              if ev is None: add("   NO EXISTE EL EVENTO")
-              else:
-                  add(f"   id={ev[0]}  '{ev[1]}'")
-                  add(f"   estado={ev[3]}  visibilidad={ev[4]}  logos={ev[5]!r}")
-                  add(f"   fecha del evento={ev[6]}  galeria abierta hasta={ev[7]}")
-                  add(f"   fotos={ev[10]}  pendientes={ev[11]}")
-                  cur.execute("""SELECT id,photographer_name,is_active,expires_at,
-                                        photo_limit,photos_uploaded,last_used_at
-                                 FROM photographers_photographerlink
-                                 WHERE event_id=%s ORDER BY id""",(ev[0],))
-                  links=cur.fetchall()
-                  add(); add("5) LINKS DE FOTOGRAFO DE ESE EVENTO")
-                  ahora=datetime.now(tz.utc)
-                  if not links: add("   NINGUNO -> el fotografo NO puede subir")
-                  for l in links:
-                      vig = "VIGENTE" if (l[2] and l[3] > ahora) else "NO SIRVE"
-                      add(f"   id={l[0]} {l[1][:22]:<22} {vig}  vence {l[3]:%Y-%m-%d %H:%M} UTC"
-                          f"  limite={l[4] or 'sin limite'}  subidas={l[5]}")
-              cur.execute("SELECT count(*) FROM photos_photo")
-              (tot,)=cur.fetchone()
+              cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,))
+              (ev_id,)=cur.fetchone()
               cur.execute("""SELECT status, count(*) FROM photos_photo
-                             WHERE created_at > now() - interval '2 days'
-                             GROUP BY status ORDER BY 2 DESC""")
-              recientes=cur.fetchall()
-          add(); add(f"6) BASE: {tot} fotos en total")
-          add(f"   ultimas 48h por estado: {recientes or 'ninguna'}")
+                             WHERE event_id=%s GROUP BY status ORDER BY 2 DESC""",(ev_id,))
+              por_estado=cur.fetchall()
+              cur.execute("""SELECT count(*) FROM photos_photo WHERE event_id=%s
+                             AND created_at > now() - interval '10 minutes'""",(ev_id,))
+              (ult10,)=cur.fetchone()
+              cur.execute("""SELECT count(*) FROM photos_photo WHERE event_id=%s
+                             AND created_at > now() - interval '60 minutes'""",(ev_id,))
+              (ult60,)=cur.fetchone()
+              cur.execute("""SELECT min(created_at), max(created_at) FROM photos_photo
+                             WHERE event_id=%s""",(ev_id,))
+              prim, ult = cur.fetchone()
+              cur.execute("""SELECT round(avg(extract(epoch from updated_at-created_at))::numeric,1),
+                                    round(max(extract(epoch from updated_at-created_at))::numeric,1)
+                             FROM photos_photo WHERE event_id=%s AND preview_key<>''""",(ev_id,))
+              lat_prom, lat_max = cur.fetchone()
+              cur.execute("""SELECT count(*) FROM photos_photo WHERE event_id=%s
+                             AND status='processing' AND created_at < now() - interval '15 minutes'""",(ev_id,))
+              (atascadas,)=cur.fetchone()
+              cur.execute("""SELECT count(*) FILTER (WHERE preview_key<>''),
+                                    count(*) FILTER (WHERE branded_key<>''),
+                                    count(*) FILTER (WHERE thumbnail_key<>'')
+                             FROM photos_photo WHERE event_id=%s""",(ev_id,))
+              n_prev, n_brand, n_thumb = cur.fetchone()
+              cur.execute("""SELECT count(*) FROM photos_bib b JOIN photos_photo p ON p.id=b.photo_id
+                             WHERE p.event_id=%s""",(ev_id,))
+              (n_bibs,)=cur.fetchone()
+              cur.execute("""SELECT count(*) FROM photos_faceembedding f
+                             JOIN photos_photo p ON p.id=f.photo_id WHERE p.event_id=%s""",(ev_id,))
+              (n_faces,)=cur.fetchone()
+              cur.execute("""SELECT count(DISTINCT p.id) FROM photos_photo p
+                             JOIN photos_bib b ON b.photo_id=p.id WHERE p.event_id=%s""",(ev_id,))
+              (con_bib,)=cur.fetchone()
+              cur.execute("""SELECT id, preview_key, branded_key, status FROM photos_photo
+                             WHERE event_id=%s AND preview_key<>'' ORDER BY id DESC LIMIT 1""",(ev_id,))
+              ultima=cur.fetchone()
+              cur.execute("""SELECT pl.photographer_name, count(p.id)
+                             FROM photographers_photographerlink pl
+                             LEFT JOIN photos_photo p ON p.photographer_id=pl.id
+                             WHERE pl.event_id=%s GROUP BY pl.id, pl.photographer_name""",(ev_id,))
+              por_fotografo=cur.fetchall()
 
-          # ---------- 7. R2 ----------
-          r2=boto3.client("s3", endpoint_url=web["R2_ENDPOINT_URL"],
-                          aws_access_key_id=web["R2_ACCESS_KEY_ID"],
-                          aws_secret_access_key=web["R2_SECRET_ACCESS_KEY"],
-                          region_name="auto")
-          lr=r2.list_objects_v2(Bucket=web["R2_BUCKET_NAME"], MaxKeys=1)
-          add(); add(f"7) R2 responde: HTTP {lr['ResponseMetadata']['HTTPStatusCode']}"
-                     f" (bucket accesible)")
+          add(); add("3) FOTOS DEL EVENTO")
+          add(f"   por estado: {por_estado}")
+          add(f"   por fotografo: {por_fotografo}")
+          add(f"   subidas en los ultimos 10 min: {ult10}   en la ultima hora: {ult60}")
+          if prim: add(f"   primera {prim:%H:%M:%S} UTC · ultima {ult:%H:%M:%S} UTC")
+          add(f"   con preview: {n_prev} · con thumbnail: {n_thumb} · con original+logos: {n_brand}")
+          add(f"   dorsales detectados: {n_bibs} en {con_bib} fotos · caras indexadas: {n_faces}")
+          add(f"   tardanza del worker: promedio {lat_prom}s · peor {lat_max}s")
+          add(f"   atascadas en 'processing' hace mas de 15 min: {atascadas}"
+              + ("  <-- REVISAR" if atascadas else "  (ninguna)"))
 
-          # ---------- 8. El sitio ----------
-          add(); add("8) EL SITIO")
+          OUT=Path("demo_overlay"); OUT.mkdir(exist_ok=True)
+          if ultima:
+              pid, prev_k, brand_k, st = ultima
+              r2=boto3.client("s3", endpoint_url=web["R2_ENDPOINT_URL"],
+                              aws_access_key_id=web["R2_ACCESS_KEY_ID"],
+                              aws_secret_access_key=web["R2_SECRET_ACCESS_KEY"],
+                              region_name="auto")
+              b=io.BytesIO(); r2.download_fileobj(web["R2_BUCKET_NAME"], prev_k, b); b.seek(0)
+              im=Image.open(b).convert("RGB"); im.save(OUT/"ULTIMA_preview.jpg", quality=88)
+              w,h=im.size; paso=max(1,w//400)
+              xs=[x for x in range(0,w,paso)
+                  if any(all(c>200 for c in im.getpixel((x,y))) for y in range(int(h*0.90),h,2))]
+              add(); add(f"4) LA MARCA DE AGUA EN UNA FOTO REAL (id={pid}, estado={st})")
+              add(f"   preview {w}x{h}")
+              if xs:
+                  gr=[];ini=xs[0];pv=xs[0]
+                  for x in xs[1:]:
+                      if x-pv>w*0.03: gr.append((ini,pv)); ini=x
+                      pv=x
+                  gr.append((ini,pv))
+                  add(f"   logos abajo: {len(gr)} grupos, centro de la foto={w//2}")
+                  for i,(a,bb) in enumerate(gr): add(f"      grupo {i}: x {a}-{bb} centro={(a+bb)//2}")
+              else:
+                  add("   NO se detectan logos  <-- REVISAR")
+              add(f"   original con logos: {'SI' if brand_k else 'NO  <-- REVISAR'}")
+
+          add(); add("5) EL SITIO")
           se=requests.Session()
-          for ruta in ("/healthz","/healthz/lite","/","/eventos/septimo-x-cep-social-run/",
-                       "/preguntas/","/terminos/"):
-              try:
-                  rr=se.get("https://findyourfoto.com"+ruta, timeout=60)
-                  extra=""
-                  if ruta=="/healthz":
-                      try: extra="  "+json.dumps(rr.json(), ensure_ascii=False)[:220]
-                      except Exception: pass
-                  add(f"   {ruta:<38} HTTP {rr.status_code}{extra}")
-              except Exception as exc:
-                  add(f"   {ruta:<38} ERROR {exc}")
+          for ruta in ("/healthz", f"/eventos/{SLUG}/"):
+              rr=se.get("https://findyourfoto.com"+ruta, timeout=60)
+              extra=""
+              if ruta=="/healthz":
+                  try: extra="  "+json.dumps(rr.json()["checks"], ensure_ascii=False)[:200]
+                  except Exception: pass
+              add(f"   {ruta:<40} HTTP {rr.status_code}{extra}")
 
-          Path=__import__("pathlib").Path
-          Path("demo_overlay").mkdir(exist_ok=True)
-          (Path("demo_overlay")/"RESUMEN.txt").write_text("\n".join(R)+"\n")
+          (OUT/"RESUMEN.txt").write_text("\n".join(R)+"\n")
           PYX
 
       - name: Devolver el resumen por rama
@@ -154,8 +166,9 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git init -q . 2>/dev/null || true
+          git remote add origin https://x-access-token:${{ github.token }}@github.com/${{ github.repository }} 2>/dev/null || true
           git checkout -q --orphan demo-overlay-tmp
-          git rm -rq --cached . || true
           git add -f demo_overlay/
-          git commit -qm "chequeo previo al evento"
+          git commit -qm "chequeo en vivo de la subida"
           git push -f origin demo-overlay-tmp
