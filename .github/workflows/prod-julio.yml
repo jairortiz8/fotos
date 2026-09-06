@@ -169,7 +169,8 @@ jobs:
                     round(min(lado)::numeric,0), round(percentile_cont(0.5)
                       WITHIN GROUP (ORDER BY lado)::numeric,0), round(max(lado)::numeric,0)
                   FROM (
-                    SELECT greatest((f.bbox->>'w')::float, (f.bbox->>'h')::float) AS lado
+                    SELECT greatest((f.bbox->>'x2')::float-(f.bbox->>'x1')::float,
+                           (f.bbox->>'y2')::float-(f.bbox->>'y1')::float) AS lado
                     FROM photos_faceembedding f
                     JOIN photos_photo p ON p.id=f.photo_id
                     WHERE p.event_id=%s AND f.bbox IS NOT NULL
@@ -180,7 +181,8 @@ jobs:
                   SELECT count(*) FILTER (WHERE lado >= 50 AND ak = ''),
                          count(*) FILTER (WHERE lado < 50 AND ak = '')
                   FROM (
-                    SELECT greatest((f.bbox->>'w')::float,(f.bbox->>'h')::float) AS lado,
+                    SELECT greatest((f.bbox->>'x2')::float-(f.bbox->>'x1')::float,
+                           (f.bbox->>'y2')::float-(f.bbox->>'y1')::float) AS lado,
                            f.avatar_key AS ak
                     FROM photos_faceembedding f
                     JOIN photos_photo p ON p.id=f.photo_id
