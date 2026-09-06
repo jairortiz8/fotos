@@ -163,13 +163,9 @@ jobs:
           (OUT/"RESUMEN.txt").write_text("\n".join(R)+"\n")
           PYX
 
-      - name: Devolver el resumen por rama
+      - name: INFORME
         if: always()
         run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -q --orphan demo-overlay-tmp
-          git rm -rq --cached . || true
-          git add -f demo_overlay/
-          git commit -qm "chequeo en vivo de la subida"
-          git push -f origin demo-overlay-tmp
+          echo "=================== INFORME ==================="
+          cat demo_overlay/RESUMEN.txt
+          echo "==============================================="
