@@ -109,7 +109,7 @@ jobs:
               ultima=cur.fetchone()
               cur.execute("""SELECT pl.photographer_name, count(p.id)
                              FROM photographers_photographerlink pl
-                             LEFT JOIN photos_photo p ON p.photographer_id=pl.id
+                             LEFT JOIN photos_photo p ON p.photographer_link_id=pl.id
                              WHERE pl.event_id=%s GROUP BY pl.id, pl.photographer_name""",(ev_id,))
               por_fotografo=cur.fetchall()
 
@@ -167,5 +167,5 @@ jobs:
         if: always()
         run: |
           echo "=================== INFORME ==================="
-          cat demo_overlay/RESUMEN.txt
+          cat demo_overlay/RESUMEN.txt || echo "(el chequeo no llego a escribir el informe)"
           echo "==============================================="
