@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   ops:
-    name: "Como va la subida en vivo (solo lectura)"
+    name: "Mas procesos al worker liviano, en caliente"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -21,198 +21,70 @@ jobs:
       PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
       WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: main }
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --quiet requests "psycopg[binary]" boto3 celery redis Pillow
+      - run: pip install --quiet requests celery redis
 
-      - name: Estado de la subida
+      - name: Agrandar el pool del worker liviano
         run: |
           python3 - <<'PYX'
-          import io, os, json, boto3, psycopg, requests, redis as _r
+          import os, time, requests, redis as _r
           from celery import Celery
-          from pathlib import Path
-          from PIL import Image
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
              "Content-Type":"application/json"}
-          R=[]
-          def add(x=""): R.append(x); print(x)
-
           Q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceId serviceName latestDeployment{ status } } } } } }"""
+                serviceId serviceName } } } } }"""
           d=requests.post(API,headers=H,json={"query":Q,"variables":{
               "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
-          svc={n["node"]["serviceName"]:{"id":n["node"]["serviceId"],
-               "status":(n["node"].get("latestDeployment") or {}).get("status") or "SIN DEPLOY"}
+          ids={n["node"]["serviceName"]:n["node"]["serviceId"]
                for n in d["environment"]["serviceInstances"]["edges"]}
           V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          def vf(sid):
-              return (requests.post(API,headers=H,json={"query":V,"variables":{
-                  "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}},
-                  timeout=40).json().get("data") or {}).get("variables") or {}
-          web=vf(svc["fotos"]["id"]); rd=vf(svc["Redis"]["id"]); pg=vf(os.environ["PG_ID"])
+          rd=(requests.post(API,headers=H,json={"query":V,"variables":{
+              "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
+              "s":ids["Redis"]}},timeout=40).json().get("data") or {}).get("variables") or {}
+          broker=rd["REDIS_PUBLIC_URL"]
+          app=Celery(broker=broker); rc=_r.from_url(broker)
 
-          add("1) SERVICIOS")
-          for k in ("fotos","worker","worker_fast","beat","Postgres","Redis"):
-              add(f"   {k:<12} {svc[k]['status']}")
+          insp=app.control.inspect(timeout=10)
+          colas=insp.active_queues() or {}
+          stats=insp.stats() or {}
+          print("=== WORKERS ===")
+          liviano=None
+          for nodo, qs in colas.items():
+              nombres=sorted(q["name"] for q in qs)
+              procs=len((stats.get(nodo,{}).get("pool",{}) or {}).get("processes",[]) or [])
+              print(f"  {nodo}  colas={nombres}  procesos={procs}")
+              if nombres==["fast"]: liviano=nodo
+          if liviano is None:
+              raise SystemExit("no encontre el worker que atiende SOLO la cola fast")
 
-          app=Celery(broker=rd["REDIS_PUBLIC_URL"])
-          pings=app.control.ping(timeout=8) or []
-          rc=_r.from_url(rd["REDIS_PUBLIC_URL"])
-          colas={c: rc.llen(c) for c in ("celery","fast")}
-          add(); add("2) WORKERS Y COLA")
-          add(f"   workers contestando: {len(pings)}")
-          add(f"   tareas esperando: {colas}")
+          antes_cola={c: rc.llen(c) for c in ("celery","fast")}
+          antes_procs=len(stats[liviano]["pool"]["processes"])
+          print(f"\nliviano = {liviano}  procesos antes = {antes_procs}")
+          print(f"cola antes = {antes_cola}")
 
-          SLUG="septimo-x-cep-social-run"
-          with psycopg.connect(pg["DATABASE_PUBLIC_URL"]) as cx, cx.cursor() as cur:
-              cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,))
-              (ev_id,)=cur.fetchone()
-              cur.execute("""SELECT status, count(*) FROM photos_photo
-                             WHERE event_id=%s GROUP BY status ORDER BY 2 DESC""",(ev_id,))
-              por_estado=cur.fetchall()
-              cur.execute("""SELECT count(*) FROM photos_photo WHERE event_id=%s
-                             AND created_at > now() - interval '10 minutes'""",(ev_id,))
-              (ult10,)=cur.fetchone()
-              cur.execute("""SELECT count(*) FROM photos_photo WHERE event_id=%s
-                             AND created_at > now() - interval '60 minutes'""",(ev_id,))
-              (ult60,)=cur.fetchone()
-              cur.execute("""SELECT min(created_at), max(created_at) FROM photos_photo
-                             WHERE event_id=%s""",(ev_id,))
-              prim, ult = cur.fetchone()
-              cur.execute("""SELECT round(avg(extract(epoch from updated_at-created_at))::numeric,1),
-                                    round(max(extract(epoch from updated_at-created_at))::numeric,1)
-                             FROM photos_photo WHERE event_id=%s AND preview_key<>''""",(ev_id,))
-              lat_prom, lat_max = cur.fetchone()
-              cur.execute("""SELECT count(*) FROM photos_photo WHERE event_id=%s
-                             AND status='processing' AND created_at < now() - interval '15 minutes'""",(ev_id,))
-              (atascadas,)=cur.fetchone()
-              cur.execute("""SELECT count(*) FILTER (WHERE preview_key<>''),
-                                    count(*) FILTER (WHERE branded_key<>''),
-                                    count(*) FILTER (WHERE thumbnail_key<>'')
-                             FROM photos_photo WHERE event_id=%s""",(ev_id,))
-              n_prev, n_brand, n_thumb = cur.fetchone()
-              cur.execute("""SELECT count(*) FROM photos_bib b JOIN photos_photo p ON p.id=b.photo_id
-                             WHERE p.event_id=%s""",(ev_id,))
-              (n_bibs,)=cur.fetchone()
-              cur.execute("""SELECT count(*) FROM photos_faceembedding f
-                             JOIN photos_photo p ON p.id=f.photo_id WHERE p.event_id=%s""",(ev_id,))
-              (n_faces,)=cur.fetchone()
-              cur.execute("""SELECT count(DISTINCT p.id) FROM photos_photo p
-                             JOIN photos_bib b ON b.photo_id=p.id WHERE p.event_id=%s""",(ev_id,))
-              (con_bib,)=cur.fetchone()
-              cur.execute("""SELECT id, preview_key, branded_key, status FROM photos_photo
-                             WHERE event_id=%s AND preview_key<>'' ORDER BY id DESC LIMIT 1""",(ev_id,))
-              ultima=cur.fetchone()
-              cur.execute("""SELECT pl.photographer_name, count(p.id)
-                             FROM photographers_photographerlink pl
-                             LEFT JOIN photos_photo p ON p.photographer_link_id=pl.id
-                             WHERE pl.event_id=%s GROUP BY pl.id, pl.photographer_name""",(ev_id,))
-              por_fotografo=cur.fetchall()
+          OBJETIVO=6
+          crecer=max(0, OBJETIVO-antes_procs)
+          if crecer==0:
+              print("ya tiene suficientes procesos, no hago nada")
+          else:
+              print(f"agregando {crecer} procesos (en caliente, sin reiniciar)...")
+              app.control.pool_grow(crecer, destination=[liviano])
+              time.sleep(12)
 
-          add(); add("3) FOTOS DEL EVENTO")
-          add(f"   por estado: {por_estado}")
-          add(f"   por fotografo: {por_fotografo}")
-          add(f"   subidas en los ultimos 10 min: {ult10}   en la ultima hora: {ult60}")
-          if prim: add(f"   primera {prim:%H:%M:%S} UTC · ultima {ult:%H:%M:%S} UTC")
-          add(f"   con preview: {n_prev} · con thumbnail: {n_thumb} · con original+logos: {n_brand}")
-          add(f"   dorsales detectados: {n_bibs} en {con_bib} fotos · caras indexadas: {n_faces}")
-          add(f"   tardanza del worker: promedio {lat_prom}s · peor {lat_max}s")
-          add(f"   atascadas en 'processing' hace mas de 15 min: {atascadas}"
-              + ("  <-- REVISAR" if atascadas else "  (ninguna)"))
+          st2=app.control.inspect(timeout=10).stats() or {}
+          ahora=len((st2.get(liviano,{}).get("pool",{}) or {}).get("processes",[]) or [])
+          print(f"procesos ahora = {ahora}")
 
-          OUT=Path("demo_overlay"); OUT.mkdir(exist_ok=True)
-          if ultima:
-              pid, prev_k, brand_k, st = ultima
-              r2=boto3.client("s3", endpoint_url=web["R2_ENDPOINT_URL"],
-                              aws_access_key_id=web["R2_ACCESS_KEY_ID"],
-                              aws_secret_access_key=web["R2_SECRET_ACCESS_KEY"],
-                              region_name="auto")
-              b=io.BytesIO(); r2.download_fileobj(web["R2_BUCKET_NAME"], prev_k, b); b.seek(0)
-              im=Image.open(b).convert("RGB"); im.save(OUT/"ULTIMA_preview.jpg", quality=88)
-              w,h=im.size; paso=max(1,w//400)
-              xs=[x for x in range(0,w,paso)
-                  if any(all(c>200 for c in im.getpixel((x,y))) for y in range(int(h*0.90),h,2))]
-              add(); add(f"4) LA MARCA DE AGUA EN UNA FOTO REAL (id={pid}, estado={st})")
-              add(f"   preview {w}x{h}")
-              if xs:
-                  gr=[];ini=xs[0];pv=xs[0]
-                  for x in xs[1:]:
-                      if x-pv>w*0.03: gr.append((ini,pv)); ini=x
-                      pv=x
-                  gr.append((ini,pv))
-                  add(f"   logos abajo: {len(gr)} grupos, centro de la foto={w//2}")
-                  for i,(a,bb) in enumerate(gr): add(f"      grupo {i}: x {a}-{bb} centro={(a+bb)//2}")
-              else:
-                  add("   NO se detectan logos  <-- REVISAR")
-              add(f"   original con logos: {'SI' if brand_k else 'NO  <-- REVISAR'}")
-
-          with psycopg.connect(pg["DATABASE_PUBLIC_URL"]) as cx, cx.cursor() as cur:
-              cur.execute("""
-                  SELECT count(*),
-                         count(*) FILTER (WHERE f.avatar_key <> ''),
-                         count(*) FILTER (WHERE f.avatar_key = '')
-                  FROM photos_faceembedding f
-                  JOIN photos_photo p ON p.id = f.photo_id
-                  WHERE p.event_id=%s
-              """,(ev_id,))
-              t_car, con_av, sin_av = cur.fetchone()
-              # Tamano de cada cara = lado mayor del bbox, en px del original.
-              cur.execute("""
-                  SELECT
-                    count(*) FILTER (WHERE lado >= 130) AS grandes,
-                    count(*) FILTER (WHERE lado >= 50 AND lado < 130) AS medianas,
-                    count(*) FILTER (WHERE lado < 50) AS chicas,
-                    round(min(lado)::numeric,0), round(percentile_cont(0.5)
-                      WITHIN GROUP (ORDER BY lado)::numeric,0), round(max(lado)::numeric,0)
-                  FROM (
-                    SELECT greatest((f.bbox->>'x2')::float-(f.bbox->>'x1')::float,
-                           (f.bbox->>'y2')::float-(f.bbox->>'y1')::float) AS lado
-                    FROM photos_faceembedding f
-                    JOIN photos_photo p ON p.id=f.photo_id
-                    WHERE p.event_id=%s AND f.bbox IS NOT NULL
-                  ) q
-              """,(ev_id,))
-              gr, me, ch, mn, med, mx = cur.fetchone()
-              cur.execute("""
-                  SELECT count(*) FILTER (WHERE lado >= 50 AND ak = ''),
-                         count(*) FILTER (WHERE lado < 50 AND ak = '')
-                  FROM (
-                    SELECT greatest((f.bbox->>'x2')::float-(f.bbox->>'x1')::float,
-                           (f.bbox->>'y2')::float-(f.bbox->>'y1')::float) AS lado,
-                           f.avatar_key AS ak
-                    FROM photos_faceembedding f
-                    JOIN photos_photo p ON p.id=f.photo_id
-                    WHERE p.event_id=%s AND f.bbox IS NOT NULL
-                  ) q
-              """,(ev_id,))
-              falta_grande, falta_chica = cur.fetchone()
-          add(); add("5) CARATULAS DE CARAS (los recuadritos del visor)")
-          add(f"   caras detectadas: {t_car} · CON caratula: {con_av} · SIN caratula: {sin_av}")
-          add(f"   por tamano (lado en px del original): >=130: {gr} · 50-129: {me} · <50: {ch}")
-          add(f"   tamano de cara: min {mn} · mediana {med} · max {mx}")
-          add(f"   sin caratula y >=50px (deberian tenerla): {falta_grande}")
-          add(f"   sin caratula y <50px (por diseno no llevan): {falta_chica}")
-
-          add(); add("6) EL SITIO")
-          se=requests.Session()
-          for ruta in ("/healthz", f"/eventos/{SLUG}/"):
-              rr=se.get("https://findyourfoto.com"+ruta, timeout=60)
-              extra=""
-              if ruta=="/healthz":
-                  try: extra="  "+json.dumps(rr.json()["checks"], ensure_ascii=False)[:200]
-                  except Exception: pass
-              add(f"   {ruta:<40} HTTP {rr.status_code}{extra}")
-
-          (OUT/"RESUMEN.txt").write_text("\n".join(R)+"\n")
+          print("\nmidiendo el avance de la cola durante 60s...")
+          m0=rc.llen("fast"); time.sleep(60); m1=rc.llen("fast")
+          print(f"  cola fast: {m0} -> {m1}  (drenando {m0-m1} tareas en 60s)")
+          if m1 and (m0-m1)>0:
+              print(f"  a este ritmo se vacia en ~{round(m1/((m0-m1)/60)/60,1)} min")
+          print("\n=== RESUMEN ===")
+          print(f"  worker liviano: {antes_procs} -> {ahora} procesos")
+          print(f"  cola fast: {antes_cola['fast']} -> {m1}")
+          print("  el worker pesado (caras) NO se toco")
           PYX
-
-      - name: INFORME
-        if: always()
-        run: |
-          echo "=================== INFORME ==================="
-          cat demo_overlay/RESUMEN.txt || echo "(el chequeo no llego a escribir el informe)"
-          echo "==============================================="
