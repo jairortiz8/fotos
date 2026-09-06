@@ -1,0 +1,45 @@
+1) SERVICIOS DE RAILWAY
+   beat          SUCCESS    7bc861ac   <-- codigo viejo
+   fotos         SUCCESS    21877434 
+   Postgres      SUCCESS    -        
+   worker_fast   SUCCESS    0b48a89f   <-- codigo viejo
+   worker        SUCCESS    0b48a89f   <-- codigo viejo
+   worker-fast   SIN DEPLOY -        
+   Redis         SUCCESS    -        
+   (main esta en 21877434)
+
+2) FLAGS
+   web    FACE_SEARCH_ENABLED        true
+   web    PREVIEW_WATERMARK_ENABLED  false
+   web    PHOTO_UPLOAD_MAX_MB        (default)
+   worker FACE_PROCESSING_ENABLED    true
+   worker MINOR_BLUR_ENABLED         false
+
+3) WORKERS QUE CONTESTAN EL PING
+   celery@67d357f39d61 -> {'ok': 'pong'}
+   celery@3c945863f877 -> {'ok': 'pong'}
+   total: 2 (esperado 2: worker y worker_fast)
+   tareas encoladas: {'celery': 0, 'fast': 0} (0 = nada atrasado)
+
+4) EVENTO SEPTIMO X CEP
+   id=9  'Séptimo x CEP · Social Run'
+   estado=live  visibilidad=unlisted  logos='septimo_cep'
+   fecha del evento=2026-09-06  galeria abierta hasta=2026-12-05 23:59:59.999999+00:00
+   fotos=0  pendientes=0
+
+5) LINKS DE FOTOGRAFO DE ESE EVENTO
+   id=38 Recorrido              VIGENTE  vence 2026-10-06 23:59 UTC  limite=sin limite  subidas=2
+   id=39 After Run              VIGENTE  vence 2026-10-06 23:59 UTC  limite=sin limite  subidas=0
+
+6) BASE: 25552 fotos en total
+   ultimas 48h por estado: ninguna
+
+7) R2 responde: HTTP 200 (bucket accesible)
+
+8) EL SITIO
+   /healthz                               HTTP 200  {"status": "ok", "checks": {"db": {"ok": true}, "redis": {"ok": true}, "r2": {"ok": true, "configured": true}, "celery_workers": {"ok": true, "workers": 2}, "celery_beat": {"ok": true, "scheduled_tasks": 9}}, "version": 
+   /healthz/lite                          HTTP 200
+   /                                      HTTP 200
+   /eventos/septimo-x-cep-social-run/     HTTP 200
+   /preguntas/                            HTTP 200
+   /terminos/                             HTTP 200
