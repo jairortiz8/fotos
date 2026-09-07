@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   ops:
-    name: "Confirmar el estado final"
+    name: "Habilitar el evento para invitados"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -24,30 +24,46 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --quiet requests
-      - name: Estado final
+      - run: pip install --quiet requests "psycopg[binary]"
+      - name: Marcar reviewer_visible y comprobar
         run: |
           python3 - <<'PYX'
-          import os, time, requests
+          import os, requests, psycopg
+          SLUG="septimo-x-cep-social-run"
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
              "Content-Type":"application/json"}
-          Q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceName latestDeployment{ status } } } } } }"""
-          for i in range(20):
-              d=requests.post(API,headers=H,json={"query":Q,"variables":{
-                  "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
-              st={n["node"]["serviceName"]:
-                  (n["node"].get("latestDeployment") or {}).get("status") or "SIN DEPLOY"
-                  for n in d["environment"]["serviceInstances"]["edges"]}
-              if st.get("fotos") not in ("BUILDING","DEPLOYING","INITIALIZING","QUEUED"):
-                  break
-              print(f"  [{i:02d}] el web sigue desplegando ({st.get('fotos')})...")
-              time.sleep(20)
-          print("\n=== ESTADO FINAL ===")
-          for k,v in st.items(): print(f"   {k:<13} {v}")
+          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          pg=(requests.post(API,headers=H,json={"query":V,"variables":{
+              "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
+              "s":os.environ["PG_ID"]}},timeout=40).json().get("data") or {}).get("variables") or {}
+          with psycopg.connect(pg["DATABASE_PUBLIC_URL"]) as cx, cx.cursor() as cur:
+              cur.execute("""UPDATE events_event SET reviewer_visible=true
+                             WHERE slug=%s AND status<>'deleted'
+                             RETURNING id, name, status, reviewer_visible""",(SLUG,))
+              fila=cur.fetchone()
+              if fila is None: raise SystemExit(f"no existe el evento {SLUG}")
+              cx.commit()
+              print(f"   evento id={fila[0]} '{fila[1]}' estado={fila[2]} visible_para_invitados={fila[3]}")
+              cur.execute("""SELECT slug, reviewer_visible FROM events_event
+                             WHERE status<>'deleted' ORDER BY id""")
+              print("\n   === EVENTOS VISIBLES PARA INVITADOS ===")
+              for sl,rv in cur.fetchall():
+                  print(f"      {sl[:38]:<40} {'SI' if rv else 'no'}")
+              cur.execute("""SELECT username, is_staff, is_reviewer, is_active
+                             FROM core_user ORDER BY id""")
+              print("\n   === QUIEN PUEDE ENTRAR AL PORTAL DE INVITADOS ===")
+              for u,st,rv,act in cur.fetchall():
+                  rol = "staff" if st else ("invitado" if rv else "sin acceso")
+                  print(f"      {u[:24]:<26} {rol:<12} {'activo' if act else 'INACTIVO'}")
+              cur.execute("""SELECT count(*) FROM photos_photo p
+                             JOIN events_event e ON e.id=p.event_id
+                             WHERE e.slug=%s AND p.status='approved'""",(SLUG,))
+              (n,)=cur.fetchone()
+              print(f"\n   fotos aprobadas que veran los invitados: {n}")
           print()
-          for ruta in ("/healthz","/","/eventos/septimo-x-cep-social-run/"):
-              r=requests.get("https://findyourfoto.com"+ruta, timeout=60)
-              print(f"   {ruta:<40} HTTP {r.status_code}")
+          for ruta in ("/invitados/entrar/", f"/invitados/{SLUG}/"):
+              r=requests.get("https://findyourfoto.com"+ruta, timeout=60, allow_redirects=False)
+              print(f"   {ruta:<44} HTTP {r.status_code}"
+                    + ("  (redirige al login, correcto)" if r.status_code in (301,302) else ""))
           PYX
