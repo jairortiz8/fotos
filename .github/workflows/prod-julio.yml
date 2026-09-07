@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   ops:
-    name: "Apagar worker, worker_fast y beat"
+    name: "Confirmar el estado final"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -24,9 +24,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --quiet requests celery redis
-
-      - name: Apagar y confirmar
+      - run: pip install --quiet requests
+      - name: Estado final
         run: |
           python3 - <<'PYX'
           import os, time, requests
@@ -34,46 +33,21 @@ jobs:
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
              "Content-Type":"application/json"}
           Q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceId serviceName latestDeployment{ id status } } } } } }"""
-          def estado():
+                serviceName latestDeployment{ status } } } } } }"""
+          for i in range(20):
               d=requests.post(API,headers=H,json={"query":Q,"variables":{
                   "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
-              return {n["node"]["serviceName"]:{
-                  "id":n["node"]["serviceId"],
-                  "dep":(n["node"].get("latestDeployment") or {}).get("id"),
-                  "status":(n["node"].get("latestDeployment") or {}).get("status") or "SIN DEPLOY"}
+              st={n["node"]["serviceName"]:
+                  (n["node"].get("latestDeployment") or {}).get("status") or "SIN DEPLOY"
                   for n in d["environment"]["serviceInstances"]["edges"]}
-          APAGAR=("worker","worker_fast","beat")
-          st=estado()
-          print("=== ANTES ===")
-          for k,v in st.items(): print(f"   {k:<13} {v['status']}")
-          # deploymentRemove es el UNICO que apaga de verdad (ver checklist).
-          M="mutation($id:String!){ deploymentRemove(id:$id) }"
-          for k in APAGAR:
-              if st[k]["dep"] and st[k]["status"]!="REMOVED":
-                  r=requests.post(API,headers=H,json={"query":M,"variables":{
-                      "id":st[k]["dep"]}},timeout=60).json()
-                  print(f"   apagando {k} -> {str(r)[:90]}")
-              else:
-                  print(f"   {k}: ya estaba apagado")
-          for i in range(12):
-              time.sleep(15)
-              a=estado()
-              linea=" · ".join(f"{k}={a[k]['status']}" for k in APAGAR)
-              print(f"   [{i:02d}] {linea}")
-              if all(a[k]["status"] in ("REMOVED","SIN DEPLOY") for k in APAGAR): break
-          print("\n=== DESPUES ===")
-          a=estado()
-          for k,v in a.items(): print(f"   {k:<13} {v['status']}")
-          # Los workers no tienen que contestar el ping.
-          from celery import Celery
-          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          rd=(requests.post(API,headers=H,json={"query":V,"variables":{
-              "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
-              "s":a["Redis"]["id"]}},timeout=40).json().get("data") or {}).get("variables") or {}
-          pings=Celery(broker=rd["REDIS_PUBLIC_URL"]).control.ping(timeout=8) or []
-          print(f"\n   workers que contestan el ping: {len(pings)} (tiene que ser 0)")
-          for ruta in ("/healthz/lite","/"):
-              rr=requests.get("https://findyourfoto.com"+ruta, timeout=60)
-              print(f"   {ruta:<16} HTTP {rr.status_code}")
+              if st.get("fotos") not in ("BUILDING","DEPLOYING","INITIALIZING","QUEUED"):
+                  break
+              print(f"  [{i:02d}] el web sigue desplegando ({st.get('fotos')})...")
+              time.sleep(20)
+          print("\n=== ESTADO FINAL ===")
+          for k,v in st.items(): print(f"   {k:<13} {v}")
+          print()
+          for ruta in ("/healthz","/","/eventos/septimo-x-cep-social-run/"):
+              r=requests.get("https://findyourfoto.com"+ruta, timeout=60)
+              print(f"   {ruta:<40} HTTP {r.status_code}")
           PYX
