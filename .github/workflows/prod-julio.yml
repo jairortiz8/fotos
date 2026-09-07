@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   ops:
-    name: "Auditoria de velocidad del evento"
+    name: "Numeros por evento para dimensionar el VPS"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -24,97 +24,49 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --quiet requests "psycopg[binary]" redis
+      - run: pip install --quiet requests "psycopg[binary]"
 
-      - name: Auditoria
+      - name: Volumen por evento
         run: |
           python3 - <<'PYX'
-          import os, requests, psycopg, redis as _r
-          SLUG="septimo-x-cep-social-run"
+          import os, requests, psycopg
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
              "Content-Type":"application/json"}
-          Q="""query($e:String!){ environment(id:$e){ serviceInstances{ edges{ node{
-                serviceId serviceName } } } } }"""
-          d=requests.post(API,headers=H,json={"query":Q,"variables":{
-              "e":os.environ["ENV_ID"]}},timeout=60).json()["data"]
-          ids={n["node"]["serviceName"]:n["node"]["serviceId"]
-               for n in d["environment"]["serviceInstances"]["edges"]}
           V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          def vf(sid):
-              return (requests.post(API,headers=H,json={"query":V,"variables":{
-                  "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}},
-                  timeout=40).json().get("data") or {}).get("variables") or {}
-          pg=vf(os.environ["PG_ID"]); rd=vf(ids["Redis"])
-          rc=_r.from_url(rd["REDIS_PUBLIC_URL"])
-
+          pg=(requests.post(API,headers=H,json={"query":V,"variables":{
+              "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
+              "s":os.environ["PG_ID"]}},timeout=40).json().get("data") or {}).get("variables") or {}
           with psycopg.connect(pg["DATABASE_PUBLIC_URL"]) as cx, cx.cursor() as cur:
-              cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,)); (ev,)=cur.fetchone()
-
-              cur.execute("""SELECT count(*), min(created_at), max(created_at),
-                                    round(extract(epoch from max(created_at)-min(created_at))/60)
-                             FROM photos_photo WHERE event_id=%s""",(ev,))
-              n, t0, t1, mins = cur.fetchone()
-              cur.execute("""SELECT status, count(*) FROM photos_photo WHERE event_id=%s
-                             GROUP BY status ORDER BY 2 DESC""",(ev,))
-              estados=cur.fetchall()
-              cur.execute("""SELECT pl.photographer_name, count(p.id), min(p.created_at), max(p.created_at)
-                             FROM photographers_photographerlink pl
-                             LEFT JOIN photos_photo p ON p.photographer_link_id=pl.id
-                             WHERE pl.event_id=%s GROUP BY pl.id, pl.photographer_name
-                             ORDER BY 2 DESC""",(ev,))
-              porfoto=cur.fetchall()
-
-              print(f"1) SUBIDA")
-              print(f"   fotos: {n}")
-              print(f"   desde {t0:%H:%M:%S} hasta {t1:%H:%M:%S} UTC  ({mins} min)")
-              if mins: print(f"   promedio: {round(n/float(mins),1)} fotos/min")
-              print(f"   estados: {estados}")
-              for nom,c,a,b in porfoto:
-                  if c: print(f"   {nom}: {c} fotos, de {a:%H:%M} a {b:%H:%M}")
-                  else: print(f"   {nom}: 0 fotos")
-
-              cur.execute("""SELECT to_char(bucket,'HH24:MI') , cant FROM (
-                               SELECT date_trunc('minute', created_at)
-                                 - (extract(minute from created_at)::int %% 5) * interval '1 minute' AS bucket,
-                                      count(*) AS cant
-                               FROM photos_photo WHERE event_id=%s
-                               GROUP BY 1 ORDER BY 1) q""",(ev,))
-              buckets=cur.fetchall()
-              print(); print("2) RITMO DE SUBIDA (bloques de 5 min, UTC)")
-              pico=max((c for _,c in buckets), default=0)
-              for h,c in buckets:
-                  barra="#"*max(1,round(c/max(1,pico)*40))
-                  print(f"   {h}  {c:>4}  {barra}")
-              print(f"   pico: {pico} fotos en 5 min = {round(pico/5,1)} fotos/min")
-
-              cur.execute("""SELECT count(*),
-                       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY seg)::numeric,1),
-                       round(percentile_cont(0.9) WITHIN GROUP (ORDER BY seg)::numeric,1),
-                       round(max(seg)::numeric,1)
-                     FROM (SELECT extract(epoch from min(f.created_at)-p.created_at) seg
-                           FROM photos_photo p JOIN photos_faceembedding f ON f.photo_id=p.id
-                           WHERE p.event_id=%s GROUP BY p.id, p.created_at) q""",(ev,))
-              nf, p50, p90, pmax = cur.fetchone()
-              print(); print("3) INDEXADO DE CARAS (desde que entra la foto hasta que quedan sus caras)")
-              print(f"   fotos indexadas: {nf}")
-              print(f"   mediana {p50}s · 9 de cada 10 en menos de {p90}s · peor caso {pmax}s")
-
-              cur.execute("""SELECT count(*) FROM photos_photo p
-                             WHERE p.event_id=%s AND NOT EXISTS
-                               (SELECT 1 FROM photos_faceembedding f WHERE f.photo_id=p.id)""",(ev,))
-              (sin_caras,)=cur.fetchone()
-              print(f"   todavia sin indexar: {sin_caras}")
-
-              cur.execute("""SELECT count(*),
-                       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY seg)::numeric,1),
-                       round(max(seg)::numeric,1)
-                     FROM (SELECT extract(epoch from approved_at-created_at) seg
-                           FROM photos_photo WHERE event_id=%s AND approved_at IS NOT NULL) q""",(ev,))
-              na, ap50, apmax = cur.fetchone()
-              print(); print("4) APROBACION (tu parte: de que entra la foto a que la aprobas)")
-              print(f"   aprobadas: {na} · mediana {round(float(ap50)/60,1)} min · maximo {round(float(apmax)/60,1)} min")
-
-          print(); print("5) COLAS AHORA")
-          print(f"   {{'celery': {rc.llen('celery')}, 'fast': {rc.llen('fast')}, 'faces': {rc.llen('faces')}}}")
+              cur.execute("""
+                SELECT e.slug, count(p.id) fotos,
+                       count(f.id) caras,
+                       min(p.created_at)::date, 
+                       round(extract(epoch from max(p.created_at)-min(p.created_at))/60) min_subida
+                FROM events_event e
+                LEFT JOIN photos_photo p ON p.event_id=e.id
+                LEFT JOIN photos_faceembedding f ON f.photo_id=p.id
+                GROUP BY e.slug ORDER BY 2 DESC
+              """)
+              print("EVENTO                                FOTOS   CARAS   FECHA        MIN_SUBIDA")
+              for slug,n,c,fecha,mins in cur.fetchall():
+                  print(f"{slug[:36]:<36} {n:>6}  {c:>6}   {fecha}   {mins}")
+              cur.execute("SELECT count(*) FROM photos_photo")
+              (tot,)=cur.fetchone()
+              cur.execute("SELECT count(*) FROM photos_faceembedding")
+              (tc,)=cur.fetchone()
+              cur.execute("SELECT pg_size_pretty(pg_database_size(current_database()))")
+              (tam,)=cur.fetchone()
+              cur.execute("""SELECT pg_size_pretty(pg_total_relation_size('photos_faceembedding')),
+                                    pg_size_pretty(pg_total_relation_size('photos_photo'))""")
+              t_emb, t_fotos = cur.fetchone()
+              # Pico historico de subida en 5 minutos, en todo el sistema
+              cur.execute("""SELECT max(cant) FROM (
+                    SELECT count(*) cant FROM photos_photo
+                    GROUP BY event_id, date_trunc('minute', created_at)
+                      - (extract(minute from created_at)::int %% 5) * interval '1 minute') q""")
+              (pico,)=cur.fetchone()
+          print(f"\nTOTAL: {tot} fotos · {tc} caras")
+          print(f"Base de datos: {tam}  (tabla de caras {t_emb} · tabla de fotos {t_fotos})")
+          print(f"Pico historico de subida: {pico} fotos en 5 min = {round(pico/5,1)}/min")
           PYX
