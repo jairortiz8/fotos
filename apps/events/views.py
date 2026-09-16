@@ -130,6 +130,11 @@ class EventGalleryView(View):
             "total_photos": paginator.count,
             "photographer_count": event.photographer_links.count(),
             "photographer": photographer,
+            # A dónde vuelve el lightbox si no puede usar el historial (link
+            # compartido, pestaña nueva). Conserva el filtro de fotógrafo pero
+            # NO el ?page=: las peticiones del scroll infinito lo traen, y no
+            # queremos que cerrar una foto caiga en la página 7 suelta.
+            "volver": _url_de_lista(request),
         }
         # HTMX infinite-scroll: solo el grid + el sentinel de la próxima página.
         if getattr(request, "htmx", False):
@@ -222,6 +227,7 @@ class EventGalleryView(View):
                 "bib_query": bib_query,
                 "is_search_result": True,
                 "result_count": len(photos),
+                "volver": request.get_full_path(),
             },
         )
 
@@ -271,6 +277,7 @@ class EventGalleryView(View):
                 "is_face_search": True,
                 "face_id": face_id,
                 "result_count": len(photos),
+                "volver": request.get_full_path(),
             },
         )
 
@@ -288,6 +295,14 @@ class EventGalleryView(View):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def _url_de_lista(request: HttpRequest) -> str:
+    """La URL de la lista actual, sin el `page` del scroll infinito."""
+    params = request.GET.copy()
+    params.pop("page", None)
+    consulta = params.urlencode()
+    return f"{request.path}?{consulta}" if consulta else request.path
+
+
 def get_similar_bibs_in_event(event: Event, query: str, *, limit: int = 5) -> list[str]:
     """Sugiere dorsales que existen en el evento y son OCR-confundibles con el query."""
     if not query.isdigit():

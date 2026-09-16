@@ -1,8 +1,11 @@
 {% comment %}Una celda del grid de fotos. Requiere `photo` y opcional `bib_filter`.
 Al tocarla se abre el lightbox, donde se descarga la foto (una a la vez).{% endcomment %}
 {% load i18n %}
-<div class="relative aspect-[4/5] bg-ink-0 group">
-  <a href="{% url 'events:lightbox' slug=photo.event.slug photo_id=photo.id %}{% if bib_filter %}?bib={{ bib_filter }}{% endif %}"
+<div class="relative aspect-[4/5] bg-ink-0 group" data-foto="{{ photo.id }}">
+  {% comment %}El `volver` viaja en el link para que el botón de cerrar sepa a
+     qué lista regresar cuando no haya historial (link compartido, pestaña
+     nueva). Conserva el filtro de dorsal, de fotógrafo o de cara.{% endcomment %}
+  <a href="{% url 'events:lightbox' slug=photo.event.slug photo_id=photo.id %}{% if bib_filter %}?bib={{ bib_filter }}{% endif %}{% if volver %}{% if bib_filter %}&{% else %}?{% endif %}volver={{ volver|urlencode }}{% endif %}"
      class="block w-full h-full">
     {% with thumb=photo.get_thumbnail_url %}
       {% if thumb %}

@@ -1,8 +1,11 @@
 {% comment %}Celda de resultado de selfie con badge de similitud + barra de confianza.
 Requiere `photo` con `.similarity` (0-100).{% endcomment %}
 {% load i18n %}
-<div class="relative aspect-[4/5] bg-ink-0 group">
-  <a href="{% url 'events:lightbox' slug=photo.event.slug photo_id=photo.id %}" class="block w-full h-full">
+<div class="relative aspect-[4/5] bg-ink-0 group" data-foto="{{ photo.id }}">
+  {% comment %}El `volver` apunta a la URL de coincidencias: sin esto, entrar a
+     una foto y cerrar dejaba al corredor en la galería completa y con los
+     resultados del selfie perdidos.{% endcomment %}
+  <a href="{% url 'events:lightbox' slug=photo.event.slug photo_id=photo.id %}{% if volver %}?volver={{ volver|urlencode }}{% endif %}" class="block w-full h-full">
     {% with thumb=photo.get_thumbnail_url %}
       {% if thumb %}
         <img src="{{ thumb }}" alt="{% trans 'Foto' %} #{{ photo.id }}" loading="lazy" class="w-full h-full object-cover">

@@ -20,12 +20,47 @@
 
 {% block extra_scripts %}
 <script>
+{% comment %}
+  Cerrar y navegar entre fotos, sin perder la lista de la que venís.
+
+  El problema que resuelve: antes cerrar era ir a la galería con
+  window.location.href. Eso recargaba la lista desde cero — se perdía el
+  scroll, las páginas que el scroll infinito ya había cargado, y en el selfie
+  se perdían las coincidencias enteras.
+
+  go():    usa replace(), NO href. Así pasar de foto en foto no apila
+           entradas en el historial y "atrás" siempre lleva a la lista, no a
+           la foto anterior (antes había que apretar atrás veinte veces).
+  close(): prefiere history.back(). El navegador restaura la lista tal como
+           estaba — scroll y fotos cargadas incluidos — porque la recupera de
+           su caché de páginas. Solo si no hay historial propio (link
+           compartido, pestaña nueva) cae al `volver` que trajo la tarjeta, y
+           por último a la galería del evento.
+{% endcomment %}
 function lightbox() {
+  const q = '{% if bib_filter %}?bib={{ bib_filter|urlencode }}{% endif %}';
+  const volver = '{{ volver|escapejs }}';
+  const galeria = '{% url "events:gallery" slug=event.slug %}';
+  // ¿Llegamos navegando dentro del sitio? Entonces "atrás" tiene a dónde ir.
+  let interno = false;
+  try {
+    interno = !!document.referrer &&
+              new URL(document.referrer).origin === window.location.origin;
+  } catch (e) { interno = false; }
+
   return {
-    prevUrl: '{% if prev_photo %}{% url "events:lightbox" slug=event.slug photo_id=prev_photo.id %}{% if bib_filter %}?bib={{ bib_filter }}{% endif %}{% endif %}',
-    nextUrl: '{% if next_photo %}{% url "events:lightbox" slug=event.slug photo_id=next_photo.id %}{% if bib_filter %}?bib={{ bib_filter }}{% endif %}{% endif %}',
-    go(url) { if (url) window.location.href = url; },
-    close() { window.location.href = '{% url "events:gallery" slug=event.slug %}{% if bib_filter %}?bib={{ bib_filter }}{% endif %}'; },
+    prevUrl: '{% if prev_photo %}{% url "events:lightbox" slug=event.slug photo_id=prev_photo.id %}{% endif %}',
+    nextUrl: '{% if next_photo %}{% url "events:lightbox" slug=event.slug photo_id=next_photo.id %}{% endif %}',
+    _con(url) {
+      if (!url) return url;
+      const extra = volver ? (q ? '&' : '?') + 'volver=' + encodeURIComponent(volver) : '';
+      return url + q + extra;
+    },
+    go(url) { if (url) window.location.replace(this._con(url)); },
+    close() {
+      if (interno && window.history.length > 1) { window.history.back(); return; }
+      window.location.href = volver || (galeria + q);
+    },
   };
 }
 </script>

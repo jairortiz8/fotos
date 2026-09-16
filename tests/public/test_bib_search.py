@@ -181,3 +181,56 @@ def test_general_rate_limit_blocks_after_200(client: Client) -> None:
         if last_status == 429:
             break
     assert last_status == 429
+
+
+# ---------------------------------------------------------------------------
+# Volver de una foto sin perder la lista (regresión)
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_la_tarjeta_arrastra_el_dorsal_y_el_volver(client: Client) -> None:
+    """Al abrir una foto desde una búsqueda, el link lleva el dorsal Y la lista
+    a la que hay que regresar. Antes se perdía el lugar en la lista."""
+    event, _ = _event_with_bib("1042")
+    r = client.get(reverse("events:gallery", args=[event.slug]), {"bib": "1042"})
+    assert b"bib=1042" in r.content
+    assert b"volver=" in r.content
+
+
+@pytest.mark.django_db
+def test_el_volver_no_arrastra_el_page_del_scroll_infinito(client: Client) -> None:
+    event = EventFactory(status=EventStatus.LIVE)
+    for _ in range(3):
+        ApprovedPhotoFactory(event=event)
+    r = client.get(reverse("events:gallery", args=[event.slug]), {"page": "1"})
+    assert r.status_code == 200
+    assert b"page%3D1" not in r.content  # el volver va sin ?page=
+
+
+@pytest.mark.django_db
+def test_la_carpeta_de_fotografo_se_conserva_al_volver(client: Client) -> None:
+    """Antes, cerrar una foto desde la carpeta de un fotógrafo te dejaba en la
+    galería completa: la tarjeta no arrastraba el filtro."""
+    from tests.factories import PhotographerLinkFactory
+
+    event = EventFactory(status=EventStatus.LIVE)
+    link = PhotographerLinkFactory(event=event)
+    ApprovedPhotoFactory(event=event, photographer_link=link)
+    r = client.get(reverse("events:gallery", args=[event.slug]), {"fotografo": link.id})
+    assert r.status_code == 200
+    assert f"fotografo%3D{link.id}".encode() in r.content
+
+
+@pytest.mark.django_db
+def test_el_lightbox_rechaza_un_volver_a_otro_sitio(client: Client) -> None:
+    """`?volver=` solo acepta rutas de este sitio: si no, el botón de cerrar
+    sería un redirect abierto a cualquier parte."""
+    event, _ = _event_with_bib("1042")
+    photo = event.photos.first()
+    url = reverse("events:lightbox", args=[event.slug, photo.id])
+    r = client.get(url, {"volver": "https://evil.example/phishing"})
+    assert r.status_code == 200
+    assert r.context["volver"] == ""
+    r = client.get(url, {"volver": "//evil.example/phishing"})
+    assert r.context["volver"] == ""
+    r = client.get(url, {"volver": "/eventos/x/?bib=7"})
+    assert r.context["volver"] == "/eventos/x/?bib=7"

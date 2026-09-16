@@ -50,6 +50,10 @@ def test_selfie_search_returns_matches_above_threshold(client: Client) -> None:
     url = reverse("events:selfie_search", args=[event.slug])
     with patch("apps.ml.face_recognition.embedding_from_bytes", return_value=target):
         response = client.post(url, {"selfie": _selfie()})
+    # El POST redirige a una URL GET propia (para poder volver sin perderlos).
+    assert response.status_code == 302
+    assert response["Location"] == reverse("events:selfie_results", args=[event.slug])
+    response = client.get(response["Location"])
     assert response.status_code == 200
     matches = response.context["matches"]
     assert match_photo in matches
@@ -67,7 +71,9 @@ def test_selfie_search_orders_by_similarity(client: Client) -> None:
     target = np.array(_emb(dim0=1.0), dtype=np.float32)
     with patch("apps.ml.face_recognition.embedding_from_bytes", return_value=target):
         response = client.post(
-            reverse("events:selfie_search", args=[event.slug]), {"selfie": _selfie()}
+            reverse("events:selfie_search", args=[event.slug]),
+            {"selfie": _selfie()},
+            follow=True,
         )
     matches = list(response.context["matches"])
     assert matches[0] == close
@@ -193,3 +199,69 @@ def test_gallery_shows_selfie_tab_when_enabled(client: Client) -> None:
     ApprovedPhotoFactory(event=event)
     response = client.get(reverse("events:gallery", args=[event.slug]))
     assert b"buscar-selfie" in response.content  # default: tab visible
+
+
+# ---------------------------------------------------------------------------
+# Volver de una foto sin perder los resultados (regresión)
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_los_resultados_del_selfie_tienen_url_propia(client: Client) -> None:
+    """Se puede recargar y volver a los resultados sin reenviar el formulario."""
+    event = EventFactory(status=EventStatus.LIVE)
+    foto = ApprovedPhotoFactory(event=event)
+    FaceEmbedding.objects.create(photo=foto, embedding=_emb(dim0=1.0))
+
+    target = np.array(_emb(dim0=1.0), dtype=np.float32)
+    with patch("apps.ml.face_recognition.embedding_from_bytes", return_value=target):
+        client.post(reverse("events:selfie_search", args=[event.slug]), {"selfie": _selfie()})
+
+    url = reverse("events:selfie_results", args=[event.slug])
+    # Dos GET seguidos: los resultados siguen ahí, sin volver a procesar nada.
+    for _ in range(2):
+        r = client.get(url)
+        assert r.status_code == 200
+        assert foto in list(r.context["matches"])
+
+
+@pytest.mark.django_db
+def test_la_sesion_del_selfie_no_guarda_biometria(client: Client) -> None:
+    """En la sesión van SOLO ids y porcentajes: ni el selfie ni el embedding."""
+    from apps.search.views import SELFIE_RESULTS_KEY
+
+    event = EventFactory(status=EventStatus.LIVE)
+    foto = ApprovedPhotoFactory(event=event)
+    FaceEmbedding.objects.create(photo=foto, embedding=_emb(dim0=1.0))
+
+    target = np.array(_emb(dim0=1.0), dtype=np.float32)
+    with patch("apps.ml.face_recognition.embedding_from_bytes", return_value=target):
+        client.post(reverse("events:selfie_search", args=[event.slug]), {"selfie": _selfie()})
+
+    guardado = client.session[SELFIE_RESULTS_KEY]
+    assert set(guardado) == {"slug", "at", "matches"}
+    assert guardado["matches"] == [{"id": foto.id, "sim": guardado["matches"][0]["sim"]}]
+    # Nada que se parezca a un vector de 512 dimensiones.
+    for entrada in guardado["matches"]:
+        assert set(entrada) == {"id", "sim"}
+
+
+@pytest.mark.django_db
+def test_resultados_sin_sesion_manda_al_formulario(client: Client) -> None:
+    event = EventFactory(status=EventStatus.LIVE)
+    r = client.get(reverse("events:selfie_results", args=[event.slug]))
+    assert r.status_code == 302
+    assert r["Location"] == reverse("events:selfie_search", args=[event.slug])
+
+
+@pytest.mark.django_db
+def test_la_tarjeta_del_selfie_lleva_a_donde_volver(client: Client) -> None:
+    """Sin esto, cerrar la foto dejaba al corredor en la galería completa."""
+    event = EventFactory(status=EventStatus.LIVE)
+    foto = ApprovedPhotoFactory(event=event)
+    FaceEmbedding.objects.create(photo=foto, embedding=_emb(dim0=1.0))
+
+    target = np.array(_emb(dim0=1.0), dtype=np.float32)
+    with patch("apps.ml.face_recognition.embedding_from_bytes", return_value=target):
+        client.post(reverse("events:selfie_search", args=[event.slug]), {"selfie": _selfie()})
+    r = client.get(reverse("events:selfie_results", args=[event.slug]))
+    esperado = reverse("events:selfie_results", args=[event.slug])
+    assert f"volver={esperado.replace('/', '%2F')}".encode() in r.content

@@ -8,11 +8,12 @@ Esta vista es 100% síncrona por diseño (ADR 0006).
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta
 
 from django.conf import settings
 from django.db.models import F, Min
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views import View
@@ -28,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 # Umbral de similitud coseno (ADR 0006). Ajustable con `tune_threshold`.
 SIMILARITY_THRESHOLD = 0.55
+# Clave de sesión donde viven los resultados del selfie (solo ids + %).
+SELFIE_RESULTS_KEY = "selfie_results"
 # Click en una cara del visor.
 # MEDIDO contra datos reales de Surf City (2026-08), usando el dorsal como
 # verdad de referencia sobre en qué fotos está cada corredor:
@@ -146,12 +149,72 @@ class SelfieSearchView(View):
         if not matches:
             return render(request, "public/selfie_no_results.html", {"event": event})
 
+        # Los resultados se guardan en la SESIÓN y se redirige a una URL GET.
+        #
+        # Antes esta vista renderizaba los resultados directo en la respuesta del
+        # POST. Eso dejaba las coincidencias sin URL: al abrir una foto y volver,
+        # el corredor perdía TODO y tenía que sacarse el selfie de nuevo; y
+        # recargar la página hacía que el celular pidiera reenviar el formulario.
+        #
+        # PRIVACIDAD (ADR 0006): en la sesión van SOLO ids de foto y el
+        # porcentaje de similitud. El selfie y el embedding NO se guardan: siguen
+        # viviendo y muriendo dentro de este request.
+        request.session[SELFIE_RESULTS_KEY] = {
+            "slug": event.slug,
+            "at": timezone.now().isoformat(),
+            "matches": [{"id": m.id, "sim": int(getattr(m, "similarity", 0))} for m in matches],
+        }
+        return redirect("events:selfie_results", slug=event.slug)
+
+    @staticmethod
+    def _can_search(event: Event) -> bool:
+        if event.visibility == EventVisibility.PRIVATE:
+            return False
+        return event.is_searchable()
+
+
+class SelfieResultsView(View):
+    """Resultados del selfie en una URL GET propia, leídos de la sesión.
+
+    Existe para que las coincidencias tengan dirección: así el corredor puede
+    entrar a una foto y volver sin perderlas, recargar sin reenviar el
+    formulario, y usar el botón de atrás del celular."""
+
+    def get(self, request: HttpRequest, slug: str) -> HttpResponse:
+        event = get_object_or_404(Event, slug=slug)
+        if not SelfieSearchView._can_search(event):
+            raise Http404
+
+        guardado = request.session.get(SELFIE_RESULTS_KEY) or {}
+        if guardado.get("slug") != event.slug or not guardado.get("matches"):
+            return redirect("events:selfie_search", slug=event.slug)
+
+        if _resultados_vencidos(guardado.get("at")):
+            request.session.pop(SELFIE_RESULTS_KEY, None)
+            return redirect("events:selfie_search", slug=event.slug)
+
+        sims = {int(m["id"]): int(m["sim"]) for m in guardado["matches"]}
+        orden = [int(m["id"]) for m in guardado["matches"]]
+        encontradas = {
+            p.id: p
+            for p in Photo.objects.filter(
+                id__in=orden, event=event, status=PhotoStatus.APPROVED
+            ).prefetch_related("bibs")
+        }
+        # Se respeta el orden por similitud que tenía la búsqueda, y se saltean
+        # las fotos que ya no estén aprobadas.
+        matches = []
+        for pid in orden:
+            foto = encontradas.get(pid)
+            if foto is None:
+                continue
+            foto.similarity = sims[pid]  # type: ignore[attr-defined]
+            matches.append(foto)
+        if not matches:
+            return redirect("events:selfie_search", slug=event.slug)
+
         def _sim(photo: Photo) -> int:
             return int(getattr(photo, "similarity", 0))
-
-        high = [m for m in matches if _sim(m) >= HIGH_CONFIDENCE * 100]
-        med = [m for m in matches if MED_CONFIDENCE * 100 <= _sim(m) < HIGH_CONFIDENCE * 100]
-        low = [m for m in matches if _sim(m) < MED_CONFIDENCE * 100]
 
         return render(
             request,
@@ -159,18 +222,27 @@ class SelfieSearchView(View):
             {
                 "event": event,
                 "matches": matches,
-                "high_matches": high,
-                "med_matches": med,
-                "low_matches": low,
+                "high_matches": [m for m in matches if _sim(m) >= HIGH_CONFIDENCE * 100],
+                "med_matches": [
+                    m for m in matches if MED_CONFIDENCE * 100 <= _sim(m) < HIGH_CONFIDENCE * 100
+                ],
+                "low_matches": [m for m in matches if _sim(m) < MED_CONFIDENCE * 100],
                 "match_count": len(matches),
+                # Para que el lightbox sepa a dónde volver.
+                "volver": request.get_full_path(),
             },
         )
 
-    @staticmethod
-    def _can_search(event: Event) -> bool:
-        if event.visibility == EventVisibility.PRIVATE:
-            return False
-        return event.is_searchable()
+
+def _resultados_vencidos(marca: str | None, *, minutos: int = 60) -> bool:
+    """True si los resultados guardados en la sesión ya son viejos."""
+    if not marca:
+        return True
+    try:
+        cuando = datetime.fromisoformat(marca)
+    except ValueError:
+        return True
+    return timezone.now() - cuando > timedelta(minutes=minutos)
 
 
 # ---------------------------------------------------------------------------

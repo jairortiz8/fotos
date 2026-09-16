@@ -7,11 +7,29 @@ from io import BytesIO
 from django.db.models import F
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse, HttpResponseBase
 from django.shortcuts import get_object_or_404, render
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views import View
 
 from apps.events.metrics import Metric, record_event_metric
 from apps.photos.faces import avatar_faces_for_photo
 from apps.photos.models import FaceEmbedding, Photo, PhotoStatus
+
+
+def _volver_seguro(request: HttpRequest) -> str:
+    """La lista desde la que se abrió la foto, tomada de `?volver=`.
+
+    Es el respaldo para cuando no se puede usar el historial del navegador
+    (link compartido por WhatsApp, pestaña nueva). Solo se acepta una ruta
+    RELATIVA de este mismo sitio: así nadie puede armar un link que use el
+    botón de cerrar para mandar al corredor a otra parte."""
+    destino = request.GET.get("volver", "").strip()
+    if not destino:
+        return ""
+    if not url_has_allowed_host_and_scheme(destino, allowed_hosts=None):
+        return ""
+    if not destino.startswith("/") or destino.startswith("//"):
+        return ""
+    return destino
 
 
 class PhotoLightboxView(View):
@@ -35,6 +53,7 @@ class PhotoLightboxView(View):
         record_event_metric(event.id, Metric.VIEW)
 
         bib_filter = request.GET.get("bib", "").strip()
+        volver = _volver_seguro(request)
         prev_photo, next_photo = self._get_siblings(photo, bib_filter)
 
         photographer_name = (
@@ -48,6 +67,7 @@ class PhotoLightboxView(View):
             "prev_photo": prev_photo,
             "next_photo": next_photo,
             "bib_filter": bib_filter,
+            "volver": volver,
             "photographer_name": photographer_name,
             "bibs": list(photo.bibs.filter(rejected=False)),
             # Visor: caras grandes/nítidas de ESTA foto, con avatar ya generado.
