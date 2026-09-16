@@ -119,7 +119,9 @@ class EventGalleryView(View):
         if photographer is not None:
             photos_qs = photos_qs.filter(photographer_link=photographer)
         # Cronológico: la primera foto tomada (hora de disparo) primero.
-        photos_qs = photos_qs.prefetch_related(bibs_visibles()).order_by("capture_time", "created_at")
+        photos_qs = photos_qs.prefetch_related(bibs_visibles()).order_by(
+            "capture_time", "created_at"
+        )
         paginator = Paginator(photos_qs, GALLERY_PAGE_SIZE)
         page = paginator.get_page(request.GET.get("page", 1))
 
