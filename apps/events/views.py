@@ -235,14 +235,15 @@ class EventGalleryView(View):
 
     # ----- Búsqueda por cara (click en el visor) -----
     def _handle_face_search(self, request: HttpRequest, event: Event, face_id: int) -> HttpResponse:
-        """Fotos de la persona de esa cara, por similitud con el embedding YA
-        guardado. No procesa ninguna imagen nueva ni sube nada: usa el vector
-        que se extrajo cuando se subió la foto."""
+        """Fotos de la persona de esa cara. No procesa ninguna imagen nueva ni
+        sube nada: usa los vectores que se extrajeron cuando se subieron las
+        fotos. La cara tocada es la SEMILLA, no la respuesta — ver
+        `search_faces_for_person`."""
         from apps.photos.models import FaceEmbedding
         from apps.search.views import (
             FACE_CLICK_MAX_RESULTS,
             FACE_CLICK_THRESHOLD,
-            search_faces_by_similarity,
+            search_faces_for_person,
         )
 
         if not event.is_searchable():
@@ -261,9 +262,9 @@ class EventGalleryView(View):
         if not check_general_search_rate_limit(request):
             return render(request, "public/rate_limited.html", {"event": event}, status=429)
 
-        photos = search_faces_by_similarity(
+        photos = search_faces_for_person(
             event,
-            list(face.embedding),
+            [float(x) for x in face.embedding],
             threshold=FACE_CLICK_THRESHOLD,
             limit=FACE_CLICK_MAX_RESULTS,
         )

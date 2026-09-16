@@ -8,6 +8,7 @@ Esta vista es 100% síncrona por diseño (ADR 0006).
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timedelta
 
 from django.conf import settings
@@ -47,6 +48,12 @@ MAX_SELFIE_RESULTS = 50
 # aparece en 100+ fotos y cortarle a 50 contradice el "todas tus fotos".
 # La consulta es un índice HNSW, así que subir el tope no la encarece.
 FACE_CLICK_MAX_RESULTS = 400
+# Expansión del click en una cara (ver `search_faces_for_person`).
+# EXPAND: sólo caras casi con certeza de la misma persona entran al promedio.
+# A 0.62 el falso positivo es raro; bajarlo trae más fotos pero también más
+# riesgo de mezclar dos personas parecidas.
+FACE_EXPAND_THRESHOLD = 0.62
+FACE_EXPAND_MAX_SEEDS = 8
 MAX_SELFIE_BYTES = 10 * 1024 * 1024  # 10 MB
 
 # Cortes de confianza para agrupar resultados en la UI.
@@ -272,3 +279,72 @@ def search_faces_by_similarity(
         # `min_distance` y `similarity` son atributos anotados/dinámicos.
         photo.similarity = round((1 - photo.min_distance) * 100)  # type: ignore[attr-defined]
     return results
+
+
+def _centroide(vectores: list[list[float]]) -> list[float]:
+    """Promedio normalizado de varios embeddings (todos vienen normalizados L2)."""
+    dim = len(vectores[0])
+    suma = [0.0] * dim
+    for v in vectores:
+        for i, x in enumerate(v):
+            suma[i] += x
+    norma = math.sqrt(sum(x * x for x in suma)) or 1.0
+    return [x / norma for x in suma]
+
+
+def search_faces_for_person(
+    event: Event,
+    seed_embedding: list[float],
+    *,
+    threshold: float = FACE_CLICK_THRESHOLD,
+    limit: int = FACE_CLICK_MAX_RESULTS,
+) -> list[Photo]:
+    """Las fotos de la PERSONA de esa cara, no las parecidas a esa FOTO.
+
+    Buscar con una sola cara es inestable. El vector de una cara de perfil,
+    chica o movida queda lejos de las frontales nítidas de la MISMA persona,
+    así que tocar un retrato de perfil devolvía tres fotos y tocar uno frontal
+    devolvía todas. Dos respuestas distintas para la misma persona según de qué
+    foto entró el corredor — el botón dice "esta persona" y contestaba "lo que
+    se parece a esta foto de esta persona".
+
+    Acá la cara tocada es la SEMILLA: con ella buscamos las caras que son casi
+    con certeza la misma persona (umbral estricto), promediamos esos vectores y
+    volvemos a buscar con el promedio, que representa a la persona mucho mejor
+    que cualquier foto suelta.
+
+    El resultado se UNE con el de la búsqueda directa, así que esto nunca puede
+    devolver MENOS que antes: sólo agregar. El riesgo está del otro lado (traer
+    fotos de alguien parecido), y por eso el umbral de expansión va estricto y
+    con tope de semillas.
+    """
+    from apps.photos.models import FaceEmbedding
+
+    directas = search_faces_by_similarity(event, seed_embedding, threshold=threshold, limit=limit)
+
+    vecinas = list(
+        FaceEmbedding.objects.filter(photo__event=event, photo__status=PhotoStatus.APPROVED)
+        .annotate(distancia=CosineDistance("embedding", seed_embedding))
+        .filter(distancia__lte=1 - FACE_EXPAND_THRESHOLD)
+        .order_by("distancia")
+        .values_list("embedding", flat=True)[:FACE_EXPAND_MAX_SEEDS]
+    )
+    # Una sola vecina (ella misma) = no hay nada que promediar.
+    if len(vecinas) < 2:
+        return directas
+
+    centro = _centroide([[float(x) for x in v] for v in vecinas])
+    ampliadas = search_faces_by_similarity(event, centro, threshold=threshold, limit=limit)
+
+    # Unión, quedándonos con la mejor similitud de cada foto. `similarity` es un
+    # atributo que pone la query a mano, así que se lee con getattr (mismo patrón
+    # que el resto del módulo).
+    def _sim(foto: Photo) -> int:
+        return int(getattr(foto, "similarity", 0))
+
+    por_id: dict[int, Photo] = {}
+    for foto in [*directas, *ampliadas]:
+        previa = por_id.get(foto.id)
+        if previa is None or _sim(foto) > _sim(previa):
+            por_id[foto.id] = foto
+    return sorted(por_id.values(), key=_sim, reverse=True)[:limit]
