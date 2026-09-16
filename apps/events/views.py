@@ -23,7 +23,7 @@ from apps.core.utils import (
 )
 from apps.events.metrics import Metric, record_event_metric
 from apps.events.models import Event, EventStatus, EventVisibility
-from apps.photos.models import Bib, Photo, PhotoStatus
+from apps.photos.models import Bib, Photo, PhotoStatus, bibs_visibles
 
 GALLERY_PAGE_SIZE = 60
 SEARCH_CACHE_TTL = 300  # 5 minutos
@@ -119,7 +119,7 @@ class EventGalleryView(View):
         if photographer is not None:
             photos_qs = photos_qs.filter(photographer_link=photographer)
         # Cronológico: la primera foto tomada (hora de disparo) primero.
-        photos_qs = photos_qs.prefetch_related("bibs").order_by("capture_time", "created_at")
+        photos_qs = photos_qs.prefetch_related(bibs_visibles()).order_by("capture_time", "created_at")
         paginator = Paginator(photos_qs, GALLERY_PAGE_SIZE)
         page = paginator.get_page(request.GET.get("page", 1))
 
@@ -214,7 +214,7 @@ class EventGalleryView(View):
 
         photos = list(
             Photo.objects.filter(id__in=photo_ids)
-            .prefetch_related("bibs")
+            .prefetch_related(bibs_visibles())
             .order_by("capture_time", "created_at")
         )
 

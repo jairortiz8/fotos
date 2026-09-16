@@ -36,6 +36,12 @@
            su caché de páginas. Solo si no hay historial propio (link
            compartido, pestaña nueva) cae al `volver` que trajo la tarjeta, y
            por último a la galería del evento.
+
+  cerrar() / navegar(): los mismos dos, pero para el TACTO. La X y las flechas
+           son <a href> de verdad (funcionan sin JS y se pueden abrir en otra
+           pestaña), y estos handlers interceptan el tap normal para que use
+           close()/go() en vez de una navegación nueva. Sin ellos el arreglo
+           andaba solo con teclado, que no es como navega nadie en un celular.
 {% endcomment %}
 function lightbox() {
   const q = '{% if bib_filter %}?bib={{ bib_filter|urlencode }}{% endif %}';
@@ -60,6 +66,24 @@ function lightbox() {
     close() {
       if (interno && window.history.length > 1) { window.history.back(); return; }
       window.location.href = volver || (galeria + q);
+    },
+    // Los handlers del TACTO. Sin estos, la X y las flechas eran links planos:
+    // el arreglo de arriba funcionaba solo con teclado, y el corredor (que
+    // navega con el dedo) seguia perdiendo el scroll y los resultados.
+    // Con Cmd/Ctrl/Shift o rueda del mouse no interceptamos: dejamos que el
+    // navegador abra la pestana nueva, y el href del link sigue siendo correcto.
+    _otraPestana(e) {
+      return e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1;
+    },
+    cerrar(e) {
+      if (this._otraPestana(e)) return;
+      e.preventDefault();
+      this.close();
+    },
+    navegar(e, url) {
+      if (!url || this._otraPestana(e)) return;
+      e.preventDefault();
+      this.go(url);
     },
   };
 }

@@ -23,7 +23,7 @@ from pgvector.django import CosineDistance
 from apps.core.utils import check_selfie_rate_limit, get_client_ip, hash_ip
 from apps.events.metrics import Metric, record_event_metric
 from apps.events.models import Event, EventVisibility
-from apps.photos.models import Photo, PhotoStatus
+from apps.photos.models import Photo, PhotoStatus, bibs_visibles
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +199,7 @@ class SelfieResultsView(View):
             p.id: p
             for p in Photo.objects.filter(
                 id__in=orden, event=event, status=PhotoStatus.APPROVED
-            ).prefetch_related("bibs")
+            ).prefetch_related(bibs_visibles())
         }
         # Se respeta el orden por similitud que tenía la búsqueda, y se saltean
         # las fotos que ya no estén aprobadas.
@@ -266,7 +266,7 @@ def search_faces_by_similarity(
         .annotate(min_distance=Min(CosineDistance("face_embeddings__embedding", query_embedding)))
         .filter(min_distance__isnull=False, min_distance__lte=max_distance)
         .order_by("min_distance")
-        .prefetch_related("bibs")[:limit]
+        .prefetch_related(bibs_visibles())[:limit]
     )
     for photo in results:
         # `min_distance` y `similarity` son atributos anotados/dinámicos.

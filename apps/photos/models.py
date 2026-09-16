@@ -286,6 +286,19 @@ class Bib(TimeStampedModel):
         return f"Bib {self.number} on photo #{self.photo_id}"
 
 
+def bibs_visibles() -> models.Prefetch:
+    """Prefetch de los dorsales que se le muestran al corredor.
+
+    Los `rejected` son falsos positivos que el admin ya curó (el OCR lee el
+    número de un cartel de sponsor y lo cuelga de la foto). Filtrarlos recién
+    en el template es tarde: con `ordering = ["-confidence"]` los falsos
+    positivos suelen ser los de MAYOR confianza, así que un `slice` previo se
+    los queda a todos y la foto termina mostrando un dorsal equivocado, o
+    ninguno.
+    """
+    return models.Prefetch("bibs", queryset=Bib.objects.filter(rejected=False))
+
+
 # ---------------------------------------------------------------------------
 # FaceEmbedding (pgvector)
 # ---------------------------------------------------------------------------

@@ -234,3 +234,45 @@ def test_el_lightbox_rechaza_un_volver_a_otro_sitio(client: Client) -> None:
     assert r.context["volver"] == ""
     r = client.get(url, {"volver": "/eventos/x/?bib=7"})
     assert r.context["volver"] == "/eventos/x/?bib=7"
+
+
+@pytest.mark.django_db
+def test_la_x_y_las_flechas_del_lightbox_usan_los_handlers(client: Client) -> None:
+    """La X y las flechas son <a href> de verdad, pero el tap tiene que pasar
+    por cerrar()/navegar(). Sin eso el arreglo del "volver" andaba SOLO con
+    teclado, y en un celular nadie navega con teclado."""
+    event, _ = _event_with_bib("1042")
+    otra = ApprovedPhotoFactory(event=event)
+    BibFactory(photo=otra, number="1042", source=BibSource.MANUAL_ADMIN)
+    primera = event.photos.order_by("id").first()
+    volver = f"/eventos/{event.slug}/?bib=1042"
+
+    r = client.get(
+        reverse("events:lightbox", args=[event.slug, primera.id]),
+        {"bib": "1042", "volver": volver},
+    )
+    assert r.status_code == 200
+    html = r.content.decode()
+
+    # El tap va por Alpine, no por una navegación nueva.
+    assert "cerrar($event)" in html
+    assert "navegar($event, nextUrl)" in html
+    # Y el href sigue siendo correcto para "abrir en otra pestaña" y para no-JS.
+    assert f'href="{volver}"' in html
+
+
+@pytest.mark.django_db
+def test_un_dorsal_rechazado_no_se_le_muestra_al_corredor(client: Client) -> None:
+    """Los rechazados son falsos positivos que ya curaste. Y como el OCR les da
+    ALTA confianza (lee un cartel de sponsor), con `ordering = -confidence` se
+    quedaban con todo el slice y tapaban a los dorsales de verdad."""
+    event = EventFactory(status=EventStatus.LIVE)
+    foto = ApprovedPhotoFactory(event=event)
+    BibFactory(photo=foto, number="118", confidence=1.0, rejected=True)
+    BibFactory(photo=foto, number="1042", confidence=0.61)
+
+    r = client.get(reverse("events:gallery", args=[event.slug]))
+    assert r.status_code == 200
+    html = r.content.decode()
+    assert "#1042" in html
+    assert "#118" not in html
