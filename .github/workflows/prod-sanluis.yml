@@ -1,0 +1,107 @@
+name: prod-sanluis (one-off)
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-sanluis"]
+concurrency:
+  group: prod-sanluis
+  cancel-in-progress: true
+jobs:
+  diag:
+    name: "Por que no se ven las fotos de San Luis"
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet requests "psycopg[binary]"
+
+      - name: Diagnostico
+        run: |
+          python3 - <<'PYX'
+          import os, requests
+
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+
+          # --- estado de los servicios (worker prendido o apagado?) ---
+          Q='query($p:String!,$e:String!){ deployments(first:40, input:{projectId:$p, environmentId:$e}){ edges { node { status createdAt service { name } } } } }'
+          d=requests.post(API,headers=H,json={"query":Q,"variables":{"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"]}},timeout=40).json()
+          servicios={}
+          for e in (((d.get("data") or {}).get("deployments") or {}).get("edges") or []):
+              n=e["node"]; s=n["service"]["name"]
+              if s not in servicios or n["createdAt"]>servicios[s][1]:
+                  servicios[s]=(n["status"], n["createdAt"])
+
+          # --- DB ---
+          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          pg=(requests.post(API,headers=H,json={"query":V,"variables":{
+              "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
+              "s":os.environ["PG_ID"]}},timeout=40).json().get("data") or {}).get("variables") or {}
+
+          import psycopg
+          out=[]
+          with psycopg.connect(pg["DATABASE_PUBLIC_URL"], connect_timeout=30) as cx, cx.cursor() as cur:
+              cur.execute("""
+                SELECT id, slug, name, date, status, visibility, photo_count,
+                       public_until, searchable_until, archive_until, permanent_archive, created_at
+                FROM events_event
+                WHERE lower(name) LIKE %(q)s OR slug LIKE %(s)s OR lower(name) LIKE %(c)s
+                ORDER BY created_at DESC
+              """, {"q": "%san luis%", "s": "%san-luis%", "c": "%camino%"})
+              ev=cur.fetchall()
+
+              out.append("=== EVENTOS QUE MATCHEAN 'san luis' / 'camino' ===")
+              if not ev:
+                  out.append("  NINGUNO. El evento no existe en la base de produccion.")
+              for r in ev:
+                  (eid,slug,name,fecha,st,vis,pc,pu,su,au,perm,cre)=r
+                  out.append(f"  id={eid}  slug={slug}")
+                  out.append(f"     nombre={name!r}  fecha={fecha}  creado={cre:%Y-%m-%d %H:%M}")
+                  out.append(f"     status={st}  visibility={vis}  photo_count(denormalizado)={pc}")
+                  out.append(f"     public_until={pu}  searchable_until={su}  archive_until={au}  permanente={perm}")
+                  cur.execute("SELECT status, count(*) FROM photos_photo WHERE event_id=%s GROUP BY status ORDER BY 2 DESC",(eid,))
+                  por=cur.fetchall()
+                  out.append(f"     FOTOS POR ESTADO: {por if por else 'NINGUNA FOTO'}")
+                  cur.execute("SELECT count(*) FROM photos_photo WHERE event_id=%s AND (thumbnail_key='' OR thumbnail_key IS NULL)",(eid,))
+                  out.append(f"     sin thumbnail (no procesadas por el worker): {cur.fetchone()[0]}")
+                  cur.execute("SELECT count(*) FROM photos_photo WHERE event_id=%s AND status='approved' AND thumbnail_key<>''",(eid,))
+                  out.append(f"     VISIBLES AL PUBLICO (approved + thumb): {cur.fetchone()[0]}")
+                  cur.execute("SELECT max(created_at) FROM photos_photo WHERE event_id=%s",(eid,))
+                  out.append(f"     ultima subida: {cur.fetchone()[0]}")
+                  out.append("")
+
+              out.append("=== TODOS LOS EVENTOS (los 12 mas recientes) ===")
+              cur.execute("""SELECT slug, name, date, status, visibility, photo_count
+                             FROM events_event ORDER BY created_at DESC LIMIT 12""")
+              for slug,name,fecha,st,vis,pc in cur.fetchall():
+                  out.append(f"  {slug:38s} {str(fecha):12s} status={st:16s} vis={vis:10s} fotos={pc}")
+              out.append("")
+
+              out.append("=== FOTOS SIN PROCESAR EN TODO EL SISTEMA ===")
+              cur.execute("""SELECT e.slug, count(*) FROM photos_photo p JOIN events_event e ON e.id=p.event_id
+                             WHERE p.thumbnail_key='' OR p.thumbnail_key IS NULL GROUP BY e.slug ORDER BY 2 DESC LIMIT 10""")
+              sp=cur.fetchall()
+              out.append(f"  {sp if sp else 'ninguna: el worker se puso al dia con todo'}")
+              out.append("")
+              out.append("=== FOTOS ESPERANDO TU APROBACION ===")
+              cur.execute("""SELECT e.slug, count(*) FROM photos_photo p JOIN events_event e ON e.id=p.event_id
+                             WHERE p.status='pending_review' GROUP BY e.slug ORDER BY 2 DESC LIMIT 10""")
+              pr=cur.fetchall()
+              out.append(f"  {pr if pr else 'ninguna'}")
+
+          print("\n".join(["", "#"*70, "  DIAGNOSTICO", "#"*70, ""]))
+          print("=== SERVICIOS EN RAILWAY (ultimo deploy de cada uno) ===")
+          for s,(st,cre) in sorted(servicios.items()):
+              print(f"  {s:14s} {st:12s} {cre}")
+          print()
+          print("\n".join(out))
+          print("#"*70)
+          PYX
