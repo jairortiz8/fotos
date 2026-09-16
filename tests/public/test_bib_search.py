@@ -254,9 +254,10 @@ def test_la_x_y_las_flechas_del_lightbox_usan_los_handlers(client: Client) -> No
     assert r.status_code == 200
     html = r.content.decode()
 
-    # El tap va por Alpine, no por una navegación nueva.
+    # El tap va por Alpine, no por una navegación nueva. Con dos fotos siempre
+    # hay una flecha; cuál de las dos depende del orden, así que no lo fijamos.
     assert "cerrar($event)" in html
-    assert "navegar($event, nextUrl)" in html
+    assert "navegar($event," in html
     # Y el href sigue siendo correcto para "abrir en otra pestaña" y para no-JS.
     assert f'href="{volver}"' in html
 
@@ -274,5 +275,7 @@ def test_un_dorsal_rechazado_no_se_le_muestra_al_corredor(client: Client) -> Non
     r = client.get(reverse("events:gallery", args=[event.slug]))
     assert r.status_code == 200
     html = r.content.decode()
-    assert "#1042" in html
-    assert "#118" not in html
+    # `>#118<` = el TEXTO del chip. Con "#118" a secas el test flaquea: matchea
+    # también el alt="Foto #118" si a alguna foto le toca ese id.
+    assert ">#1042<" in html
+    assert ">#118<" not in html
