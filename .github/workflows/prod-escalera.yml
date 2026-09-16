@@ -1,0 +1,124 @@
+name: prod-escalera (one-off)
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-escalera"]
+concurrency:
+  group: prod-escalera
+  cancel-in-progress: true
+permissions:
+  contents: write
+jobs:
+  medir:
+    name: "Escalera de umbrales en dos eventos reales"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install --quiet requests "psycopg[binary]"
+
+      - name: Medir
+        run: |
+          python3 - <<'PYX'
+          import os, json, random, requests, statistics
+
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          pg=(requests.post(API,headers=H,json={"query":V,"variables":{
+              "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
+              "s":os.environ["PG_ID"]}},timeout=40).json().get("data") or {}).get("variables") or {}
+
+          import psycopg
+          def af(c): return json.loads(c) if isinstance(c,str) else [float(x) for x in c]
+          def vec(v): return "[" + ",".join(f"{x:.6f}" for x in v) + "]"
+
+          ESCALERA = [0.62, 0.55, 0.50, 0.48, 0.45, 0.40, 0.35]
+          VECINOS  = 400          # top-K caras mas cercanas que traemos por consulta
+          MUESTRA  = 30           # caras por evento
+          out=[]
+
+          with psycopg.connect(pg["DATABASE_PUBLIC_URL"], connect_timeout=40) as cx, cx.cursor() as cur:
+            for slug in ("septimo-x-cep-social-run", "surf-city-2026"):
+              cur.execute("SELECT id FROM events_event WHERE slug=%s",(slug,))
+              fila=cur.fetchone()
+              if not fila:
+                  out.append(f"### {slug}: NO EXISTE"); continue
+              ev=fila[0]
+              cur.execute("SELECT count(*) FROM photos_photo WHERE event_id=%s AND status='approved'",(ev,))
+              nf=cur.fetchone()[0]
+              cur.execute("""SELECT count(*) FROM photos_faceembedding f JOIN photos_photo p ON p.id=f.photo_id
+                             WHERE p.event_id=%s AND p.status='approved'""",(ev,))
+              nc=cur.fetchone()[0]
+              out.append("="*72)
+              out.append(f"### {slug}: {nf} fotos aprobadas · {nc} caras indexadas")
+              out.append("="*72)
+              if nc == 0:
+                  out.append("  sin caras indexadas: el worker nunca proceso este evento con face on")
+                  out.append(""); continue
+
+              cur.execute("""SELECT f.id FROM photos_faceembedding f JOIN photos_photo p ON p.id=f.photo_id
+                             WHERE p.event_id=%s AND p.status='approved' ORDER BY f.id""",(ev,))
+              ids=[r[0] for r in cur.fetchall()]
+              random.seed(11)
+              muestra=random.sample(ids, min(MUESTRA, len(ids)))
+
+              filas=[]
+              for fid in muestra:
+                  cur.execute("SELECT embedding FROM photos_faceembedding WHERE id=%s",(fid,))
+                  q=vec(af(cur.fetchone()[0]))
+                  cur.execute("""SELECT (f.embedding <=> %s::vector) AS d, f.photo_id
+                                 FROM photos_faceembedding f JOIN photos_photo p ON p.id=f.photo_id
+                                 WHERE p.event_id=%s AND p.status='approved'
+                                 ORDER BY f.embedding <=> %s::vector LIMIT %s""",(q, ev, q, VECINOS))
+                  vecinos=[(1.0-float(d), pid) for d,pid in cur.fetchall()]
+                  escalones=[]
+                  for t in ESCALERA:
+                      escalones.append(len({pid for sim,pid in vecinos if sim>=t}))
+                  filas.append((fid, escalones))
+
+              i48 = ESCALERA.index(0.48)
+              flacas=[f for f in filas if f[1][i48] <= 5]
+              ricas =[f for f in filas if f[1][i48] >= 30]
+              cab = "  cara        " + "".join(f"{t:>7.2f}" for t in ESCALERA)
+              out.append("")
+              out.append(f"  CARAS FLACAS (<=5 fotos con el umbral actual 0.48): {len(flacas)} de {len(filas)}")
+              out.append(cab)
+              for fid,e in sorted(flacas, key=lambda x:x[1][i48])[:15]:
+                  out.append(f"  {fid:<12d}" + "".join(f"{n:>7d}" for n in e))
+              out.append("")
+              out.append(f"  CARAS RICAS (>=30 fotos con 0.48): {len(ricas)} de {len(filas)}")
+              out.append(cab)
+              for fid,e in sorted(ricas, key=lambda x:-x[1][i48])[:10]:
+                  out.append(f"  {fid:<12d}" + "".join(f"{n:>7d}" for n in e))
+              out.append("")
+              out.append("  MEDIANA DE TODA LA MUESTRA")
+              out.append(cab.replace("cara        ", "            "))
+              med=[int(statistics.median([f[1][k] for f in filas])) for k in range(len(ESCALERA))]
+              out.append("              " + "".join(f"{n:>7d}" for n in med))
+              tope=sum(1 for f in filas if f[1][-1] >= VECINOS*0.9)
+              if tope:
+                  out.append(f"  (ojo: {tope} caras tocan el tope de {VECINOS} vecinos traidos: a 0.35 el numero esta recortado)")
+              out.append("")
+
+          texto = "\n".join(out)
+          print(texto)
+          open("resultado.txt","w").write(texto)
+          PYX
+
+      - name: Publicar en una rama
+        run: |
+          git config user.name "ci"; git config user.email "ci@local"
+          git checkout --orphan resultado-escalera
+          git rm -rf --cached . > /dev/null
+          find . -maxdepth 1 ! -name . ! -name .git ! -name resultado.txt -exec rm -rf {} +
+          git add -f resultado.txt && git commit -q -m "escalera de umbrales"
+          git push -f origin resultado-escalera
