@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   ops:
-    name: "Capturar el diseno de findme.photo"
+    name: "Capturar la UI de findyourfoto"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -27,71 +27,74 @@ jobs:
         with:
           python-version: "3.12"
       - run: |
-          pip install --quiet playwright Pillow
+          pip install --quiet playwright Pillow requests "psycopg[binary]"
           python -m playwright install --with-deps chromium
 
-      - name: Screenshots y extraccion de estilos
+      - name: Capturar
         run: |
           python3 - <<'PYX'
-          import json
+          import os, requests
           from pathlib import Path
           from playwright.sync_api import sync_playwright
           from PIL import Image
+          import psycopg
 
-          OUT = Path("demo_overlay"); OUT.mkdir(exist_ok=True)
-          PAGS = {"home":"https://findme.photo/es/",
-                  "precios":"https://findme.photo/es/pricing",
-                  "como":"https://findme.photo/es/how-it-works"}
+          SITE="https://findyourfoto.com"; SLUG="septimo-x-cep-social-run"
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,
+             "Content-Type":"application/json"}
+          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          pg=(requests.post(API,headers=H,json={"query":V,"variables":{
+              "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
+              "s":os.environ["PG_ID"]}},timeout=40).json().get("data") or {}).get("variables") or {}
+          with psycopg.connect(pg["DATABASE_PUBLIC_URL"]) as cx, cx.cursor() as cur:
+              cur.execute("""SELECT b.number FROM photos_bib b JOIN photos_photo p ON p.id=b.photo_id
+                             JOIN events_event e ON e.id=p.event_id
+                             WHERE e.slug=%s AND p.status='approved' AND b.rejected=false
+                             GROUP BY b.number ORDER BY count(*) DESC LIMIT 1""",(SLUG,))
+              f=cur.fetchone(); dorsal = f[0] if f else "1"
+              cur.execute("""SELECT p.id FROM photos_photo p JOIN events_event e ON e.id=p.event_id
+                             WHERE e.slug=%s AND p.status='approved' AND p.preview_key<>''
+                             ORDER BY p.id LIMIT 1""",(SLUG,))
+              foto=cur.fetchone()[0]
+          print(f"dorsal de prueba: {dorsal} · foto: {foto}")
 
-          SONDA = """() => {
-            const uso = {}, fuentes = {};
-            const suma = (m,k)=>{ if(!k) return; m[k]=(m[k]||0)+1; };
-            const vis = el => { const r=el.getBoundingClientRect();
-                                return r.width>4 && r.height>4; };
-            document.querySelectorAll('*').forEach(el=>{
-              if(!vis(el)) return;
-              const c = getComputedStyle(el);
-              suma(uso, c.color);
-              if(c.backgroundColor && c.backgroundColor!=='rgba(0, 0, 0, 0)')
-                 suma(uso, 'BG '+c.backgroundColor);
-              const t = el.textContent && el.textContent.trim().length>0;
-              if(t) suma(fuentes, c.fontFamily.split(',')[0].replace(/["']/g,'')
-                                  + ' / ' + c.fontWeight + ' / ' + c.fontSize);
-            });
-            const top = m => Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,18);
-            return { colores: top(uso), tipografia: top(fuentes),
-                     radios: top(Object.fromEntries([...document.querySelectorAll('*')]
-                        .filter(vis).map(e=>[getComputedStyle(e).borderRadius,1]))) };
-          }"""
-
+          RUTAS = {
+            "01_home": "/",
+            "02_galeria": f"/eventos/{SLUG}/",
+            "03_dorsal": f"/eventos/{SLUG}/?bib={dorsal}",
+            "04_selfie": f"/eventos/{SLUG}/buscar-selfie/",
+            "05_lightbox": f"/eventos/{SLUG}/foto/{foto}/",
+            "06_fotografos": f"/eventos/{SLUG}/?vista=fotografos",
+            "07_login_admin": "/dashboard/login/",
+            "08_invitados": "/invitados/entrar/",
+            "09_faq": "/preguntas/",
+          }
+          OUT=Path("demo_overlay"); OUT.mkdir(exist_ok=True)
           with sync_playwright() as pw:
               nav = pw.chromium.launch(args=["--no-sandbox"])
-              informe = {}
-              for nombre, url in PAGS.items():
+              for nombre, ruta in RUTAS.items():
                   for etq, vp in (("desk",{"width":1440,"height":900}),
                                   ("mob",{"width":390,"height":844})):
-                      pg = nav.new_page(viewport=vp, device_scale_factor=1)
-                      pg.goto(url, wait_until="networkidle", timeout=90000)
-                      pg.wait_for_timeout(2500)
-                      pg.mouse.wheel(0, 20000); pg.wait_for_timeout(1200)
-                      pg.mouse.wheel(0, -30000); pg.wait_for_timeout(900)
-                      arch = OUT/f"{nombre}_{etq}.png"
-                      pg.screenshot(path=str(arch), full_page=True)
-                      im = Image.open(arch)
-                      # Recortar a lo primero que se ve + comprimir para que viaje liviano
-                      im.crop((0,0,im.width,min(im.height, vp["height"]*2))).convert("RGB").save(
-                          OUT/f"{nombre}_{etq}_inicio.jpg", quality=82)
-                      if im.height > 6000:
-                          im = im.resize((im.width//2, im.height//2), Image.LANCZOS)
-                      im.convert("RGB").save(OUT/f"{nombre}_{etq}_full.jpg", quality=70)
-                      arch.unlink()
+                      pg2 = nav.new_page(viewport=vp)
+                      try:
+                          pg2.goto(SITE+ruta, wait_until="networkidle", timeout=60000)
+                      except Exception as e:
+                          print(f"  {nombre} {etq}: {e}"); pg2.close(); continue
+                      pg2.wait_for_timeout(2200)
+                      pg2.mouse.wheel(0, 4000); pg2.wait_for_timeout(1500)
+                      pg2.mouse.wheel(0, -8000); pg2.wait_for_timeout(800)
+                      tmp = OUT/f"{nombre}_{etq}.png"
+                      pg2.screenshot(path=str(tmp), full_page=True)
+                      im = Image.open(tmp)
+                      if im.height > 4200:
+                          im = im.crop((0,0,im.width,4200))
+                      im.convert("RGB").save(OUT/f"{nombre}_{etq}.jpg", quality=76)
+                      tmp.unlink()
                       print(f"  {nombre} {etq}: {im.width}x{im.height}")
-                      if etq=="desk":
-                          informe[nombre] = pg.evaluate(SONDA)
-                      pg.close()
+                      pg2.close()
               nav.close()
-          (OUT/"estilos.json").write_text(json.dumps(informe, indent=1, ensure_ascii=False))
-          print("listo:", sorted(x.name for x in OUT.iterdir()))
+          print("listo:", len(list(OUT.iterdir())), "archivos")
           PYX
 
       - name: Devolver por rama
@@ -99,8 +102,8 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -q --orphan scan-findme
+          git checkout -q --orphan scan-ui
           git rm -rq --cached . || true
           git add -f demo_overlay/
-          git commit -qm "scan: diseno de findme.photo"
-          git push -f origin scan-findme
+          git commit -qm "scan: UI de findyourfoto"
+          git push -f origin scan-ui
