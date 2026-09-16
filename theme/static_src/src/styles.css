@@ -214,6 +214,21 @@
     transform: translateY(0.02em);
   }
 
+  /* Margen lateral ÚNICO de las páginas públicas. Antes cada pantalla elegía
+     el suyo: la home iba en 24/56px, la galería en 24/40px, y el header de la
+     propia galería en 20/40px — tres medidas en dos pantallas. Ahora hay un
+     solo valor y se cambia en un lugar. */
+  .rf-gutter {
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+  @media (min-width: 768px) {
+    .rf-gutter {
+      padding-left: 2.5rem;
+      padding-right: 2.5rem;
+    }
+  }
+
   /* --- CTA primario (naranja, solo acciones) --- */
   .rf-cta {
     display: inline-flex;

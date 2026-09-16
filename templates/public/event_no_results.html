@@ -1,15 +1,15 @@
-{% extends "base.html" %}
+{% extends "public/base_public.html" %}
 {% load i18n %}
 
 {% block title %}{% trans "Sin resultados" %} · {{ event.name }}{% endblock %}
 
+{% block site_header %}
+  {% url 'events:gallery' slug=event.slug as volver_url %}
+  {% include "_partials/site_header.html" with header_link_url=volver_url header_link_label=_("Volver a la galería") %}
+{% endblock %}
+
 {% block body %}
 <div class="min-h-screen">
-  <header class="flex items-center justify-between px-5 md:px-10 py-3.5 border-b border-border">
-    <a href="{% url 'core:index' %}">{% include "_partials/wordmark.html" with size="18px" %}</a>
-    <a href="{% url 'events:gallery' slug=event.slug %}" class="text-[12px] text-text-2 hover:text-text-1 transition">{% trans "Volver a la galería" %}</a>
-  </header>
-
   <div class="px-6 py-16 flex flex-col items-center text-center">
     <div class="relative w-24 h-24 rounded-full grid place-items-center mb-6 text-data"
          style="background: rgba(0,212,255,0.08); border: 1px solid rgba(0,212,255,0.15);">

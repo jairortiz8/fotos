@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% comment %}Cáscara de las páginas PÚBLICAS: header + contenido + footer.
+
+OJO: `{% extends %}` va SIEMPRE en la primera línea. Si le ponés un comentario
+antes, Django tira TemplateSyntaxError ("must be the first tag in the template"):
+`{% comment %}` genera un nodo, no es texto suelto.
+
+`base.html` sola no trae header ni footer, y no puede traerlos: la usan también
+el dashboard, el portal del fotógrafo, el reviewer y el lightbox, que no los
+quieren. Todo lo que sea una página pública normal extiende ESTA, y así el
+header y el footer salen solos — sin copiarlos a mano una novena vez.
+
+Para cambiar el link de la derecha del header, sobreescribí `site_header`:
+
+  {% block site_header %}
+    {% url 'events:gallery' slug=event.slug as volver %}
+    {% include "_partials/site_header.html" with header_link_url=volver header_link_label=_("Volver") %}
+  {% endblock %}
+
+Y para una página sin footer (un embudo, un error), `{% block site_footer %}{% endblock %}`.
+{% endcomment %}
+
+{% block layout %}
+{% block site_header %}{% include "_partials/site_header.html" %}{% endblock %}
+<main id="main-content" tabindex="-1" class="focus:outline-none">
+  {% block body %}{% endblock %}
+</main>
+{% block site_footer %}{% include "_partials/site_footer.html" %}{% endblock %}
+{% endblock %}

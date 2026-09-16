@@ -1,22 +1,22 @@
-{% extends "base.html" %}
+{% extends "public/base_public.html" %}
 {% load i18n %}
 
 {% block title %}{{ event.name }} · {% trans "Buscar por selfie" %}{% endblock %}
 
+{% block site_header %}
+  {% url 'events:gallery' slug=event.slug as volver_url %}
+  {% include "_partials/site_header.html" with header_link_url=volver_url header_link_label=_("Volver a la galería") %}
+{% endblock %}
+
 {% block body %}
 <div class="min-h-screen pb-16">
-  <header class="flex items-center justify-between px-5 md:px-10 py-3.5 border-b border-border">
-    <a href="{% url 'core:index' %}">{% include "_partials/wordmark.html" with size="18px" %}</a>
-    <a href="{% url 'events:gallery' slug=event.slug %}" class="text-[12px] text-text-2 hover:text-text-1 transition">{% trans "Volver a la galería" %}</a>
-  </header>
-
-  <section class="px-6 md:px-10 pt-9 pb-6" style="background: linear-gradient(180deg, #1a1418 0%, #0a0a0b 100%);">
+  <section class="rf-gutter pt-9 pb-6" style="background: linear-gradient(180deg, #1a1418 0%, #0a0a0b 100%);">
     <span class="font-mono text-[10px] text-text-3 tracking-[0.1em] uppercase">{{ event.date|date:"d M Y" }}</span>
     <h1 class="font-display font-black uppercase tracking-tight leading-[0.9] mt-2" style="font-size: clamp(2rem, 8vw, 3.5rem);">{{ event.name }}</h1>
   </section>
 
   {# Tabs #}
-  <div class="px-6 md:px-10 border-b border-border">
+  <div class="rf-gutter border-b border-border">
     <div class="flex gap-7">
       <a href="{% url 'events:gallery' slug=event.slug %}"
          class="font-display font-bold text-[11px] uppercase tracking-[0.04em] py-3.5 text-text-2 hover:text-text-1 border-b-2 border-transparent transition">{% trans "Por dorsal" %}</a>
@@ -24,7 +24,7 @@
     </div>
   </div>
 
-  <div class="px-6 md:px-10 max-w-2xl mx-auto pt-8"
+  <div class="rf-gutter max-w-2xl mx-auto pt-8"
        x-data="selfieUpload('{% url 'events:selfie_search' slug=event.slug %}')">
 
     {# Banner de privacidad obligatorio #}

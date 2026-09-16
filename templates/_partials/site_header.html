@@ -1,0 +1,16 @@
+{% comment %}Header público compartido. Antes cada página se dibujaba el suyo a
+mano (ocho copias con medidas distintas), y las páginas legales directamente no
+tenían ninguno: el que entraba a Preguntas frecuentes desde el footer no tenía
+cómo volver.
+
+Parámetros opcionales (se pasan con {% include ... with %}):
+  header_link_url / header_link_label : link de la derecha
+  header_sticky                       : cualquier valor → se pega arriba
+{% endcomment %}
+{% load i18n %}
+<header class="rf-gutter flex items-center justify-between py-3.5 border-b border-border{% if header_sticky %} sticky top-0 bg-ink-0/95 backdrop-blur z-20{% endif %}">
+  <a href="{% url 'core:index' %}">{% include "_partials/wordmark.html" with size="18px" %}</a>
+  {% if header_link_url %}
+  <a href="{{ header_link_url }}" class="text-[12px] text-text-2 hover:text-text-1 transition">{{ header_link_label }}</a>
+  {% endif %}
+</header>

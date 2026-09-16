@@ -1,19 +1,22 @@
-{% extends "base.html" %}
+{% extends "public/base_public.html" %}
 {% load i18n static %}
 
 {% block title %}{{ site_name }} · {% trans "Fotos de carrera" %}{% endblock %}
 {% block og_title %}{{ site_name }} — {% trans "Encontrá tus fotos de carrera" %}{% endblock %}
 
+{% comment %}La home usa un header propio: el wordmark va mas grande (es la
+portada) y lleva el pais. El resto del sitio usa el compartido.{% endcomment %}
+{% block site_header %}
+<header class="rf-gutter flex items-center justify-between py-5 border-b border-border">
+  <a href="{% url 'core:index' %}">{% include "_partials/wordmark.html" with size="22px" %}</a>
+  <div class="hidden md:flex items-center gap-7 text-[13px] text-text-2">
+    <span class="font-mono text-[11px] text-text-3 tracking-[0.08em] border-l border-border pl-6">EL SALVADOR</span>
+  </div>
+</header>
+{% endblock %}
+
 {% block body %}
 <div class="min-h-screen">
-
-  {# ===== Top nav ===== #}
-  <header class="flex items-center justify-between px-6 md:px-14 py-5 border-b border-border">
-    <a href="{% url 'core:index' %}">{% include "_partials/wordmark.html" with size="22px" %}</a>
-    <div class="hidden md:flex items-center gap-7 text-[13px] text-text-2">
-      <span class="font-mono text-[11px] text-text-3 tracking-[0.08em] border-l border-border pl-6">EL SALVADOR</span>
-    </div>
-  </header>
 
   {# ===== Hero (B: foto real nítida + tratamiento de marca + zoom lento) ===== #}
   <style>
@@ -27,7 +30,7 @@
       .rf-hero-scrim { background: linear-gradient(175deg, rgba(10,10,11,0.92) 0%, rgba(10,10,11,0.86) 42%, rgba(10,10,11,0.55) 66%, rgba(10,10,11,0.78) 100%); }
     }
   </style>
-  <section class="px-4 md:px-14 pt-4 md:pt-14">
+  <section class="px-4 md:px-10 pt-4 md:pt-14">
     <div class="relative overflow-hidden rounded-3xl border border-border md:border-0 md:rounded-none px-6 md:px-0 py-14 md:py-28"
          style="background:#0a0a0b;">
       {# Foto stock de carrera (Pexels, licencia libre), foco suave + zoom lento. #}
@@ -70,7 +73,7 @@
   </section>
 
   {# ===== Value props ===== #}
-  <section class="px-6 md:px-14 pt-10">
+  <section class="rf-gutter pt-10">
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
       {% include "_partials/value_prop.html" with title=_("Por dorsal") sub=_("OCR + IA") icon="bib" %}
       {% include "_partials/value_prop.html" with title=_("Por selfie") sub=_("Reconocimiento facial") icon="face" %}
@@ -80,7 +83,7 @@
   </section>
 
   {# ===== Eventos ===== #}
-  <section id="eventos" class="px-6 md:px-14 pt-12 pb-10 scroll-mt-6">
+  <section id="eventos" class="rf-gutter pt-12 pb-10 scroll-mt-6">
     <div class="flex justify-between items-baseline mb-4">
       <h2 class="font-display font-bold text-lg md:text-xl">{% trans "Eventos" %}</h2>
       <span class="font-mono text-[11px] text-text-3">{{ events|length }} / 12</span>
@@ -133,30 +136,5 @@
     {% endif %}
   </section>
 
-  {# ===== Footer ===== #}
-  <footer class="px-6 md:px-14 py-10 border-t border-border mt-4">
-    {% include "_partials/wordmark.html" with size="16px" %}
-    <div class="text-[11px] text-text-3 mt-3 leading-relaxed">
-      {% trans "Plataforma gratuita de fotos de carrera." %}<br>
-      {% trans "Sin cuentas. Sin costo. Solo tus fotos." %}
-    </div>
-    <div class="flex flex-wrap gap-4 mt-5 text-[12px] text-text-2">
-      <a href="{% url 'core:faq' %}" class="hover:text-text-1 transition">{% trans "Preguntas" %}</a>
-      <a href="{% url 'privacy:policy' %}" class="hover:text-text-1 transition">{% trans "Privacidad" %}</a>
-      <a href="{% url 'core:terminos' %}" class="hover:text-text-1 transition">{% trans "Términos" %}</a>
-      <a href="{% url 'core:contacto' %}" class="hover:text-text-1 transition">{% trans "Contacto" %}</a>
-    </div>
-    {% if site_instagram %}
-    <a href="{{ site_instagram_url }}" target="_blank" rel="noopener me"
-       class="inline-flex items-center gap-2 mt-5 text-[12px] text-text-2 hover:text-text-1 transition"
-       aria-label="{% blocktrans %}Seguinos en Instagram: {{ site_instagram }}{% endblocktrans %}">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><path d="M17.5 6.5h.01"/>
-      </svg>
-      <span class="font-mono">@{{ site_instagram }}</span>
-    </a>
-    {% endif %}
-    <div class="font-mono text-[10px] text-text-3 mt-5 tracking-[0.1em]">© 2026 · EL SALVADOR</div>
-  </footer>
 </div>
 {% endblock %}
