@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
+from urllib.parse import quote
 
 import numpy as np
 import pytest
@@ -264,4 +265,6 @@ def test_la_tarjeta_del_selfie_lleva_a_donde_volver(client: Client) -> None:
         client.post(reverse("events:selfie_search", args=[event.slug]), {"selfie": _selfie()})
     r = client.get(reverse("events:selfie_results", args=[event.slug]))
     esperado = reverse("events:selfie_results", args=[event.slug])
-    assert f"volver={esperado.replace('/', '%2F')}".encode() in r.content
+    # `urlencode` de Django deja las barras (safe="/") y escapa ?/&/= — con eso
+    # el parámetro no se puede romper y la URL sigue legible.
+    assert f"volver={quote(esperado)}".encode() in r.content
