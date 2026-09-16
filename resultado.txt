@@ -1,0 +1,84 @@
+exit=1
+=== FALLOS ===
+FAILED tests/photos/test_face_visor.py::test_lightbox_no_apila_caras_ni_dorsales_en_varias_filas - assert 'pb-40' in '<!doctype html>\n<html lang="es">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-wi...aPestana(e)) return;\n      e.preventDefault();\n      this.go(url);\n    },\n  };\n}\n</script>\n\n</body>\n</html>\n'
+
+=== DETALLE ===
+=================================== FAILURES ===================================
+___________ test_lightbox_no_apila_caras_ni_dorsales_en_varias_filas ___________
+tests/photos/test_face_visor.py:412: in test_lightbox_no_apila_caras_ni_dorsales_en_varias_filas
+    assert "pb-40" in body
+E   assert 'pb-40' in '<!doctype html>\n<html lang="es">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-wi...aPestana(e)) return;\n      e.preventDefault();\n      this.go(url);\n    },\n  };\n}\n</script>\n\n</body>\n</html>\n'
+=============================== warnings summary ===============================
+tests/a11y/test_accessibility.py: 7 warnings
+tests/core/test_error_pages.py: 1 warning
+tests/core/test_health_check.py: 5 warnings
+tests/core/test_security_headers.py: 3 warnings
+tests/dashboard/test_analytics.py: 7 warnings
+tests/dashboard/test_approval.py: 25 warnings
+tests/dashboard/test_auth.py: 6 warnings
+tests/dashboard/test_events.py: 16 warnings
+tests/dashboard/test_misc.py: 9 warnings
+tests/dashboard/test_smoke.py: 3 warnings
+tests/downloads/test_photo_download.py: 8 warnings
+tests/downloads/test_zip_generation.py: 4 warnings
+tests/events/test_cover.py: 3 warnings
+tests/i18n/test_translations.py: 2 warnings
+tests/photographers/test_featured.py: 4 warnings
+tests/photographers/test_portal_view.py: 6 warnings
+tests/photographers/test_upload_status.py: 4 warnings
+tests/photographers/test_upload_view.py: 12 warnings
+tests/photos/test_face_visor.py: 5 warnings
+tests/privacy/test_data_deletion.py: 9 warnings
+tests/public/test_bib_search.py: 20 warnings
+tests/public/test_event_gallery.py: 15 warnings
+tests/public/test_face_click.py: 1 warning
+tests/public/test_home_view.py: 10 warnings
+tests/public/test_legal_pages.py: 3 warnings
+tests/public/test_lightbox.py: 12 warnings
+tests/public/test_selfie_search.py: 17 warnings
+tests/public/test_shell.py: 12 warnings
+tests/reviewers/test_reviewer.py: 26 warnings
+tests/test_health.py: 2 warnings
+tests/test_homepage.py: 4 warnings
+  /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/django/core/handlers/base.py:61: UserWarning: No directory at: /home/runner/work/fotos/fotos/staticfiles/
+    mw_instance = middleware(adapted_handler)
+
+tests/core/test_audit_log.py: 2 warnings
+tests/core/test_encrypted_field.py: 2 warnings
+tests/core/test_user_mfa_stub.py: 4 warnings
+tests/dashboard/test_analytics.py: 5 warnings
+tests/dashboard/test_approval.py: 25 warnings
+tests/dashboard/test_auth.py: 2 warnings
+tests/dashboard/test_events.py: 15 warnings
+tests/dashboard/test_misc.py: 66 warnings
+tests/dashboard/test_smoke.py: 6 warnings
+tests/privacy/test_cleanup_tasks.py: 2 warnings
+tests/reviewers/test_reviewer.py: 1 warning
+  /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/factory/django.py:182: DeprecationWarning: SuperUserFactory._after_postgeneration will stop saving the instance after postgeneration hooks in the next major release.
+  If the save call is extraneous, set skip_postgeneration_save=True in the SuperUserFactory.Meta.
+  To keep saving the instance, move the save call to your postgeneration hooks or override _after_postgeneration.
+    warnings.warn(
+
+tests/dashboard/test_auth.py: 2 warnings
+tests/reviewers/test_reviewer.py: 22 warnings
+  /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/factory/django.py:182: DeprecationWarning: UserFactory._after_postgeneration will stop saving the instance after postgeneration hooks in the next major release.
+  If the save call is extraneous, set skip_postgeneration_save=True in the UserFactory.Meta.
+  To keep saving the instance, move the save call to your postgeneration hooks or override _after_postgeneration.
+    warnings.warn(
+
+tests/photos/test_overlays.py::test_landscape_logos_smaller_than_portrait_same_width
+tests/photos/test_overlays.py::test_landscape_logos_smaller_than_portrait_same_width
+  /home/runner/work/fotos/fotos/tests/photos/test_overlays.py:93: DeprecationWarning: Image.Image.getdata is deprecated and will be removed in Pillow 14 (2027-10-15). Use get_flattened_data instead.
+    return sum(1 for r, g, b in img.getdata() if r > 180 and g > 180 and b > 180)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/photos/test_face_visor.py::test_lightbox_no_apila_caras_ni_dorsales_en_varias_filas - assert 'pb-40' in '<!doctype html>\n<html lang="es">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-wi...aPestana(e)) return;\n      e.preventDefault();\n      this.go(url);\n    },\n  };\n}\n</script>\n\n</body>\n</html>\n'
+===== 1 failed, 590 passed, 1 deselected, 417 warnings in 90.27s (0:01:30) =====
+
+=== RESUMEN ===
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/photos/test_face_visor.py::test_lightbox_no_apila_caras_ni_dorsales_en_varias_filas - assert 'pb-40' in '<!doctype html>\n<html lang="es">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-wi...aPestana(e)) return;\n      e.preventDefault();\n      this.go(url);\n    },\n  };\n}\n</script>\n\n</body>\n</html>\n'
+===== 1 failed, 590 passed, 1 deselected, 417 warnings in 90.27s (0:01:30) =====
