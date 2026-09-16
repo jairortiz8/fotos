@@ -408,5 +408,13 @@ def test_lightbox_no_apila_caras_ni_dorsales_en_varias_filas(r2) -> None:  # typ
     # Los dorsales van en una fila que NO se parte.
     assert "flex flex-nowrap gap-1.5" in body
     assert "flex flex-wrap gap-1.5" not in body
-    # Y la foto reserva el alto de la barra, así no queda tapada.
-    assert "pb-40" in body
+    # Y la foto no queda tapada por la barra. El mecanismo cambió: antes era un
+    # `pb-40` (160px fijos) reservados abajo, pero un número fijo no podía servir
+    # para los dos casos — con caras detectadas la barra mide ~150px y sin ellas
+    # ~75px, así que o sobraba un hueco negro o la barra se comía la foto. Ahora:
+    #   mobile  → columna: la barra es HERMANA de la foto, no está encima, y la
+    #             foto es `flex-1` así que ocupa exactamente lo que sobra.
+    #   desktop → la barra sigue flotando con su degradé y ahí sí se reserva
+    #             espacio fijo, que a ese ancho sobra.
+    assert "flex-1 min-h-0" in body, "en mobile la foto tiene que ocupar el resto"
+    assert "md:pb-44" in body, "en desktop la barra flota: hay que reservarle el alto"
