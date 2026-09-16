@@ -2,8 +2,8 @@
 {% load i18n %}
 
 {# Top bar #}
-<div class="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-5 md:px-8 py-5"
-     style="background: linear-gradient(180deg, rgba(0,0,0,0.7), transparent);">
+<div class="rf-lb-top shrink-0 z-20 flex items-center justify-between px-5 md:px-8 py-4 md:py-5
+            md:absolute md:top-0 md:left-0 md:right-0">
   <a href="{% if volver %}{{ volver }}{% else %}{% url 'events:gallery' slug=event.slug %}{% if bib_filter %}?bib={{ bib_filter }}{% endif %}{% endif %}"
      @click="cerrar($event)"
      class="flex items-center gap-2.5 text-text-1 hover:opacity-80 transition" aria-label="{% trans 'Cerrar' %}">
@@ -16,7 +16,8 @@
 </div>
 
 {# Foto centrada — el preview de R2 ya viene con watermark #}
-<div class="absolute inset-0 flex items-center justify-center p-4 pb-40 md:px-20 md:py-14 md:pb-44">
+<div class="flex-1 min-h-0 flex items-center justify-center px-3 py-2
+            md:absolute md:inset-0 md:px-20 md:py-14 md:pb-44">
   {% if preview_url %}
     <img src="{{ preview_url }}" alt="{% trans 'Foto' %} #{{ photo.id }}"
          class="max-w-full max-h-full object-contain rounded">
@@ -44,10 +45,15 @@
 {% endif %}
 
 {# Bottom bar #}
-<div class="absolute bottom-0 left-0 right-0 z-20 flex flex-col gap-3 px-5 md:px-8 py-5"
-     style="background: linear-gradient(0deg, rgba(0,0,0,0.8), transparent);">
+<div class="rf-lb-bottom shrink-0 z-20 flex flex-col gap-3 px-5 md:px-8 py-4 md:py-5
+     border-t border-white/5 md:border-0
+     md:absolute md:bottom-0 md:left-0 md:right-0">
   {% include "public/_face_visor.html" %}
-  <div class="flex items-center justify-between gap-4">
+  {% comment %}En mobile la info va arriba y el CTA abajo, a lo ancho y CON
+  etiqueta. Antes el boton de descargar era un icono sin nombre (la etiqueta
+  estaba en `hidden sm:inline`): la accion que ES el producto, sin nombre, justo
+  en el dispositivo donde esta casi todo el trafico.{% endcomment %}
+  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
   <div class="flex items-center gap-3 md:gap-4 min-w-0">
     {% comment %}TODOS los dorsales válidos de la foto, resaltando el buscado.
       Cada chip linkea a la búsqueda de ese dorsal: tocar un número en una foto
@@ -57,7 +63,7 @@
       OCR que alucinó), NO se llena la pantalla — se muestran los primeros y "+N".
       Una SOLA fila con scroll lateral: con wrap, 7 dorsales en un ancho de 40vw
       se apilaban en cuatro filas y empujaban la barra sobre la foto.{% endcomment %}
-    <div class="flex flex-nowrap gap-1.5 min-w-0 max-w-[52vw] overflow-x-auto">
+    <div class="flex flex-nowrap gap-1.5 min-w-0 max-w-full sm:max-w-[52vw] overflow-x-auto">
       {% for bib in bibs|slice:":8" %}
         {% if bib_filter and bib.number == bib_filter %}
         {# Dorsal buscado (resaltado): click = QUITAR el filtro → galería completa. #}
@@ -82,9 +88,17 @@
       <span class="text-[12px] md:text-[13px] text-text-1 truncate">{{ photographer_name }}</span>
     </div>
   </div>
-  <a href="{% url 'downloads:photo' photo_id=photo.id %}" download class="rf-cta shrink-0" aria-label="{% trans 'Descargar en alta resolución' %}">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
-    <span class="hidden sm:inline">{% trans "Descargar" %}</span>
-  </a>
+  <div class="flex flex-col gap-1.5 sm:shrink-0">
+    <a href="{% url 'downloads:photo' photo_id=photo.id %}" download
+       class="rf-cta rf-cta--full sm:w-auto" aria-label="{% trans 'Descargar en alta resolución' %}">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+      {% trans "Descargar gratis" %}
+    </a>
+    {% comment %}El diferencial del producto (gratis, alta, sin marca) dicho en
+    el unico momento en que importa: con la foto adelante.{% endcomment %}
+    <span class="sm:hidden text-center font-mono text-[9px] tracking-[0.09em] uppercase text-text-3">
+      {% trans "Alta resolución · sin marca de agua" %}
+    </span>
+  </div>
   </div>
 </div>

@@ -6,7 +6,7 @@
 {% block privacy_banner %}{% endblock %}
 
 {% block body %}
-<div class="fixed inset-0 z-50" style="background: #050506;"
+<div class="fixed inset-0 z-50 flex flex-col md:block" style="background: #050506;"
      x-data="lightbox()"
      role="dialog" aria-modal="true" aria-label="{% trans 'Foto ampliada' %}"
      tabindex="-1" x-init="$el.focus()"

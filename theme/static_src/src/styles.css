@@ -267,6 +267,27 @@
     border-color: var(--color-text-3);
   }
 
+  /* --- Lightbox: dos layouts, uno por dispositivo ---------------------------
+     MOBILE (columna): barra arriba, foto al medio (flex-1), barra abajo. La
+     altura de las barras la decide su contenido, así que la foto ocupa TODO lo
+     que sobra. Antes las barras flotaban sobre la foto con un `pb-40` fijo de
+     160px: cuando la foto no tenía caras detectadas la barra medía ~74px y
+     quedaban ~85px de vacío negro entre la foto y el botón de descargar.
+     DESKTOP (≥768px): las barras vuelven a flotar sobre la foto con su degradé,
+     que es el diseño original y ahí sí hay lugar de sobra. */
+  .rf-lb-top,
+  .rf-lb-bottom {
+    background: transparent;
+  }
+  @media (min-width: 768px) {
+    .rf-lb-top {
+      background: linear-gradient(180deg, rgba(0, 0, 0, 0.7), transparent);
+    }
+    .rf-lb-bottom {
+      background: linear-gradient(0deg, rgba(0, 0, 0, 0.8), transparent);
+    }
+  }
+
   /* --- Pill (badge con tono) --- */
   .rf-pill {
     display: inline-flex;
