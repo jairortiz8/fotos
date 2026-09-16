@@ -9,6 +9,9 @@ concurrency:
   group: test-debug
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   test:
     name: lint + types + tests
@@ -94,21 +97,35 @@ jobs:
       - name: Bundle-size budget
         run: bash scripts/check_bundle_size.sh
 
-      - name: Tests (resumen al final)
+      - name: Tests
         run: |
           set +e
           pytest -m "not slow and not e2e" -p no:cacheprovider --no-cov -q \
             > /tmp/salida.txt 2>&1
-          codigo=$?
-          echo
-          echo "######################################################################"
-          echo "  RESULTADO (exit $codigo)"
-          echo "######################################################################"
-          echo
-          # Sólo los fallos y el resumen: el log completo no entra en el lector.
-          grep -E "^(FAILED|ERROR)" /tmp/salida.txt | head -40
-          echo
-          sed -n '/=========================== FAILURES/,$p' /tmp/salida.txt | head -120
-          echo
-          tail -5 /tmp/salida.txt
+          echo "exit=$?" > /tmp/resultado.txt
+          {
+            echo "=== FALLOS ==="
+            grep -E "^(FAILED|ERROR)" /tmp/salida.txt | head -40
+            echo
+            echo "=== DETALLE ==="
+            sed -n '/=========================== FAILURES/,$p' /tmp/salida.txt | head -200
+            echo
+            echo "=== RESUMEN ==="
+            tail -5 /tmp/salida.txt
+          } >> /tmp/resultado.txt
           exit 0
+
+      # El log de Actions no sirve para leer esto: el teardown de los service
+      # containers (postgres + redis) ocupa el final y tapa el resumen. Lo
+      # dejamos en una rama y se lee por la API.
+      - name: Publicar el resultado en una rama
+        run: |
+          git config user.name "ci"
+          git config user.email "ci@local"
+          git checkout --orphan resultado-tests
+          git rm -rf --cached . > /dev/null
+          rm -rf apps config templates tests theme scripts docs locale static .github
+          cp /tmp/resultado.txt resultado.txt
+          git add -f resultado.txt
+          git commit -q -m "resultado de los tests"
+          git push -f origin resultado-tests
