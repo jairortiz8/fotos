@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   ops:
-    name: "Leer findme.photo"
+    name: "Capturar el diseno de findme.photo"
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -26,56 +26,72 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --quiet requests beautifulsoup4 lxml
+      - run: |
+          pip install --quiet playwright Pillow
+          python -m playwright install --with-deps chromium
 
-      - name: Bajar y extraer el texto
+      - name: Screenshots y extraccion de estilos
         run: |
           python3 - <<'PYX'
-          import re, requests
-          from urllib.parse import urljoin, urlparse
-          from bs4 import BeautifulSoup
+          import json
           from pathlib import Path
+          from playwright.sync_api import sync_playwright
+          from PIL import Image
 
-          BASE="https://findme.photo/es/"
-          H={"User-Agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
-             "Accept-Language":"es-ES,es;q=0.9"}
-          OUT=Path("demo_overlay"); OUT.mkdir(exist_ok=True)
-          vistas=set(); cola=[BASE]; partes=[]
+          OUT = Path("demo_overlay"); OUT.mkdir(exist_ok=True)
+          PAGS = {"home":"https://findme.photo/es/",
+                  "precios":"https://findme.photo/es/pricing",
+                  "como":"https://findme.photo/es/how-it-works"}
 
-          def limpiar(sopa):
-              for t in sopa(["script","style","noscript","svg"]): t.decompose()
-              txt = sopa.get_text("\n")
-              lineas=[l.strip() for l in txt.split("\n")]
-              return "\n".join(l for l in lineas if l)
+          SONDA = """() => {
+            const uso = {}, fuentes = {};
+            const suma = (m,k)=>{ if(!k) return; m[k]=(m[k]||0)+1; };
+            const vis = el => { const r=el.getBoundingClientRect();
+                                return r.width>4 && r.height>4; };
+            document.querySelectorAll('*').forEach(el=>{
+              if(!vis(el)) return;
+              const c = getComputedStyle(el);
+              suma(uso, c.color);
+              if(c.backgroundColor && c.backgroundColor!=='rgba(0, 0, 0, 0)')
+                 suma(uso, 'BG '+c.backgroundColor);
+              const t = el.textContent && el.textContent.trim().length>0;
+              if(t) suma(fuentes, c.fontFamily.split(',')[0].replace(/["']/g,'')
+                                  + ' / ' + c.fontWeight + ' / ' + c.fontSize);
+            });
+            const top = m => Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,18);
+            return { colores: top(uso), tipografia: top(fuentes),
+                     radios: top(Object.fromEntries([...document.querySelectorAll('*')]
+                        .filter(vis).map(e=>[getComputedStyle(e).borderRadius,1]))) };
+          }"""
 
-          while cola and len(vistas) < 10:
-              u = cola.pop(0)
-              if u in vistas: continue
-              vistas.add(u)
-              try:
-                  r = requests.get(u, headers=H, timeout=45)
-              except Exception as e:
-                  partes.append(f"\n\n########## {u}\nERROR: {e}"); continue
-              partes.append(f"\n\n########## {u}  (HTTP {r.status_code}, "
-                            f"{len(r.content)//1024} KB)\n")
-              if r.status_code != 200 or "html" not in r.headers.get("content-type",""):
-                  partes.append(r.text[:1500]); continue
-              sopa = BeautifulSoup(r.text, "lxml")
-              t = sopa.find("title")
-              d = sopa.find("meta", attrs={"name":"description"})
-              if t: partes.append(f"<title> {t.get_text(strip=True)}")
-              if d: partes.append(f"<description> {d.get('content','')}")
-              partes.append(limpiar(sopa))
-              for a in sopa.find_all("a", href=True):
-                  v = urljoin(u, a["href"]).split("#")[0]
-                  if urlparse(v).netloc == "findme.photo" and v not in vistas and v not in cola:
-                      cola.append(v)
-
-          texto = "\n".join(partes)
-          (OUT/"findme.txt").write_text(texto)
-          print(f"paginas leidas: {len(vistas)} · {len(texto)//1024} KB de texto")
-          for v in sorted(vistas): print("   ", v)
+          with sync_playwright() as pw:
+              nav = pw.chromium.launch(args=["--no-sandbox"])
+              informe = {}
+              for nombre, url in PAGS.items():
+                  for etq, vp in (("desk",{"width":1440,"height":900}),
+                                  ("mob",{"width":390,"height":844})):
+                      pg = nav.new_page(viewport=vp, device_scale_factor=1)
+                      pg.goto(url, wait_until="networkidle", timeout=90000)
+                      pg.wait_for_timeout(2500)
+                      pg.mouse.wheel(0, 20000); pg.wait_for_timeout(1200)
+                      pg.mouse.wheel(0, -30000); pg.wait_for_timeout(900)
+                      arch = OUT/f"{nombre}_{etq}.png"
+                      pg.screenshot(path=str(arch), full_page=True)
+                      im = Image.open(arch)
+                      # Recortar a lo primero que se ve + comprimir para que viaje liviano
+                      im.crop((0,0,im.width,min(im.height, vp["height"]*2))).convert("RGB").save(
+                          OUT/f"{nombre}_{etq}_inicio.jpg", quality=82)
+                      if im.height > 6000:
+                          im = im.resize((im.width//2, im.height//2), Image.LANCZOS)
+                      im.convert("RGB").save(OUT/f"{nombre}_{etq}_full.jpg", quality=70)
+                      arch.unlink()
+                      print(f"  {nombre} {etq}: {im.width}x{im.height}")
+                      if etq=="desk":
+                          informe[nombre] = pg.evaluate(SONDA)
+                      pg.close()
+              nav.close()
+          (OUT/"estilos.json").write_text(json.dumps(informe, indent=1, ensure_ascii=False))
+          print("listo:", sorted(x.name for x in OUT.iterdir()))
           PYX
 
       - name: Devolver por rama
@@ -86,5 +102,5 @@ jobs:
           git checkout -q --orphan scan-findme
           git rm -rq --cached . || true
           git add -f demo_overlay/
-          git commit -qm "scan: findme.photo"
+          git commit -qm "scan: diseno de findme.photo"
           git push -f origin scan-findme
