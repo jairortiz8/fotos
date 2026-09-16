@@ -1,0 +1,127 @@
+name: prod-caras (one-off)
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-caras"]
+concurrency:
+  group: prod-caras
+  cancel-in-progress: true
+jobs:
+  medir:
+    name: "Medir la busqueda por cara contra datos reales"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      SLUG: septimo-x-cep-social-run
+    steps:
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install --quiet requests "psycopg[binary]"
+      - name: Medir
+        run: |
+          python3 - <<'PYX'
+          import os, math, random, requests
+
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]; SLUG=os.environ["SLUG"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+
+          # ---- que commit esta corriendo el web ----
+          Q='query($p:String!,$e:String!){ deployments(first:25, input:{projectId:$p, environmentId:$e}){ edges { node { status createdAt meta service { name } } } } }'
+          d=requests.post(API,headers=H,json={"query":Q,"variables":{"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"]}},timeout=40).json()
+          deploys=[]
+          for e in (((d.get("data") or {}).get("deployments") or {}).get("edges") or []):
+              n=e["node"]
+              if n["service"]["name"]=="fotos":
+                  meta=n.get("meta") or {}
+                  sha=(meta.get("commitHash") or meta.get("commitSha") or "")[:8]
+                  deploys.append((n["createdAt"], n["status"], sha, (meta.get("commitMessage") or "").split("\n")[0][:60]))
+          deploys.sort(reverse=True)
+
+          # ---- DB ----
+          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          pg=(requests.post(API,headers=H,json={"query":V,"variables":{
+              "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
+              "s":os.environ["PG_ID"]}},timeout=40).json().get("data") or {}).get("variables") or {}
+
+          import psycopg
+          DIRECTO, EXPAND, SEEDS = 0.48, 0.62, 8
+          def vec(v): return "[" + ",".join(f"{x:.6f}" for x in v) + "]"
+
+          out=[]
+          with psycopg.connect(pg["DATABASE_PUBLIC_URL"], connect_timeout=30) as cx, cx.cursor() as cur:
+              cur.execute("SELECT id FROM events_event WHERE slug=%s",(SLUG,))
+              ev=cur.fetchone()[0]
+              cur.execute("SELECT count(*) FROM photos_photo WHERE event_id=%s AND status='approved'",(ev,))
+              n_fotos=cur.fetchone()[0]
+              cur.execute("""SELECT count(*) FROM photos_faceembedding f JOIN photos_photo p ON p.id=f.photo_id
+                             WHERE p.event_id=%s AND p.status='approved'""",(ev,))
+              n_caras=cur.fetchone()[0]
+              out.append(f"evento {SLUG}: {n_fotos} fotos aprobadas, {n_caras} caras indexadas")
+              out.append("")
+
+              cur.execute("""SELECT f.id FROM photos_faceembedding f JOIN photos_photo p ON p.id=f.photo_id
+                             WHERE p.event_id=%s AND p.status='approved' ORDER BY f.id""",(ev,))
+              ids=[r[0] for r in cur.fetchall()]
+              random.seed(7)
+              muestra=random.sample(ids, min(60, len(ids)))
+
+              def contar(v):
+                  cur.execute("""SELECT count(DISTINCT p.id) FROM photos_photo p
+                                 JOIN photos_faceembedding f ON f.photo_id=p.id
+                                 WHERE p.event_id=%s AND p.status='approved'
+                                   AND (f.embedding <=> %s::vector) <= %s""",(ev, v, 1-DIRECTO))
+                  return cur.fetchone()[0]
+
+              filas=[]
+              for fid in muestra:
+                  cur.execute("SELECT embedding FROM photos_faceembedding WHERE id=%s",(fid,))
+                  semilla=vec([float(x) for x in cur.fetchone()[0]])
+                  antes=contar(semilla)
+                  cur.execute("""SELECT f.embedding FROM photos_faceembedding f JOIN photos_photo p ON p.id=f.photo_id
+                                 WHERE p.event_id=%s AND p.status='approved'
+                                   AND (f.embedding <=> %s::vector) <= %s
+                                 ORDER BY f.embedding <=> %s::vector LIMIT %s""",
+                              (ev, semilla, 1-EXPAND, semilla, SEEDS))
+                  vecinas=[[float(x) for x in r[0]] for r in cur.fetchall()]
+                  if len(vecinas) < 2:
+                      filas.append((fid, antes, antes, len(vecinas))); continue
+                  suma=[sum(c) for c in zip(*vecinas)]
+                  norma=math.sqrt(sum(x*x for x in suma)) or 1.0
+                  centro=vec([x/norma for x in suma])
+                  # la union nunca puede dar menos que el directo
+                  despues=max(antes, contar(centro))
+                  filas.append((fid, antes, despues, len(vecinas)))
+
+              mejoraron=[f for f in filas if f[2]>f[1]]
+              iguales=[f for f in filas if f[2]==f[1]]
+              out.append(f"muestra de {len(filas)} caras reales · umbral directo {DIRECTO} · expansion {EXPAND}")
+              out.append(f"  mejoraron: {len(mejoraron)}   quedaron igual: {len(iguales)}")
+              if mejoraron:
+                  saltos=[f[2]-f[1] for f in mejoraron]
+                  out.append(f"  fotos ganadas: min +{min(saltos)}  mediana +{sorted(saltos)[len(saltos)//2]}  max +{max(saltos)}")
+              out.append("")
+              out.append("  LOS CASOS FLACOS (el directo daba <=5 fotos):")
+              flacos=[f for f in filas if f[1]<=5]
+              if not flacos:
+                  out.append("    ninguno en la muestra")
+              for fid,a,b,nv in sorted(flacos)[:15]:
+                  marca="  <-- MEJORA" if b>a else ""
+                  out.append(f"    cara {fid}: {a} -> {b} fotos  (semillas: {nv}){marca}")
+              out.append("")
+              out.append("  DISTRIBUCION antes -> despues (10 al azar):")
+              for fid,a,b,nv in filas[:10]:
+                  out.append(f"    cara {fid}: {a} -> {b}")
+
+          print("\n".join(["", "#"*66, "  BUSQUEDA POR CARA — MEDICION REAL", "#"*66, ""]))
+          print("=== ULTIMOS DEPLOYS DEL WEB ===")
+          for cre,st,sha,msg in deploys[:5]:
+              print(f"  {cre}  {st:10s} {sha or '(sin sha)':10s} {msg}")
+          print()
+          print("\n".join(out))
+          print("#"*66)
+          PYX
