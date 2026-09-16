@@ -28,11 +28,11 @@ Al tocarla se abre el lightbox, donde se descarga la foto (una a la vez).{% endc
       {% if bib_filter and bib.number == bib_filter %}
       {# Dorsal buscado (resaltado): click = QUITAR el filtro → galería completa. #}
       <a href="{% url 'events:gallery' slug=photo.event.slug %}"
-         class="rf-bib !border-brand !text-brand hover:opacity-80 transition"
+         class="rf-bib rf-bib--on transition"
          aria-label="{% blocktrans with n=bib.number %}Quitar el filtro del dorsal {{ n }}{% endblocktrans %}">#{{ bib.number }}</a>
       {% else %}
       <a href="{% url 'events:gallery' slug=photo.event.slug %}?bib={{ bib.number|urlencode }}"
-         class="rf-bib hover:!border-brand transition"
+         class="rf-bib transition"
          aria-label="{% blocktrans with n=bib.number %}Ver todas las fotos del dorsal {{ n }}{% endblocktrans %}">#{{ bib.number }}</a>
       {% endif %}
     {% endfor %}

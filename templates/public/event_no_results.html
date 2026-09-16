@@ -19,7 +19,7 @@
 
     <h2 class="font-display font-extrabold text-2xl md:text-3xl tracking-tight max-w-xl">
       {% blocktrans %}No encontramos fotos para el dorsal{% endblocktrans %}
-      <span class="text-data font-mono">#{{ bib_query }}</span>
+      <span class="rf-bib rf-bib--lg rf-bib--on align-middle">#{{ bib_query }}</span>
     </h2>
     <p class="text-text-2 mt-3 max-w-md leading-relaxed text-sm">
       {% trans "Los fotógrafos todavía pueden estar subiendo fotos del evento. Probá de nuevo en unos minutos." %}
@@ -39,8 +39,7 @@
       <div class="flex flex-wrap gap-2">
         {% for n in similar_bibs %}
         <a href="{% url 'events:gallery' slug=event.slug %}?bib={{ n }}"
-           class="font-mono font-semibold text-sm text-data px-4 py-2.5 rounded-lg tracking-[0.05em] hover:bg-data/10 transition"
-           style="background: #0e0e10; border: 1px solid rgba(0,212,255,0.25);">#{{ n }}</a>
+           class="rf-bib rf-bib--md rf-bib--tap transition">#{{ n }}</a>
         {% endfor %}
       </div>
     </div>

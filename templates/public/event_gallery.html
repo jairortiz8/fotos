@@ -88,7 +88,7 @@
   <div class="sticky top-14 z-10 bg-ink-0/95 backdrop-blur border-b border-border px-6 md:px-10">
     <div class="flex gap-6 border-b border-border">
       {# Tab activo: la vista actual (no es un link). #}
-      <span class="inline-flex items-center gap-1.5 py-3.5 text-[12px] font-semibold uppercase tracking-wide text-brand border-b-2 border-brand -mb-px">
+      <span class="inline-flex items-center gap-1.5 py-3.5 text-[12px] font-semibold uppercase tracking-wide text-text-1 border-b-2 border-text-1 -mb-px">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="6" width="17" height="13" rx="2"/><path d="M8 4v2.5M16 4v2.5M8 11.5h8M8 15h4.5"/></svg>
         {% trans "Por dorsal" %}
       </span>
@@ -128,12 +128,16 @@
     {% comment %}El pill del filtro es un botón para QUITARLO: click → galería completa.
     Con `is_face_search` el filtro es una persona (click en el visor), no un dorsal.{% endcomment %}
     <a href="{% url 'events:gallery' slug=event.slug %}"
-       class="rf-pill rf-pill--orange hover:opacity-80 transition"
+       class="rf-pill rf-pill--neutral{% if not is_face_search %} rf-pill--con-bib{% endif %} hover:opacity-80 transition"
        aria-label="{% trans 'Quitar el filtro y ver todas las fotos' %}">
       {% if is_face_search %}
         {% blocktrans count n=result_count %}Esta persona · {{ n }} foto{% plural %}Esta persona · {{ n }} fotos{% endblocktrans %}
       {% else %}
-        {% blocktrans count n=result_count %}Dorsal #{{ bib_query }} · {{ n }} foto{% plural %}Dorsal #{{ bib_query }} · {{ n }} fotos{% endblocktrans %}
+        {% comment %}El dorsal va como DORSAL (el mismo chip que en las fotos), no
+        disuelto en una frase en Inter mayúscula. Así es el mismo objeto en toda
+        la pantalla.{% endcomment %}
+        <span class="rf-bib rf-bib--on">#{{ bib_query }}</span>
+        {% blocktrans count n=result_count %}{{ n }} foto{% plural %}{{ n }} fotos{% endblocktrans %}
       {% endif %}
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
     </a>
@@ -185,7 +189,7 @@
             <div class="font-mono text-[9px] text-text-3 tracking-[0.12em] uppercase mb-1">{% trans "Fotógrafo" %}</div>
             <h3 class="font-display font-bold text-text-1 text-[16px] md:text-lg leading-tight truncate">{{ f.photographer_name }}</h3>
           </div>
-          <span class="shrink-0 grid place-items-center w-9 h-9 rounded-full border border-white/15 bg-white/10 text-text-1 backdrop-blur-sm transition-colors group-hover:bg-brand group-hover:border-brand group-hover:text-white">
+          <span class="shrink-0 grid place-items-center w-9 h-9 rounded-full border border-white/15 bg-white/10 text-text-1 backdrop-blur-sm transition-colors group-hover:bg-text-1 group-hover:border-text-1 group-hover:text-ink-0">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
           </span>
         </div>

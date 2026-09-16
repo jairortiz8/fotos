@@ -62,16 +62,16 @@
         {% if bib_filter and bib.number == bib_filter %}
         {# Dorsal buscado (resaltado): click = QUITAR el filtro → galería completa. #}
         <a href="{% url 'events:gallery' slug=event.slug %}"
-           class="rf-bib rf-bib--lg shrink-0 !border-brand !text-brand hover:opacity-80 transition"
+           class="rf-bib rf-bib--md rf-bib--on shrink-0 transition"
            aria-label="{% blocktrans with n=bib.number %}Quitar el filtro del dorsal {{ n }}{% endblocktrans %}">#{{ bib.number }}</a>
         {% else %}
         <a href="{% url 'events:gallery' slug=event.slug %}?bib={{ bib.number|urlencode }}"
-           class="rf-bib rf-bib--lg shrink-0 hover:!border-brand transition"
+           class="rf-bib rf-bib--md shrink-0 transition"
            aria-label="{% blocktrans with n=bib.number %}Ver todas las fotos del dorsal {{ n }}{% endblocktrans %}">#{{ bib.number }}</a>
         {% endif %}
       {% endfor %}
       {% if bibs|length > 8 %}
-      <span class="rf-bib rf-bib--lg shrink-0 opacity-70">+{{ bibs|length|add:"-8" }}</span>
+      <span class="rf-bib rf-bib--md shrink-0 opacity-70">+{{ bibs|length|add:"-8" }}</span>
       {% endif %}
     </div>
     {% endif %}

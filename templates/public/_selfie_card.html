@@ -18,11 +18,11 @@ Requiere `photo` con `.similarity` (0-100).{% endcomment %}
   {# Badge de % similitud top-left #}
   <div class="absolute top-2 left-2">
     {% if photo.similarity >= 80 %}
-      <span class="rf-pill rf-pill--green">{{ photo.similarity }}%</span>
+      <span class="rf-pill rf-pill--num rf-pill--green">{{ photo.similarity }}%</span>
     {% elif photo.similarity >= 60 %}
-      <span class="rf-pill rf-pill--amber">{{ photo.similarity }}%</span>
+      <span class="rf-pill rf-pill--num rf-pill--amber">{{ photo.similarity }}%</span>
     {% else %}
-      <span class="rf-pill rf-pill--cyan">{{ photo.similarity }}%</span>
+      <span class="rf-pill rf-pill--num rf-pill--cyan">{{ photo.similarity }}%</span>
     {% endif %}
   </div>
 
@@ -35,6 +35,6 @@ Requiere `photo` con `.similarity` (0-100).{% endcomment %}
 
   {# Barra de confianza al pie #}
   <div class="absolute bottom-0 left-0 right-0 h-1 bg-ink-2">
-    <div class="h-full bg-brand" style="width: {{ photo.similarity }}%;"></div>
+    <div class="h-full bg-data" style="width: {{ photo.similarity }}%;"></div>
   </div>
 </div>

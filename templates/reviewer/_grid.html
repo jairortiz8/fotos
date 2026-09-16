@@ -21,7 +21,7 @@ Los dorsales detectados van como chips abajo; tocar un chip busca ese dorsal.{% 
     <div class="absolute bottom-1.5 left-1.5 z-10 flex flex-wrap gap-1 max-w-[88%] max-h-[46%] overflow-hidden pointer-events-none">
       {% for bib in photo.bibs.all|slice:":8" %}{% if not bib.rejected %}
         <a href="?bib={{ bib.number|urlencode }}"
-           class="rf-bib pointer-events-auto hover:!border-brand transition"
+           class="rf-bib pointer-events-auto transition"
            aria-label="{% blocktrans with n=bib.number %}Ver fotos del dorsal {{ n }}{% endblocktrans %}">#{{ bib.number }}</a>
       {% endif %}{% endfor %}
     </div>
