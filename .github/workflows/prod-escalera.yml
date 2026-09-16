@@ -42,7 +42,7 @@ jobs:
           def vec(v): return "[" + ",".join(f"{x:.6f}" for x in v) + "]"
 
           ESCALERA = [0.62, 0.55, 0.50, 0.48, 0.45, 0.40, 0.35]
-          VECINOS  = 400          # top-K caras mas cercanas que traemos por consulta
+          VECINOS  = 3000         # top-K caras: el tope de 400 truncaba Surf City (daba 40 fijo)
           MUESTRA  = 30           # caras por evento
           out=[]
 
@@ -104,9 +104,9 @@ jobs:
               out.append(cab.replace("cara        ", "            "))
               med=[int(statistics.median([f[1][k] for f in filas])) for k in range(len(ESCALERA))]
               out.append("              " + "".join(f"{n:>7d}" for n in med))
-              tope=sum(1 for f in filas if f[1][-1] >= VECINOS*0.9)
+              tope=sum(1 for f in filas if f[1][-1] == f[1][0] and f[1][0] > 20)
               if tope:
-                  out.append(f"  (ojo: {tope} caras tocan el tope de {VECINOS} vecinos traidos: a 0.35 el numero esta recortado)")
+                  out.append(f"  (ojo: {tope} caras dan el MISMO numero en todos los umbrales = tope de {VECINOS} vecinos, dato no confiable)")
               out.append("")
 
           texto = "\n".join(out)
