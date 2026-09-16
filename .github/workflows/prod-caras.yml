@@ -48,7 +48,12 @@ jobs:
               "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],
               "s":os.environ["PG_ID"]}},timeout=40).json().get("data") or {}).get("variables") or {}
 
-          import psycopg
+          import psycopg, json
+
+          # psycopg crudo NO conoce el tipo `vector`: lo devuelve como TEXTO
+          # '[0.1,0.2,...]'. (En Django no pasa, ahi pgvector registra el adaptador.)
+          def aflotantes(celda):
+              return json.loads(celda) if isinstance(celda, str) else [float(x) for x in celda]
           DIRECTO, EXPAND, SEEDS = 0.48, 0.62, 8
           def vec(v): return "[" + ",".join(f"{x:.6f}" for x in v) + "]"
 
@@ -80,14 +85,14 @@ jobs:
               filas=[]
               for fid in muestra:
                   cur.execute("SELECT embedding FROM photos_faceembedding WHERE id=%s",(fid,))
-                  semilla=vec([float(x) for x in cur.fetchone()[0]])
+                  semilla=vec(aflotantes(cur.fetchone()[0]))
                   antes=contar(semilla)
                   cur.execute("""SELECT f.embedding FROM photos_faceembedding f JOIN photos_photo p ON p.id=f.photo_id
                                  WHERE p.event_id=%s AND p.status='approved'
                                    AND (f.embedding <=> %s::vector) <= %s
                                  ORDER BY f.embedding <=> %s::vector LIMIT %s""",
                               (ev, semilla, 1-EXPAND, semilla, SEEDS))
-                  vecinas=[[float(x) for x in r[0]] for r in cur.fetchall()]
+                  vecinas=[aflotantes(r[0]) for r in cur.fetchall()]
                   if len(vecinas) < 2:
                       filas.append((fid, antes, antes, len(vecinas))); continue
                   suma=[sum(c) for c in zip(*vecinas)]
