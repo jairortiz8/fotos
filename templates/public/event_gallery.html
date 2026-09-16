@@ -143,6 +143,22 @@
     </a>
     <a href="{% url 'events:gallery' slug=event.slug %}" class="text-[12px] text-text-2 hover:text-text-1 transition shrink-0">{% trans "Ver todas" %}</a>
   </div>
+  {% if cara_dudosa %}
+  {% comment %}La cara que tocó salió mal (pocas fotos al umbral, medio evento
+    al aflojarlo). No podemos rescatarla con ningún umbral, así que lo decimos y
+    ofrecemos la salida en vez de mostrar tres fotos como si fueran todas.{% endcomment %}
+  <div class="rf-gutter py-3 border-b border-border">
+    <p class="text-[12px] text-text-2 leading-relaxed max-w-prose">
+      {% trans "Esta foto de la persona no salió muy nítida, así que puede que falten fotos suyas." %}
+      {% if face_search_enabled %}
+      {% url 'events:selfie_search' slug=event.slug as buscar_selfie %}
+      {% blocktrans %}Probá tocando su retrato en otra foto, o <a href="{{ buscar_selfie }}" class="text-data underline">buscá con una selfie</a>.{% endblocktrans %}
+      {% else %}
+      {% trans "Probá tocando su retrato en otra foto." %}
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
   {% endif %}
 
   {# ===== Navegación: Todas (por hora) | Por fotógrafo ===== #}

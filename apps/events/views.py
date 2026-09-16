@@ -262,12 +262,13 @@ class EventGalleryView(View):
         if not check_general_search_rate_limit(request):
             return render(request, "public/rate_limited.html", {"event": event}, status=429)
 
-        photos = search_faces_for_person(
+        resultado = search_faces_for_person(
             event,
             [float(x) for x in face.embedding],
             threshold=FACE_CLICK_THRESHOLD,
             limit=FACE_CLICK_MAX_RESULTS,
         )
+        photos = resultado.fotos
         record_event_metric(event.id, Metric.SEARCH)
 
         return render(
@@ -279,6 +280,7 @@ class EventGalleryView(View):
                 "is_search_result": True,
                 "is_face_search": True,
                 "face_id": face_id,
+                "cara_dudosa": resultado.cara_dudosa,
                 "result_count": len(photos),
                 "volver": request.get_full_path(),
             },

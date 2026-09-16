@@ -75,7 +75,7 @@ def test_la_busqueda_directa_se_pierde_las_fotos_lejanas() -> None:
 def test_desde_una_cara_de_perfil_igual_aparecen_todas() -> None:
     """Promediando con las caras que sí son la misma persona, la lejana entra."""
     event, caras = _escena()
-    fotos = search_faces_for_person(event, PERFIL, threshold=FACE_CLICK_THRESHOLD)
+    fotos = search_faces_for_person(event, PERFIL, threshold=FACE_CLICK_THRESHOLD).fotos
     ids = {f.id for f in fotos}
     assert ids == {caras[n].photo_id for n in ("perfil", "frontal", "lejana")}
 
@@ -84,8 +84,8 @@ def test_desde_una_cara_de_perfil_igual_aparecen_todas() -> None:
 def test_entrar_por_cualquier_cara_da_el_mismo_resultado() -> None:
     """Lo que reportó Jair: la respuesta no puede depender de qué foto tocaste."""
     event, _caras = _escena()
-    desde_perfil = {f.id for f in search_faces_for_person(event, PERFIL)}
-    desde_frontal = {f.id for f in search_faces_for_person(event, FRONTAL)}
+    desde_perfil = {f.id for f in search_faces_for_person(event, PERFIL).fotos}
+    desde_frontal = {f.id for f in search_faces_for_person(event, FRONTAL).fotos}
     assert desde_perfil == desde_frontal
 
 
@@ -99,7 +99,8 @@ def test_nunca_devuelve_menos_que_la_busqueda_directa() -> None:
             f.id for f in search_faces_by_similarity(event, semilla, threshold=FACE_CLICK_THRESHOLD)
         }
         ampliadas = {
-            f.id for f in search_faces_for_person(event, semilla, threshold=FACE_CLICK_THRESHOLD)
+            f.id
+            for f in search_faces_for_person(event, semilla, threshold=FACE_CLICK_THRESHOLD).fotos
         }
         assert directas <= ampliadas
 
@@ -114,7 +115,7 @@ def test_una_cara_sola_no_se_expande() -> None:
     otra = ApprovedPhotoFactory(event=event)
     FaceEmbedding.objects.create(photo=otra, embedding=_vec(0.10))  # otra persona
 
-    fotos = search_faces_for_person(event, PERFIL)
+    fotos = search_faces_for_person(event, PERFIL).fotos
     assert {f.id for f in fotos} == {foto.id}
 
 
@@ -126,3 +127,46 @@ def test_el_click_en_el_visor_usa_la_busqueda_por_persona(client: Client) -> Non
     assert r.status_code == 200
     assert r.context["is_face_search"] is True
     assert r.context["result_count"] == 3
+
+
+# ---------------------------------------------------------------------------
+# "Cara dudosa": distinguir al que sale poco del que salió mal
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_una_persona_que_sale_poco_no_se_marca_como_dudosa() -> None:
+    """Tres fotos y nada más cerca: la respuesta es corta pero es la correcta.
+    No hay que asustar al corredor con un aviso que no corresponde."""
+    event = EventFactory(status=EventStatus.LIVE)
+    for cos in (1.00, 0.50, 0.50):
+        FaceEmbedding.objects.create(photo=ApprovedPhotoFactory(event=event), embedding=_vec(cos))
+
+    r = search_faces_for_person(event, PERFIL)
+    assert len(r.fotos) == 3
+    assert r.cara_dudosa is False
+
+
+@pytest.mark.django_db
+def test_una_cara_mal_capturada_si_se_marca_como_dudosa() -> None:
+    """Tres fotos al umbral, pero veinte apenas lo aflojás: eso no es una
+    persona que sale poco, es un embedding malo. Aflojar el umbral traería a
+    medio evento, así que no lo hacemos — lo avisamos."""
+    event = EventFactory(status=EventStatus.LIVE)
+    for cos in (1.00, 0.50, 0.50):
+        FaceEmbedding.objects.create(photo=ApprovedPhotoFactory(event=event), embedding=_vec(cos))
+    for _ in range(20):  # la población escondida, justo abajo del umbral
+        FaceEmbedding.objects.create(photo=ApprovedPhotoFactory(event=event), embedding=_vec(0.42))
+
+    r = search_faces_for_person(event, PERFIL)
+    assert len(r.fotos) == 3, "no las traemos: a ese umbral ya sería medio evento"
+    assert r.cara_dudosa is True
+
+
+@pytest.mark.django_db
+def test_una_persona_bien_fotografiada_nunca_es_dudosa() -> None:
+    """El aviso es sólo para respuestas cortas. Con muchas fotos no se evalúa."""
+    event = EventFactory(status=EventStatus.LIVE)
+    for _ in range(12):
+        FaceEmbedding.objects.create(photo=ApprovedPhotoFactory(event=event), embedding=_vec(0.95))
+    r = search_faces_for_person(event, PERFIL)
+    assert len(r.fotos) > 8
+    assert r.cara_dudosa is False

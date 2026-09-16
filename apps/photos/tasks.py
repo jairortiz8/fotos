@@ -323,6 +323,7 @@ def run_face_recognition_on_photo(self, photo_id: int) -> dict[str, object]:
                 photo=photo,
                 embedding=det.embedding.tolist(),
                 bbox={"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+                det_score=det.det_score,
                 estimated_age=max(0, det.age),
                 is_minor=is_minor,
             )

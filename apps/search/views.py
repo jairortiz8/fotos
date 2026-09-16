@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from django.conf import settings
@@ -54,6 +55,16 @@ FACE_CLICK_MAX_RESULTS = 400
 # riesgo de mezclar dos personas parecidas.
 FACE_EXPAND_THRESHOLD = 0.62
 FACE_EXPAND_MAX_SEEDS = 8
+# Detección de "cara dudosa" (ver `search_faces_for_person`). Medido contra dos
+# eventos reales: una persona que de verdad sale poco tiene 4 fotos al umbral y
+# 5 si lo aflojás mucho; una cara mal capturada tiene 3 al umbral y 74 al
+# aflojarlo — y 74 es, en ese evento, la MEDIANA. O sea: cuando encuentra algo
+# ya está matcheando a medio evento. No hay umbral que rescate esa cara, así que
+# no lo intentamos: lo detectamos y se lo decimos al corredor.
+FACE_WEAK_MAX_PHOTOS = 8  # por debajo de esto la respuesta es sospechosamente corta
+FACE_WEAK_LOOSE = 0.40  # banda floja donde se ve si hay población escondida
+FACE_WEAK_FACTOR = 4.0  # cuánto tiene que crecer de una banda a la otra
+FACE_NEIGHBOURS = 400  # vecinas que traemos para medir las bandas
 MAX_SELFIE_BYTES = 10 * 1024 * 1024  # 10 MB
 
 # Cortes de confianza para agrupar resultados en la UI.
@@ -292,59 +303,98 @@ def _centroide(vectores: list[list[float]]) -> list[float]:
     return [x / norma for x in suma]
 
 
+@dataclass(frozen=True)
+class ResultadoPorCara:
+    """Lo que devuelve el click en un retrato.
+
+    `cara_dudosa` no es un detalle técnico: es lo que le permite a la pantalla
+    decirle al corredor "puede que falten fotos, probá con otro retrato" en vez
+    de mostrarle tres fotos como si fueran todas.
+    """
+
+    fotos: list[Photo]
+    cara_dudosa: bool
+
+
 def search_faces_for_person(
     event: Event,
     seed_embedding: list[float],
     *,
     threshold: float = FACE_CLICK_THRESHOLD,
     limit: int = FACE_CLICK_MAX_RESULTS,
-) -> list[Photo]:
+) -> ResultadoPorCara:
     """Las fotos de la PERSONA de esa cara, no las parecidas a esa FOTO.
 
     Buscar con una sola cara es inestable. El vector de una cara de perfil,
-    chica o movida queda lejos de las frontales nítidas de la MISMA persona,
-    así que tocar un retrato de perfil devolvía tres fotos y tocar uno frontal
-    devolvía todas. Dos respuestas distintas para la misma persona según de qué
-    foto entró el corredor — el botón dice "esta persona" y contestaba "lo que
-    se parece a esta foto de esta persona".
+    chica o movida queda lejos de las frontales nítidas de la MISMA persona, así
+    que tocar un retrato de perfil devolvía tres fotos y tocar uno frontal
+    devolvía todas.
 
-    Acá la cara tocada es la SEMILLA: con ella buscamos las caras que son casi
-    con certeza la misma persona (umbral estricto), promediamos esos vectores y
+    La cara tocada es la SEMILLA: con ella buscamos las caras que son casi con
+    certeza la misma persona (umbral estricto), promediamos esos vectores y
     volvemos a buscar con el promedio, que representa a la persona mucho mejor
-    que cualquier foto suelta.
+    que cualquier foto suelta. El resultado se UNE con el de la búsqueda
+    directa, así que esto nunca devuelve MENOS que antes: sólo agrega.
 
-    El resultado se UNE con el de la búsqueda directa, así que esto nunca puede
-    devolver MENOS que antes: sólo agregar. El riesgo está del otro lado (traer
-    fotos de alguien parecido), y por eso el umbral de expansión va estricto y
-    con tope de semillas.
+    Y cuando la semilla es mala de entrada —no tiene con qué promediarse— al
+    menos lo detectamos, mirando cómo crece la población al aflojar el umbral.
+    Bajar el umbral NO es la salida: a 0.40 una cara mala matchea la mediana del
+    evento entero. Lo único honesto es avisar.
     """
     from apps.photos.models import FaceEmbedding
 
     directas = search_faces_by_similarity(event, seed_embedding, threshold=threshold, limit=limit)
 
-    vecinas = list(
-        FaceEmbedding.objects.filter(photo__event=event, photo__status=PhotoStatus.APPROVED)
-        .annotate(distancia=CosineDistance("embedding", seed_embedding))
-        .filter(distancia__lte=1 - FACE_EXPAND_THRESHOLD)
+    caras = FaceEmbedding.objects.filter(
+        photo__event=event, photo__status=PhotoStatus.APPROVED
+    ).annotate(distancia=CosineDistance("embedding", seed_embedding))
+
+    # Las bandas: sólo distancias, sin traer 400 vectores de 512 dimensiones.
+    bandas = list(
+        caras.order_by("distancia").values_list("photo_id", "distancia")[:FACE_NEIGHBOURS]
+    )
+
+    semillas = list(
+        caras.filter(distancia__lte=1 - FACE_EXPAND_THRESHOLD)
         .order_by("distancia")
         .values_list("embedding", flat=True)[:FACE_EXPAND_MAX_SEEDS]
     )
-    # Una sola vecina (ella misma) = no hay nada que promediar.
-    if len(vecinas) < 2:
-        return directas
 
-    centro = _centroide([[float(x) for x in v] for v in vecinas])
-    ampliadas = search_faces_by_similarity(event, centro, threshold=threshold, limit=limit)
+    fotos = directas
+    # Una sola semilla (ella misma) = no hay nada que promediar.
+    if len(semillas) >= 2:
+        centro = _centroide([[float(x) for x in v] for v in semillas])
+        ampliadas = search_faces_by_similarity(event, centro, threshold=threshold, limit=limit)
+        fotos = _unir(directas, ampliadas, limit)
 
-    # Unión, quedándonos con la mejor similitud de cada foto. `similarity` es un
-    # atributo que pone la query a mano, así que se lee con getattr (mismo patrón
-    # que el resto del módulo).
-    def _sim(foto: Photo) -> int:
-        return int(getattr(foto, "similarity", 0))
+    return ResultadoPorCara(fotos=fotos, cara_dudosa=_es_dudosa(fotos, bandas, threshold))
 
+
+def _sim(foto: Photo) -> int:
+    """`similarity` lo pone la query a mano, no es un campo del modelo."""
+    return int(getattr(foto, "similarity", 0))
+
+
+def _unir(a: list[Photo], b: list[Photo], limit: int) -> list[Photo]:
+    """Une dos resultados quedándose con la mejor similitud de cada foto."""
     por_id: dict[int, Photo] = {}
-    for foto in [*directas, *ampliadas]:
+    for foto in [*a, *b]:
         previa = por_id.get(foto.id)
         if previa is None or _sim(foto) > _sim(previa):
             por_id[foto.id] = foto
     return sorted(por_id.values(), key=_sim, reverse=True)[:limit]
+
+
+def _es_dudosa(fotos: list[Photo], bandas: list[tuple[int, float]], threshold: float) -> bool:
+    """¿La respuesta es corta porque la persona sale poco, o porque esta cara
+    salió mal?
+
+    La diferencia se ve al aflojar el umbral. Si sale poco de verdad, aflojar no
+    trae casi nada (4 fotos → 5). Si la cara salió mal, aflojar la dispara
+    (3 → 74), y a esa altura ya está matcheando a medio evento.
+    """
+    if len(fotos) > FACE_WEAK_MAX_PHOTOS:
+        return False
+    al_corte = len({pid for pid, d in bandas if 1 - float(d) >= threshold})
+    al_flojo = len({pid for pid, d in bandas if 1 - float(d) >= FACE_WEAK_LOOSE})
+    return al_corte > 0 and al_flojo >= al_corte * FACE_WEAK_FACTOR

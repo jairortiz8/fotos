@@ -318,6 +318,19 @@ class FaceEmbedding(TimeStampedModel):
         blank=True,
         help_text=_("{x, y, w, h} en porcentaje de la imagen."),
     )
+    det_score = models.FloatField(
+        _("confianza de la detección"),
+        null=True,
+        blank=True,
+        help_text=_(
+            "Qué tan segura está InsightFace de que esto es una cara (0-1). "
+            "Una cara con score bajo suele dar un embedding malo: encuentra "
+            "pocas fotos al umbral normal y medio evento al aflojarlo. "
+            "Nullable porque las fotos anteriores a este campo no lo tienen: "
+            "el dato se calculaba y se descartaba, y no se puede recuperar sin "
+            "reprocesar la foto."
+        ),
+    )
     estimated_age = models.PositiveSmallIntegerField(
         _("edad estimada"),
         null=True,

@@ -418,3 +418,52 @@ def test_gallery_htmx_page_returns_grid_chunk_with_ids(r2) -> None:  # type: ign
     assert "reviewerLightbox(" not in body
     # Suma los IDs de la página al array del lightbox.
     assert "ids.push(" in body
+
+
+# --- El visor de caras del portal de invitados -------------------------------
+@pytest.mark.django_db
+def test_el_endpoint_de_caras_no_revienta_por_el_namespace() -> None:
+    """Regresión de un bug tonto y caro: la vista armaba la URL del retrato con
+    `reviewers:face_avatar` (plural) y el namespace es `reviewer` (singular).
+    NoReverseMatch → 500 → el visor del lightbox NUNCA cargaba en el portal de
+    invitados. El código del visor estaba ahí desde el principio; lo tapaba
+    una `s`."""
+    from apps.photos.models import FaceEmbedding
+
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=True)
+    photo = ApprovedPhotoFactory(event=event)
+    FaceEmbedding.objects.create(
+        photo=photo,
+        embedding=[0.0] * 512,
+        bbox={"x1": 10, "y1": 10, "x2": 300, "y2": 300},
+    )
+    c = Client()
+    c.force_login(_reviewer())
+    resp = c.get(reverse("reviewer:photo_faces", kwargs={"photo_id": photo.id}))
+    assert resp.status_code == 200
+    datos = resp.json()
+    assert "faces" in datos
+    for cara in datos["faces"]:
+        assert cara["url"].startswith("/invitados/cara/")
+
+
+@pytest.mark.django_db
+def test_el_click_en_cara_del_invitado_usa_la_busqueda_por_persona() -> None:
+    """El portal de invitados tenía su propia copia del click en una cara y se
+    quedó con el comportamiento viejo cuando se arregló la galería pública.
+    `cara_dudosa` en el contexto sólo lo pone la búsqueda por persona: si está,
+    es que pasó por ahí."""
+    from apps.photos.models import FaceEmbedding
+
+    event = EventFactory(status=EventStatus.LIVE, reviewer_visible=True)
+    cara = FaceEmbedding.objects.create(
+        photo=ApprovedPhotoFactory(event=event),
+        embedding=[1.0] + [0.0] * 511,
+        bbox={"x1": 10, "y1": 10, "x2": 300, "y2": 300},
+    )
+    c = Client()
+    c.force_login(_reviewer())
+    resp = c.get(reverse("reviewer:gallery", kwargs={"slug": event.slug}), {"cara": cara.id})
+    assert resp.status_code == 200
+    assert resp.context["face_search"] is True
+    assert "cara_dudosa" in resp.context

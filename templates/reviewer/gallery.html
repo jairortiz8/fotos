@@ -58,6 +58,14 @@
       {# ===== Resultados de búsqueda ===== #}
       {% if face_search %}
         <p class="text-[13px] text-text-2 mb-3">{% blocktrans count n=match_count %}{{ n }} foto de esta persona.{% plural %}{{ n }} fotos de esta persona.{% endblocktrans %}</p>
+        {% if cara_dudosa %}
+        {% comment %}La cara que tocó salió mal (pocas fotos al umbral, medio evento
+    al aflojarlo). No podemos rescatarla con ningún umbral, así que lo decimos y
+    ofrecemos la salida en vez de mostrar tres fotos como si fueran todas.{% endcomment %}
+        <p class="text-[12px] text-text-3 mb-3 leading-relaxed max-w-prose">
+          {% trans "Esta foto de la persona no salió muy nítida, así que puede que falten fotos suyas. Probá tocando su retrato en otra foto." %}
+        </p>
+        {% endif %}
       {% elif selfie_search %}
         <p class="text-[13px] text-text-2 mb-3">{% blocktrans count n=match_count %}{{ n }} coincidencia por selfie.{% plural %}{{ n }} coincidencias por selfie.{% endblocktrans %}</p>
       {% elif invalid_bib %}

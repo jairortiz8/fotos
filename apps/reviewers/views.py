@@ -183,7 +183,7 @@ class ReviewerGalleryView(ReviewerRequiredMixin, View):
         from apps.search.views import (
             FACE_CLICK_MAX_RESULTS,
             FACE_CLICK_THRESHOLD,
-            search_faces_by_similarity,
+            search_faces_for_person,
         )
 
         face = (
@@ -196,12 +196,13 @@ class ReviewerGalleryView(ReviewerRequiredMixin, View):
         if face is None:
             raise Http404
 
-        photos = search_faces_by_similarity(
+        resultado = search_faces_for_person(
             event,
-            list(face.embedding),
+            [float(x) for x in face.embedding],
             threshold=FACE_CLICK_THRESHOLD,
             limit=FACE_CLICK_MAX_RESULTS,
         )
+        photos = resultado.fotos
         attach_clean_thumb_urls(photos, event)
         return render(
             request,
@@ -211,6 +212,7 @@ class ReviewerGalleryView(ReviewerRequiredMixin, View):
                 "photos": photos,
                 "is_search": True,
                 "face_search": True,
+                "cara_dudosa": resultado.cara_dudosa,
                 "match_count": len(photos),
                 "photo_ids_json": _photo_ids_json(photos),
             },
@@ -408,7 +410,7 @@ class ReviewerPhotoFacesView(ReviewerRequiredMixin, View):
         faces = [
             {
                 "id": face.id,
-                "url": reverse("reviewers:face_avatar", kwargs={"face_id": face.id}),
+                "url": reverse("reviewer:face_avatar", kwargs={"face_id": face.id}),
             }
             for face in avatar_faces_for_photo(photo)
         ]
