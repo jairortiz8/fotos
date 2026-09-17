@@ -155,11 +155,36 @@ def test_create_zip_view_empty_selection(r2_with_photos) -> None:  # type: ignor
 
 @pytest.mark.django_db
 def test_zip_status_polling_endpoint(r2_with_photos) -> None:  # type: ignore[no-untyped-def]
+    """El que pidió el ZIP puede consultar su estado."""
+    from apps.core.utils import hash_ip
+
     _event, photos = r2_with_photos
     download = ZipDownload.objects.create(
-        requester_ip_hash="x", photo_ids=[photos[0].id], photo_count=1, status=ZipStatus.PENDING
+        requester_ip_hash=hash_ip("127.0.0.1"),
+        photo_ids=[photos[0].id],
+        photo_count=1,
+        status=ZipStatus.PENDING,
     )
     client = Client()
     r = client.get(reverse("downloads:status", args=[download.id]))
     assert r.status_code == 200
     assert r.json()["status"] == ZipStatus.PENDING
+
+
+@pytest.mark.django_db
+def test_no_se_puede_espiar_el_zip_de_otro(r2_with_photos) -> None:  # type: ignore[no-untyped-def]
+    """IDOR: el estado devuelve `download_url`, que es una URL FIRMADA de R2
+    válida una hora y sin más autenticación. Como el id es autoincremental,
+    cualquiera podía recorrer /descargas/estado/1/, /2/, /3/… y cosechar las
+    descargas de otros visitantes — hasta 200 originales en alta por cada una."""
+    _event, photos = r2_with_photos
+    ajeno = ZipDownload.objects.create(
+        requester_ip_hash="el-hash-de-otra-persona",
+        photo_ids=[photos[0].id],
+        photo_count=1,
+        status=ZipStatus.READY,
+        download_url="https://r2.example/firmada-secreta",
+    )
+    r = Client().get(reverse("downloads:status", args=[ajeno.id]))
+    assert r.status_code == 404
+    assert b"firmada-secreta" not in r.content

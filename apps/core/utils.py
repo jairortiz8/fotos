@@ -10,6 +10,7 @@ import hashlib
 import ipaddress
 import re
 
+from django.conf import settings
 from django.http import HttpRequest
 from django.utils import timezone
 from django_ratelimit.core import is_ratelimited
@@ -19,10 +20,26 @@ from django_ratelimit.core import is_ratelimited
 # IP helpers
 # ---------------------------------------------------------------------------
 def get_client_ip(request: HttpRequest) -> str | None:
-    """IP del cliente respetando X-Forwarded-For (Railway está detrás de proxy)."""
+    """IP del cliente respetando X-Forwarded-For (Railway está detrás de proxy).
+
+    SEGURIDAD: tomamos el ÚLTIMO salto, no el primero. `X-Forwarded-For` es una
+    lista donde cada proxy AGREGA al final la IP que él vio. El primer valor es
+    el que mandó el cliente, o sea el que el cliente puede inventar: con
+    `X-Forwarded-For: 1.2.3.4` falso y rotándolo en cada request se esquivaban
+    todos los límites por IP (incluido el anti-scraping de 60 dorsales/día) y se
+    ensuciaba el rastro de auditoría con IPs mentidas.
+
+    El último valor lo escribe nuestro propio proxy de confianza y el cliente no
+    lo controla. `TRUSTED_PROXY_HOPS` dice cuántos proxies propios hay delante
+    (Railway: 1). Si algún día se mete un CDN adelante, hay que subirlo — con el
+    número mal, esto devuelve la IP del proxy y los límites pasan a ser globales.
+    """
     xff = request.META.get("HTTP_X_FORWARDED_FOR", "").strip()
     if xff:
-        return xff.split(",")[0].strip()
+        saltos = [p.strip() for p in xff.split(",") if p.strip()]
+        if saltos:
+            hops = max(1, getattr(settings, "TRUSTED_PROXY_HOPS", 1))
+            return saltos[-hops] if len(saltos) >= hops else saltos[0]
     return request.META.get("REMOTE_ADDR")
 
 

@@ -65,6 +65,13 @@ def delete_photos_for_request(self, deletion_id: int, photo_ids: list[int]) -> d
                 )
                 if k
             )
+            # El RECORTE de la cara (el retrato del visor) es una imagen
+            # derivada del mismo paso que crea el embedding: es una foto de la
+            # cara de la persona, guardada en R2. Faltaba en esta lista, así que
+            # sobrevivía a "borrar mis datos".
+            keys.extend(
+                fe.avatar_key for fe in FaceEmbedding.objects.filter(photo=photo) if fe.avatar_key
+            )
 
         # 3. Borrar de R2 (best-effort: si R2 no está, seguimos con la DB).
         if keys:
@@ -127,10 +134,24 @@ def cleanup_old_embeddings() -> dict[str, int]:
         Q(last_matched_at__isnull=True, created_at__lt=cutoff) | Q(last_matched_at__lt=cutoff)
     )
     count = expired.count()
+    # El recorte de la cara vive en R2 y NO se iba con la fila: la retención de
+    # 90 días borraba el vector y dejaba la imagen de la cara para siempre.
+    recortes = [k for k in expired.values_list("avatar_key", flat=True) if k]
     expired.delete()
+    if recortes:
+        try:
+            for batch in _chunked(recortes, R2_DELETE_BATCH):
+                default_storage().delete_many(batch)
+        except (R2NotConfiguredError, R2UploadError):
+            logger.warning(
+                "cleanup_old_embeddings: R2 omitido, %d recortes sin borrar", len(recortes)
+            )
 
-    AuditLog.log("privacy.embeddings_cleanup", metadata={"deleted_count": count})
-    return {"deleted_count": count}
+    AuditLog.log(
+        "privacy.embeddings_cleanup",
+        metadata={"deleted_count": count, "avatars_deleted": len(recortes)},
+    )
+    return {"deleted_count": count, "avatars_deleted": len(recortes)}
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +251,12 @@ def delete_event_photos_permanently(self, event_id: int) -> dict[str, int]:
             )
             if k
         )
+    # Los recortes de cara van también: son fotos de la cara, no vectores.
+    keys.extend(
+        FaceEmbedding.objects.filter(photo__event=event)
+        .exclude(avatar_key="")
+        .values_list("avatar_key", flat=True)
+    )
 
     if keys:
         try:
@@ -313,7 +340,13 @@ def cleanup_orphaned_r2_objects() -> dict[str, int | bool]:
     """Detecta objetos en R2 sin registro en DB. Si son muchos (>100), alerta y NO
     borra (señal de bug). Si son pocos, los borra."""
     try:
-        all_keys = set(default_storage().list_keys(prefix="events/"))
+        # Antes sólo miraba "events/", así que los recortes de cara
+        # ("face_avatars/") y las copias limpias del portal de invitados
+        # ("reviewer_clean/") eran invisibles: si quedaban huérfanas, nadie
+        # las pescaba nunca.
+        all_keys: set[str] = set()
+        for prefijo in ("events/", "face_avatars/", "reviewer_clean/"):
+            all_keys.update(default_storage().list_keys(prefix=prefijo))
     except R2NotConfiguredError:
         logger.warning("cleanup_orphaned_r2: R2 no configurado")
         return {"orphaned": 0, "configured": False}
@@ -330,6 +363,9 @@ def cleanup_orphaned_r2_objects() -> dict[str, int | bool]:
             )
             if k
         )
+    db_keys.update(
+        FaceEmbedding.objects.exclude(avatar_key="").values_list("avatar_key", flat=True)
+    )
 
     orphaned = all_keys - db_keys
     if len(orphaned) > ORPHAN_ALERT_THRESHOLD:

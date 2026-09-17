@@ -49,12 +49,18 @@ class CreateZipDownloadView(View):
         if not check_zip_rate_limit(request):
             return JsonResponse({"error": "rate_limited"}, status=429)
 
-        # Solo fotos aprobadas existen para descargar.
-        valid_ids = list(
-            Photo.objects.filter(id__in=photo_ids, status=PhotoStatus.APPROVED).values_list(
-                "id", flat=True
-            )
-        )
+        # Sólo fotos aprobadas Y de eventos que el público puede ver hoy.
+        # SEGURIDAD: antes filtraba únicamente por `status=APPROVED`, así que
+        # con el id de una foto de un evento privado o archivado —que la galería
+        # y el lightbox devuelven 404— se podía igual armar el ZIP y bajarla.
+        # Es el mismo criterio que ya aplica `PhotoDownloadView` más abajo.
+        valid_ids = [
+            foto.id
+            for foto in Photo.objects.filter(
+                id__in=photo_ids, status=PhotoStatus.APPROVED
+            ).select_related("event")
+            if foto.event.visibility != EventVisibility.PRIVATE and foto.event.is_searchable()
+        ]
         if not valid_ids:
             return JsonResponse({"error": "no_valid_photos"}, status=400)
 
@@ -79,10 +85,26 @@ class CreateZipDownloadView(View):
 
 
 class ZipStatusView(View):
-    """Polling del estado de un ZIP. HTMX-friendly (devuelve un partial)."""
+    """Polling del estado de un ZIP. HTMX-friendly (devuelve un partial).
+
+    SEGURIDAD: la consulta va atada a quien pidió el ZIP. Antes era
+    `get_object_or_404(ZipDownload, id=...)` a secas y la respuesta incluye
+    `download_url`, que es una URL FIRMADA de R2 válida una hora y sin más
+    autenticación. Como el id es un autoincremental, cualquiera podía recorrer
+    /descargas/estado/1/, /2/, /3/… y cosechar las URLs de los ZIP de otros
+    visitantes — hasta 200 originales en alta por cada uno.
+
+    El hash de IP usa salt diaria, así que un ZIP creado antes de medianoche no
+    se puede consultar después. Es aceptable: el ZIP vive una hora, y el modo de
+    falla es 404 (cerrado), no fuga.
+    """
 
     def get(self, request: HttpRequest, download_id: int) -> HttpResponse:
-        download = get_object_or_404(ZipDownload, id=download_id)
+        download = get_object_or_404(
+            ZipDownload,
+            id=download_id,
+            requester_ip_hash=hash_ip(get_client_ip(request)),
+        )
 
         if getattr(request, "htmx", False):
             return render(request, "public/_zip_status.html", {"download": download})
