@@ -148,6 +148,21 @@ def _oriented_bgr_from_pil(pim: Any) -> np.ndarray:
     return np.ascontiguousarray(np.asarray(rgb)[:, :, ::-1])  # RGB → BGR
 
 
+# Tope duro de píxeles DECODIFICADOS. El límite de bytes del upload mide el
+# archivo COMPRIMIDO, que es justo lo que una bomba de descompresión explota: un
+# PNG de 3 MB puede declarar 30000x30000 y pedir gigabytes al decodificarse.
+# 80 MP entra cómodo cualquier cámara real (una Canon de 45 MP, un iPhone de 48)
+# y frena una bomba, que declara órdenes de magnitud más.
+MAX_PIXELES_DECODIFICADOS = 80_000_000
+
+
+def _rechazar_si_es_bomba(pim: Any) -> None:  # PIL se importa perezoso
+    """`Image.open` es perezoso: el tamaño se conoce ANTES de decodificar."""
+    ancho, alto = pim.size
+    if ancho * alto > MAX_PIXELES_DECODIFICADOS:
+        raise InvalidImageError(f"Imagen demasiado grande al decodificar: {ancho}x{alto}px.")
+
+
 def extract_faces(image_path: Path) -> list[FaceDetection]:
     """Detecta todas las caras de una imagen en disco. [] si no hay."""
     import cv2
@@ -155,7 +170,14 @@ def extract_faces(image_path: Path) -> list[FaceDetection]:
 
     try:
         with Image.open(image_path) as pim:
+            _rechazar_si_es_bomba(pim)
             img: np.ndarray | None = _oriented_bgr_from_pil(pim)
+    except (InvalidImageError, Image.DecompressionBombError):
+        # Igual que en el selfie: si Pillow la rechazó por tamaño, no la
+        # reintentamos con cv2, que no tiene ese freno. Acá el radio de daño es
+        # el worker, no el sitio, pero el patrón es el mismo.
+        logger.warning("extract_faces: %s es demasiado grande, la salteo", image_path)
+        return []
     except Exception:
         img = cv2.imread(str(image_path))  # fallback
     if img is None:
@@ -202,10 +224,19 @@ def embedding_from_bytes(image_bytes: bytes) -> np.ndarray:
         from io import BytesIO
 
         with Image.open(BytesIO(image_bytes)) as pim:
+            _rechazar_si_es_bomba(pim)
             # cv2.imdecode (rama except) puede devolver None → tipamos Optional y
             # lo cubre el `if img is None` de abajo.
             img: np.ndarray | None = _oriented_bgr_from_pil(pim)  # respeta EXIF del selfie
+    except (InvalidImageError, Image.DecompressionBombError) as exc:
+        # SEGURIDAD: NO caer al fallback de cv2 acá. Pillow rechazó la imagen
+        # por tamaño y cv2.imdecode no tiene esa protección: el `except
+        # Exception` de abajo convertía la defensa de Pillow en un rodeo hacia
+        # el decoder sin límite. Esto corre síncrono en el proceso web, que va
+        # con UN solo worker, así que un request bien armado tumbaba el sitio.
+        raise InvalidImageError("La imagen es demasiado grande para procesarla.") from exc
     except Exception:
+        # Formato que Pillow no reconoce: ahí sí vale probar con cv2.
         arr = np.frombuffer(image_bytes, dtype=np.uint8)
         img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
