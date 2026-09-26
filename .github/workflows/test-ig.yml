@@ -1,0 +1,91 @@
+name: test-ig (one-off)
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-ig"]
+concurrency:
+  group: test-ig
+  cancel-in-progress: true
+permissions:
+  contents: write
+
+jobs:
+  tests:
+    name: "tests de la rama del Instagram"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: runfoto
+          POSTGRES_PASSWORD: runfoto
+          POSTGRES_DB: runfoto
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U runfoto -d runfoto"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      SECRET_KEY: ci-secret-key-not-real
+      DEBUG: "True"
+      ALLOWED_HOSTS: "*"
+      DATABASE_URL: postgres://runfoto:runfoto@localhost:5432/runfoto
+      REDIS_URL: redis://localhost:6379/0
+      CELERY_BROKER_URL: redis://localhost:6379/1
+      CELERY_RESULT_BACKEND: redis://localhost:6379/2
+      SITE_NAME: "find your foto"
+      SITE_DOMAIN: localhost:8000
+      NOTIFIER_BACKEND: whatsapp_manual
+      LANGUAGE_CODE: es
+      TIME_ZONE: America/El_Salvador
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "claude/runfoto-security-audit-bknirm" }
+      - name: Libs de sistema para OpenCV
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libglib2.0-0 libgomp1 libxcb1 libsm6 libxext6 libxrender1
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: pyproject.toml }
+      - run: pip install -e ".[dev]"
+
+      - name: Correr todo y juntar el resultado
+        if: always()
+        run: |
+          mkdir -p salida
+          {
+            echo "=== makemigrations --check (mi migracion tiene que coincidir con el modelo) ==="
+            python manage.py makemigrations --check --dry-run 2>&1 | tail -20 || echo "FALLO"
+            echo
+            echo "=== ruff ==="
+            ruff check . 2>&1 | tail -20 || echo "FALLO"
+            ruff format --check . 2>&1 | tail -10 || echo "FALLO"
+            echo
+            echo "=== mypy ==="
+            mypy . 2>&1 | tail -20 || echo "FALLO"
+            echo
+            echo "=== pytest: solo los del Instagram ==="
+            pytest tests/photographers/test_instagram.py -q 2>&1 | tail -40 || echo "FALLO"
+            echo
+            echo "=== pytest: suite completa ==="
+            pytest -m "not slow and not e2e" -q 2>&1 | tail -30 || echo "FALLO"
+          } | tee salida/resultado.txt
+
+      - name: Publicar el resultado en una rama
+        if: always()
+        run: |
+          git config user.name "ci"; git config user.email "ci@local"
+          git checkout --orphan resultado-ig
+          git rm -rf --cached . > /dev/null
+          find . -maxdepth 1 ! -name . ! -name .git ! -name salida -exec rm -rf {} +
+          mv salida/* . && rmdir salida
+          git add -f . && git commit -q -m "tests del Instagram del fotografo"
+          git push -f origin resultado-ig
