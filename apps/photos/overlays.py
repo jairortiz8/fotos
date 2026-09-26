@@ -161,7 +161,7 @@ TEMPLATES: dict[str, CornersTemplate | StackedTemplate] = {
         rows=(
             LogoRow(
                 logos=(LogoSpec("utcom_2026.webp"),),
-                h_pct=0.164,  # 33% del ancho en una vertical
+                h_pct=0.148,  # 30% del ancho en una vertical
                 spread="centrado",
             ),
         ),
