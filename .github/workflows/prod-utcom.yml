@@ -64,35 +64,41 @@ jobs:
               # ---------- 1) fotos de Surf City: una vertical y una horizontal ----------
               cur.execute("SELECT id FROM events_event WHERE slug='surf-city-2026'")
               sc = cur.fetchone()[0]
-              # La orientacion REAL es la de despues del exif_transpose. Filtrar
-              # por p.width/p.height en SQL no alcanza: hay fotos cuyas dimensiones
-              # guardadas no coinciden con la imagen ya rotada, y salia una vertical
-              # etiquetada como horizontal. Asi que traemos candidatas con caras y
-              # decidimos mirando la imagen.
-              cur.execute("""SELECT p.id, p.original_key, p.width, p.height, count(f.id)
-                             FROM photos_photo p
-                             JOIN photos_faceembedding f ON f.photo_id = p.id
-                             WHERE p.event_id=%s AND p.status='approved' AND p.original_key<>''
-                             GROUP BY p.id, p.original_key, p.width, p.height
-                             HAVING count(f.id) BETWEEN 1 AND 3
-                             ORDER BY p.id
-                             LIMIT 60""", (sc,))
-              candidatas = cur.fetchall()
-              faltan = {"vertical", "horizontal"}
-              for pid, key, w, h, caras in candidatas:
-                  if not faltan: break
-                  buf = io.BytesIO(); s3.download_fileobj(BUCKET, key, buf); buf.seek(0)
-                  im = ImageOps.exif_transpose(Image.open(buf)).convert("RGB")
-                  real = "vertical" if im.height > im.width else "horizontal"
-                  if real not in faltan: continue
-                  faltan.discard(real)
-                  im.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
-                  marcada = apply_brand_overlay(im, "utcom_2026")
-                  nombre = f"surfcity_{real}_utcom.jpg"
-                  marcada.save(out / nombre, quality=90)
-                  notas.append(f"{real}: foto {pid} ({caras} caras) -> {marcada.size} -> {nombre}")
-              for f in faltan:
-                  notas.append(f"{f}: no encontre ninguna candidata")
+              # La orientacion REAL es la de despues del exif_transpose: hay fotos
+              # cuyas dimensiones guardadas no coinciden con la imagen ya rotada.
+              # Asi que para cada orientacion arrancamos por las candidatas que la
+              # BD dice que son de ese lado (acierta casi siempre) y confirmamos
+              # mirando la imagen.
+              def candidatas(db_landscape_primero: bool):
+                  orden = "DESC" if db_landscape_primero else "ASC"
+                  cur.execute(f"""SELECT p.id, p.original_key, count(f.id)
+                                  FROM photos_photo p
+                                  JOIN photos_faceembedding f ON f.photo_id = p.id
+                                  WHERE p.event_id=%s AND p.status='approved'
+                                    AND p.original_key<>''
+                                  GROUP BY p.id, p.original_key, p.width, p.height
+                                  HAVING count(f.id) BETWEEN 1 AND 3
+                                  ORDER BY (p.width > p.height) {orden}, p.id
+                                  LIMIT 40""", (sc,))
+                  return cur.fetchall()
+
+              for buscada, primero in (("horizontal", True), ("vertical", False)):
+                  hecho = False
+                  for pid, key, caras in candidatas(primero):
+                      buf = io.BytesIO(); s3.download_fileobj(BUCKET, key, buf); buf.seek(0)
+                      im = ImageOps.exif_transpose(Image.open(buf)).convert("RGB")
+                      real = "vertical" if im.height > im.width else "horizontal"
+                      if real != buscada:
+                          continue
+                      im.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
+                      marcada = apply_brand_overlay(im, "utcom_2026")
+                      nombre = f"surfcity_{buscada}_utcom.jpg"
+                      marcada.save(out / nombre, quality=90)
+                      notas.append(f"{buscada}: foto {pid} ({caras} caras) -> {marcada.size} -> {nombre}")
+                      hecho = True
+                      break
+                  if not hecho:
+                      notas.append(f"{buscada}: no encontre ninguna candidata")
 
               # ---------- 2) el evento UTCOM 2026 ----------
               cur.execute("SELECT id, slug, status FROM events_event WHERE slug='utcom-2026'")
