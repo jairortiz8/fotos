@@ -65,15 +65,21 @@ jobs:
               cur.execute("SELECT id FROM events_event WHERE slug='surf-city-2026'")
               sc = cur.fetchone()[0]
               for etiqueta, cond in (("vertical","p.height > p.width"), ("horizontal","p.width > p.height")):
-                  cur.execute(f"""SELECT p.id, p.original_key, p.width, p.height
+                  # Con caras: la primera por id salia asfalto pelado y no servia
+                  # para juzgar el tamano de la marca.
+                  cur.execute(f"""SELECT p.id, p.original_key, p.width, p.height,
+                                         count(f.id) AS caras
                                   FROM photos_photo p
+                                  JOIN photos_faceembedding f ON f.photo_id = p.id
                                   WHERE p.event_id=%s AND p.status='approved'
                                     AND p.original_key<>'' AND {cond}
-                                  ORDER BY p.id LIMIT 1""", (sc,))
+                                  GROUP BY p.id, p.original_key, p.width, p.height
+                                  HAVING count(f.id) BETWEEN 1 AND 3
+                                  ORDER BY count(f.id) DESC, p.id LIMIT 1""", (sc,))
                   fila = cur.fetchone()
                   if not fila:
                       notas.append(f"{etiqueta}: no encontre ninguna en surf-city"); continue
-                  pid, key, w, h = fila
+                  pid, key, w, h, caras = fila
                   buf = io.BytesIO(); s3.download_fileobj(BUCKET, key, buf); buf.seek(0)
                   im = ImageOps.exif_transpose(Image.open(buf)).convert("RGB")
                   # mismo preview que hace el pipeline: 1200px lado largo
@@ -81,7 +87,7 @@ jobs:
                   marcada = apply_brand_overlay(im, "utcom_2026")
                   nombre = f"surfcity_{etiqueta}_utcom.jpg"
                   marcada.save(out / nombre, quality=90)
-                  notas.append(f"{etiqueta}: foto {pid} original {w}x{h} -> preview {marcada.size} -> {nombre}")
+                  notas.append(f"{etiqueta}: foto {pid} ({caras} caras) original {w}x{h} -> preview {marcada.size} -> {nombre}")
 
               # ---------- 2) el evento UTCOM 2026 ----------
               cur.execute("SELECT id, slug, status FROM events_event WHERE slug='utcom-2026'")
