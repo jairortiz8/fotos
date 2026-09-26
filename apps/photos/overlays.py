@@ -149,7 +149,7 @@ TEMPLATES: dict[str, CornersTemplate | StackedTemplate] = {
     ),
     # UTCOM 2026 (THE NORTH FACE · BLACK AND WHITE EDITION): un solo logo, así
     # que va CENTRADO en vez de repartido. Al estar solo puede ser más grande
-    # que cualquiera de los otros: 41% del ancho en vertical, contra el 22-24%
+    # que cualquiera de los otros: 33% del ancho en vertical, contra el 22-24%
     # de cada logo de Surf City (que son dos) y el 13% del principal de SÉPTIMO
     # (que son cinco).
     #
@@ -161,7 +161,7 @@ TEMPLATES: dict[str, CornersTemplate | StackedTemplate] = {
         rows=(
             LogoRow(
                 logos=(LogoSpec("utcom_2026.webp"),),
-                h_pct=0.205,  # 41% del ancho en una vertical
+                h_pct=0.164,  # 33% del ancho en una vertical
                 spread="centrado",
             ),
         ),
@@ -169,12 +169,12 @@ TEMPLATES: dict[str, CornersTemplate | StackedTemplate] = {
         scrim_factor=1.7,
         scrim_alpha=205,
         # En horizontal el lado corto es el ALTO, así que con el mismo h_pct el
-        # logo saldría gigante respecto al ancho. 0.18 lo deja en ~24% del ancho,
+        # logo saldría gigante respecto al ancho. 0.144 lo deja en ~19% del ancho,
         # en línea con los logos de Surf City en horizontal.
         landscape_rows=(
             LogoRow(
                 logos=(LogoSpec("utcom_2026.webp"),),
-                h_pct=0.18,
+                h_pct=0.144,
                 spread="centrado",
             ),
         ),
