@@ -77,9 +77,9 @@ jobs:
                                   WHERE p.event_id=%s AND p.status='approved'
                                     AND p.original_key<>''
                                   GROUP BY p.id, p.original_key, p.width, p.height
-                                  HAVING count(f.id) BETWEEN 1 AND 3
+                                  HAVING count(f.id) >= 1
                                   ORDER BY (p.width > p.height) {orden}, p.id
-                                  LIMIT 40""", (sc,))
+                                  LIMIT 120""", (sc,))
                   return cur.fetchall()
 
               for buscada, primero in (("horizontal", True), ("vertical", False)):
