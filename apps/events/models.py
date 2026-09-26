@@ -51,6 +51,7 @@ class BrandOverlay(models.TextChoices):
     NONE = "", _("Ninguno (watermark normal)")
     SURF_CITY = "surf_city", _("Surf City (logos en las esquinas)")
     SEPTIMO_CEP = "septimo_cep", _("SÉPTIMO x CEP (5 logos abajo)")
+    UTCOM_2026 = "utcom_2026", _("UTCOM 2026 (logo centrado abajo)")
 
 
 # Defaults de retención (configurables por evento).

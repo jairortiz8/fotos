@@ -91,6 +91,11 @@ class StackedTemplate:
     landscape_margin_x_pct: float = 0.20
     landscape_scale: float = 1.15
     landscape_rows: tuple[LogoRow, ...] | None = None
+    # Aire de abajo sólo para horizontales. `bottom_pct` es fracción del lado
+    # corto, que en una horizontal es el ALTO: el mismo porcentaje deja mucho
+    # más hueco proporcional abajo y el logo queda flotando. None = usar el
+    # mismo que en vertical.
+    landscape_bottom_pct: float | None = None
 
 
 TEMPLATES: dict[str, CornersTemplate | StackedTemplate] = {
@@ -141,6 +146,42 @@ TEMPLATES: dict[str, CornersTemplate | StackedTemplate] = {
             ),
         ),
         landscape_margin_x_pct=0.07,
+    ),
+    # UTCOM 2026 (THE NORTH FACE · BLACK AND WHITE EDITION): un solo logo, así
+    # que va CENTRADO en vez de repartido. Al estar solo puede ser más grande
+    # que cualquiera de los otros: 34% del ancho en vertical, contra el 22-24%
+    # de cada logo de Surf City (que son dos) y el 13% del principal de SÉPTIMO
+    # (que son cinco).
+    #
+    # El aire de abajo es casi el doble que en los otros templates (11% del lado
+    # corto contra 6,3%): estas verticales terminan en historias de Instagram,
+    # donde la barra de la app se come el pie de la foto. Si el logo va pegado
+    # abajo, en una historia queda tapado.
+    "utcom_2026": StackedTemplate(
+        rows=(
+            LogoRow(
+                logos=(LogoSpec("utcom_2026.webp"),),
+                h_pct=0.171,  # 34% del ancho en una vertical
+                spread="centrado",
+            ),
+        ),
+        bottom_pct=0.11,
+        scrim_factor=1.7,
+        scrim_alpha=205,
+        # En horizontal el lado corto es el ALTO, así que con el mismo h_pct el
+        # logo saldría gigante respecto al ancho. 0.15 lo deja en ~20% del ancho,
+        # en línea con los logos de Surf City en horizontal.
+        landscape_rows=(
+            LogoRow(
+                logos=(LogoSpec("utcom_2026.webp"),),
+                h_pct=0.15,
+                spread="centrado",
+            ),
+        ),
+        landscape_scale=1.0,
+        # En vertical el aire de abajo es grande a propósito (historias); en
+        # horizontal no hace falta y el logo quedaría flotando.
+        landscape_bottom_pct=0.065,
     ),
 }
 
@@ -252,7 +293,12 @@ def _apply_stacked(base: Image.Image, cfg: StackedTemplate) -> Image.Image:
     rows = cfg.landscape_rows if (horizontal and cfg.landscape_rows) else cfg.rows
     center_gap = round(w * cfg.center_gap_pct)
     row_gap = round(short * cfg.row_gap_pct)
-    bottom = round(short * cfg.bottom_pct)
+    bottom_pct = (
+        cfg.landscape_bottom_pct
+        if (horizontal and cfg.landscape_bottom_pct is not None)
+        else cfg.bottom_pct
+    )
+    bottom = round(short * bottom_pct)
 
     # Se arma de abajo hacia arriba: primero se sabe cuánto ocupa todo (para el
     # degradado), después se pega cada fila.

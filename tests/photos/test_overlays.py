@@ -391,3 +391,62 @@ def test_septimo_calca_el_diseno_aprobado() -> None:
         y -= alto_fila + round(corto * cfg.row_gap_pct)
 
     assert obtenido == esperado
+
+
+# ---------------------------------------------------------------------------
+# UTCOM 2026 — un solo logo, centrado
+# ---------------------------------------------------------------------------
+def test_utcom_existe_y_carga() -> None:
+    assert overlays.is_valid_template("utcom_2026")
+    logo = overlays._load_logo("utcom_2026.webp")
+    assert logo.mode == "RGBA"
+    # Recortado a su contenido: el archivo viene con lienzo de 1600x2000.
+    assert logo.size == (1244, 624)
+
+
+def test_utcom_va_centrado_en_las_dos_orientaciones() -> None:
+    """Es un logo solo: tiene que quedar en el eje, no arrimado a un margen.
+
+    Se mide el centro de masa de los píxeles claros de la franja de abajo.
+    """
+    for w, h in ((1067, 1600), (1600, 1067)):
+        img = overlays.apply_brand_overlay(_solid(w, h), "utcom_2026")
+        px = img.load()
+        franja_y0 = int(h * 0.70)
+        xs = [
+            x
+            for y in range(franja_y0, h)
+            for x in range(w)
+            if sum(px[x, y]) > 500  # blanco del logo sobre el degradado oscuro
+        ]
+        assert xs, f"no se encontró el logo en {w}x{h}"
+        centro = sum(xs) / len(xs)
+        desvio = abs(centro - w / 2) / w
+        assert desvio < 0.02, f"{w}x{h}: corrido {desvio:.1%} del eje"
+
+
+def test_utcom_es_mas_grande_que_un_logo_de_los_otros_templates() -> None:
+    """Al estar solo puede ocupar más: ~34% del ancho en vertical, contra el
+    22-24% de cada logo de Surf City (dos) y el 13% del principal de SÉPTIMO
+    (cinco). Si alguien lo achica al tamaño de un patrocinador, esto avisa."""
+    cfg = overlays.TEMPLATES["utcom_2026"]
+    logo = overlays._load_logo("utcom_2026.webp")
+    w, h = 1067, 1600
+    alto = round(min(w, h) * cfg.rows[0].h_pct)
+    ancho = round(alto * logo.width / logo.height)
+    assert 0.30 <= ancho / w <= 0.40, f"ocupa {ancho / w:.0%} del ancho"
+
+
+def test_utcom_deja_mas_aire_abajo_en_vertical_que_en_horizontal() -> None:
+    """Las verticales terminan en historias de Instagram, donde la barra de la
+    app tapa el pie de la foto: por eso el logo va más arriba. En horizontal ese
+    problema no existe y con el mismo margen el logo quedaba flotando."""
+    cfg = overlays.TEMPLATES["utcom_2026"]
+    assert cfg.landscape_bottom_pct is not None
+    assert cfg.bottom_pct > cfg.landscape_bottom_pct
+
+
+def test_el_aire_de_abajo_por_defecto_sigue_siendo_el_mismo() -> None:
+    """`landscape_bottom_pct=None` no tiene que cambiar los templates viejos."""
+    septimo = overlays.TEMPLATES["septimo_cep"]
+    assert septimo.landscape_bottom_pct is None
