@@ -169,12 +169,12 @@ TEMPLATES: dict[str, CornersTemplate | StackedTemplate] = {
         scrim_factor=1.7,
         scrim_alpha=205,
         # En horizontal el lado corto es el ALTO, así que con el mismo h_pct el
-        # logo saldría gigante respecto al ancho. 0.144 lo deja en ~19% del ancho,
+        # logo saldría gigante respecto al ancho. 0.130 lo deja en ~17% del ancho,
         # en línea con los logos de Surf City en horizontal.
         landscape_rows=(
             LogoRow(
                 logos=(LogoSpec("utcom_2026.webp"),),
-                h_pct=0.144,
+                h_pct=0.130,
                 spread="centrado",
             ),
         ),
