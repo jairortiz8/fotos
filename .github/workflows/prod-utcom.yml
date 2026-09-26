@@ -1,0 +1,125 @@
+name: prod-utcom (one-off)
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-utcom"]
+concurrency:
+  group: prod-utcom
+  cancel-in-progress: true
+permissions:
+  contents: write
+jobs:
+  render:
+    name: "UTCOM: render sobre fotos reales + crear el evento"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "claude/runfoto-security-audit-bknirm" }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install --quiet requests "psycopg[binary]" boto3 Pillow
+
+      - name: Render + evento
+        run: |
+          python3 - <<'PYX'
+          import os, io, json, sys, types, pathlib, requests, datetime as dt
+
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          def vars_de(sid):
+              r=requests.post(API,headers=H,json={"query":V,"variables":{
+                  "p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}},timeout=40).json()
+              return (r.get("data") or {}).get("variables") or {}
+          pg  = vars_de(os.environ["PG_ID"])
+          web = vars_de(os.environ["WEB_ID"])
+
+          # overlays.py sin arrancar Django entero
+          REPO = pathlib.Path(".").resolve(); sys.path.insert(0, str(REPO))
+          m = types.ModuleType("django.conf"); m.settings = types.SimpleNamespace(BASE_DIR=REPO)
+          sys.modules.setdefault("django", types.ModuleType("django")); sys.modules["django.conf"] = m
+          from PIL import Image, ImageOps
+          from apps.photos.overlays import apply_brand_overlay
+
+          import boto3, psycopg
+          s3 = boto3.client("s3",
+              endpoint_url=web["R2_ENDPOINT_URL"],
+              aws_access_key_id=web["R2_ACCESS_KEY_ID"],
+              aws_secret_access_key=web["R2_SECRET_ACCESS_KEY"],
+              region_name="auto")
+          BUCKET = web["R2_BUCKET_NAME"]
+
+          out = pathlib.Path("salida"); out.mkdir(exist_ok=True)
+          notas = []
+
+          with psycopg.connect(pg["DATABASE_PUBLIC_URL"], connect_timeout=40) as cx, cx.cursor() as cur:
+              # ---------- 1) fotos de Surf City: una vertical y una horizontal ----------
+              cur.execute("SELECT id FROM events_event WHERE slug='surf-city-2026'")
+              sc = cur.fetchone()[0]
+              for etiqueta, cond in (("vertical","p.height > p.width"), ("horizontal","p.width > p.height")):
+                  cur.execute(f"""SELECT p.id, p.original_key, p.width, p.height
+                                  FROM photos_photo p
+                                  WHERE p.event_id=%s AND p.status='approved'
+                                    AND p.original_key<>'' AND {cond}
+                                  ORDER BY p.id LIMIT 1""", (sc,))
+                  fila = cur.fetchone()
+                  if not fila:
+                      notas.append(f"{etiqueta}: no encontre ninguna en surf-city"); continue
+                  pid, key, w, h = fila
+                  buf = io.BytesIO(); s3.download_fileobj(BUCKET, key, buf); buf.seek(0)
+                  im = ImageOps.exif_transpose(Image.open(buf)).convert("RGB")
+                  # mismo preview que hace el pipeline: 1200px lado largo
+                  im.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
+                  marcada = apply_brand_overlay(im, "utcom_2026")
+                  nombre = f"surfcity_{etiqueta}_utcom.jpg"
+                  marcada.save(out / nombre, quality=90)
+                  notas.append(f"{etiqueta}: foto {pid} original {w}x{h} -> preview {marcada.size} -> {nombre}")
+
+              # ---------- 2) el evento UTCOM 2026 ----------
+              cur.execute("SELECT id, slug, status FROM events_event WHERE slug='utcom-2026'")
+              ya = cur.fetchone()
+              if ya:
+                  notas.append(f"evento utcom-2026 YA EXISTIA (id={ya[0]}, status={ya[2]}): no lo toque")
+              else:
+                  hoy = dt.date.today()
+                  cur.execute("""
+                    INSERT INTO events_event
+                      (name, slug, date, location, description, status, visibility,
+                       brand_overlay, permanent_archive, reviewer_visible,
+                       public_until, searchable_until, archive_until,
+                       photo_count, pending_count, photographer_count,
+                       search_count, download_count, created_at, updated_at,
+                       organizer_name, organizer_instagram, organizer_facebook,
+                       cover_key, cover_image)
+                    VALUES (%s,%s,%s,%s,%s,'draft','unlisted','utcom_2026',false,false,
+                            %s,%s,%s, 0,0,0,0,0, now(), now(), '', '', '', '', '')
+                    RETURNING id""",
+                    ("UTCOM 2026", "utcom-2026", hoy, "", "",
+                     hoy + dt.timedelta(days=90), hoy + dt.timedelta(days=180),
+                     hoy + dt.timedelta(days=365)))
+                  nid = cur.fetchone()[0]
+                  cx.commit()
+                  notas.append(f"evento UTCOM 2026 creado: id={nid}, slug=utcom-2026, "
+                               f"status=DRAFT, overlay=utcom_2026, fecha PROVISORIA {hoy}")
+
+          (out / "notas.txt").write_text("\n".join(notas))
+          print("\n".join(notas))
+          PYX
+
+      - name: Publicar en una rama
+        run: |
+          git config user.name "ci"; git config user.email "ci@local"
+          git checkout --orphan resultado-utcom
+          git rm -rf --cached . > /dev/null
+          find . -maxdepth 1 ! -name . ! -name .git ! -name salida -exec rm -rf {} +
+          mv salida/* . && rmdir salida
+          git add -f . && git commit -q -m "render UTCOM sobre fotos reales"
+          git push -f origin resultado-utcom
