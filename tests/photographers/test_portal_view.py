@@ -69,7 +69,28 @@ def test_portal_updates_last_used_at_and_ip(client: Client) -> None:
 
 @pytest.mark.django_db
 def test_portal_respects_x_forwarded_for(client: Client) -> None:
-    """Detrás de proxy (Railway), la IP real viene en XFF."""
+    """Detrás de proxy (Railway), la IP real viene en XFF y no en REMOTE_ADDR."""
+    event = EventFactory()
+    link, raw_token = PhotographerLink.generate_token_and_create(event, name="Foto")
+    client.get(
+        reverse("photographer:portal", args=[raw_token]),
+        HTTP_X_FORWARDED_FOR="200.10.5.55",
+        REMOTE_ADDR="10.0.0.1",
+    )
+    link.refresh_from_db()
+    assert link.last_used_ip == "200.10.5.0"
+
+
+@pytest.mark.django_db
+def test_portal_ignora_un_x_forwarded_for_falsificado(client: Client) -> None:
+    """Un XFF que el cliente inventó NO puede mandarnos la IP que él quiera.
+
+    Cada proxy AGREGA al final la IP que vio, así que el primer valor es el que
+    el cliente escribió (y puede mentir). Acá el cliente mandó
+    `X-Forwarded-For: 200.10.5.55` y nuestro proxy le agregó lo que realmente
+    vio (10.0.0.1). Nos quedamos con el último: si tomáramos el primero,
+    rotándolo en cada request se esquivaban todos los límites por IP.
+    """
     event = EventFactory()
     link, raw_token = PhotographerLink.generate_token_and_create(event, name="Foto")
     client.get(
@@ -77,4 +98,4 @@ def test_portal_respects_x_forwarded_for(client: Client) -> None:
         HTTP_X_FORWARDED_FOR="200.10.5.55, 10.0.0.1",
     )
     link.refresh_from_db()
-    assert link.last_used_ip == "200.10.5.0"
+    assert link.last_used_ip == "10.0.0.0", "se creyó la IP que inventó el cliente"
