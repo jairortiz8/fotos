@@ -148,6 +148,12 @@ class GenerateLinkForm(_DashMixin, forms.Form):
     photographer_phone = forms.CharField(
         label=_("Teléfono (opcional)"), max_length=20, required=False
     )
+    photographer_instagram = forms.CharField(
+        label=_("Instagram (opcional)"),
+        max_length=200,
+        required=False,
+        help_text=_("Usuario o link. El fotógrafo también lo puede cargar desde su portal."),
+    )
     expires_in_days = forms.TypedChoiceField(
         label=_("Expira en"), choices=EXPIRY_CHOICES, coerce=int, initial=30
     )
@@ -158,6 +164,18 @@ class GenerateLinkForm(_DashMixin, forms.Form):
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)  # type: ignore[arg-type]
         self._style_widgets()
+
+    def clean_photographer_instagram(self) -> str:
+        """Normaliza acá para que un usuario mal escrito se vea como error del
+        form y no reviente al crear el link."""
+        from apps.photographers.models import normalize_instagram
+
+        try:
+            return normalize_instagram(self.cleaned_data.get("photographer_instagram", ""))
+        except ValueError as exc:
+            raise forms.ValidationError(
+                _("Poné el usuario de Instagram (@foto) o el link de su perfil.")
+            ) from exc
 
 
 class RejectPhotoForm(forms.Form):

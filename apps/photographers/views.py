@@ -39,7 +39,7 @@ from django_ratelimit.decorators import ratelimit
 from apps.core.models import AuditLog, anonymize_ip
 from apps.core.utils import get_client_ip
 from apps.events.metrics import Metric, record_event_metric
-from apps.photographers.models import PhotographerLink
+from apps.photographers.models import PhotographerLink, normalize_instagram
 from apps.photos.models import Photo, PhotoStatus
 from apps.photos.storage import (
     R2NotConfiguredError,
@@ -448,3 +448,40 @@ class PhotographerFeaturedUploadView(View):
             ip=get_client_ip(request),
         )
         return JsonResponse({"featured_url": link.featured_url()})
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+@method_decorator(
+    ratelimit(key=upload_ratelimit_key, rate="20/m", method="POST", block=True),
+    name="dispatch",
+)
+class PhotographerSocialView(View):
+    """El fotógrafo guarda su Instagram desde el portal (autenticado por token).
+
+    csrf_exempt por lo mismo que el resto del portal: la autenticación es el
+    token de la URL, no una sesión. Se guarda el usuario normalizado, nunca una
+    URL suelta — ver `normalize_instagram`.
+    """
+
+    http_method_names = ["post"]
+
+    def post(self, request: HttpRequest, token: str) -> HttpResponse:
+        link = lookup_link(token)
+        if link is None or not is_link_authenticatable(link):
+            return JsonResponse({"error": "invalid_link"}, status=410)
+
+        try:
+            handle = normalize_instagram(request.POST.get("instagram", ""))
+        except ValueError:
+            return JsonResponse({"error": "invalid_instagram"}, status=400)
+
+        if handle != link.instagram:
+            link.instagram = handle
+            link.save(update_fields=["instagram", "updated_at"])
+            AuditLog.log(
+                "photographer_link.instagram_set",
+                target=link,
+                metadata={"event_slug": link.event.slug, "instagram": handle},
+                ip=get_client_ip(request),
+            )
+        return JsonResponse({"instagram": handle, "instagram_url": link.instagram_url()})

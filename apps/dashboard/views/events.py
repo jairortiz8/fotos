@@ -250,6 +250,7 @@ class GenerateLinkView(StaffRequiredMixin, View):
             cd["photographer_name"],
             email=cd.get("photographer_email") or None,
             phone=cd.get("photographer_phone") or "",
+            instagram=cd.get("photographer_instagram") or "",
             expires_in_days=cd["expires_in_days"],
             photo_limit=cd.get("photo_limit") or None,
         )

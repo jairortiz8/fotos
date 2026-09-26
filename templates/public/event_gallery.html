@@ -170,6 +170,14 @@
       </a>
       <span class="text-text-3">/</span>
       <span class="font-semibold text-text-1 truncate">{{ photographer.photographer_name }}</span>
+      {% if photographer.instagram %}
+      <a href="{{ photographer.instagram_url }}" target="_blank" rel="noopener noreferrer nofollow"
+         class="inline-flex items-center gap-1 shrink-0 text-text-2 hover:text-text-1 transition"
+         aria-label="{% blocktrans with nombre=photographer.photographer_name %}Instagram de {{ nombre }}{% endblocktrans %}">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1"/></svg>
+        <span class="font-mono text-[11px]">{{ photographer.instagram_handle }}</span>
+      </a>
+      {% endif %}
       <span class="font-mono text-[11px] text-text-3 ml-0.5 shrink-0">· {{ total_photos }} {% trans "fotos" %}</span>
     {% else %}
       <a href="{% url 'events:gallery' slug=event.slug %}"
@@ -204,6 +212,14 @@
           <div class="min-w-0">
             <div class="font-mono text-[9px] text-text-3 tracking-[0.12em] uppercase mb-1">{% trans "Fotógrafo" %}</div>
             <h3 class="font-display font-bold text-text-1 text-[16px] md:text-lg leading-tight truncate">{{ f.photographer_name }}</h3>
+            {% if f.instagram %}
+            {% comment %}Sólo texto: la tarjeta entera ya es un <a> y anidar otro es HTML inválido.
+            El link de verdad está en el encabezado, al entrar a la carpeta.{% endcomment %}
+            <div class="flex items-center gap-1 mt-1 text-text-2">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1"/></svg>
+              <span class="font-mono text-[11px] truncate">{{ f.instagram_handle }}</span>
+            </div>
+            {% endif %}
           </div>
           <span class="shrink-0 grid place-items-center w-9 h-9 rounded-full border border-white/15 bg-white/10 text-text-1 backdrop-blur-sm transition-colors group-hover:bg-text-1 group-hover:border-text-1 group-hover:text-ink-0">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>

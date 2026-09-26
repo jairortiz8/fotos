@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import re
 import secrets
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +44,16 @@ class PhotographerLink(TimeStampedModel):
         max_length=20,
         blank=True,
         help_text=_("Para mandar el link por WhatsApp."),
+    )
+    # Usuario de Instagram del fotógrafo — lo carga él mismo desde su portal y
+    # se muestra en su carpeta del álbum público. Guardamos SÓLO el usuario
+    # (sin @, sin URL): ver `normalize_instagram`.
+    instagram = models.CharField(
+        _("Instagram del fotógrafo"),
+        max_length=30,
+        blank=True,
+        default="",
+        help_text=_("Usuario (@foto) o link de Instagram. Se muestra en su carpeta del álbum."),
     )
 
     # --- Token ---
@@ -114,6 +125,16 @@ class PhotographerLink(TimeStampedModel):
             return f"{url}?v={int(self.updated_at.timestamp())}"
         return url
 
+    # --- Redes ---
+
+    def instagram_url(self) -> str:
+        """URL completa del Instagram del fotógrafo, o "" si no cargó ninguno."""
+        return f"https://instagram.com/{self.instagram}" if self.instagram else ""
+
+    def instagram_handle(self) -> str:
+        """El usuario con @ adelante, para mostrar."""
+        return f"@{self.instagram}" if self.instagram else ""
+
     # --- API ---
 
     @classmethod
@@ -124,6 +145,7 @@ class PhotographerLink(TimeStampedModel):
         *,
         email: str | None = None,
         phone: str = "",
+        instagram: str = "",
         expires_in_days: int | None = None,
         photo_limit: int | None = None,
     ) -> tuple[PhotographerLink, str]:
@@ -144,6 +166,7 @@ class PhotographerLink(TimeStampedModel):
             photographer_name=name,
             photographer_email=email,
             photographer_phone=phone,
+            instagram=normalize_instagram(instagram),
             token_hash=token_hash,
             expires_at=expires_at,
             photo_limit=photo_limit,
@@ -184,3 +207,34 @@ class PhotographerLink(TimeStampedModel):
 # ---------------------------------------------------------------------------
 def _hash_token(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+# Instagram permite letras, números, punto y guión bajo, hasta 30 caracteres.
+_INSTAGRAM_HANDLE_RE = re.compile(r"^[A-Za-z0-9._]{1,30}$")
+
+
+def normalize_instagram(value: str) -> str:
+    """Devuelve el USUARIO de Instagram limpio (sin @, sin URL), o "" si vino vacío.
+
+    Acepta las tres formas en que alguien lo va a pegar —`foto`, `@foto`,
+    `https://www.instagram.com/foto/?hl=es`— y guarda siempre la misma: el
+    usuario pelado.
+
+    SEGURIDAD: nunca guardamos una URL arbitraria. Esto se renderiza como link
+    en una página PÚBLICA (la carpeta del fotógrafo en el álbum), así que
+    aceptar `https://loquesea.com` convertiría el álbum en un trampolín a
+    cualquier lado. Cualquier cosa que no sea un usuario de Instagram válido
+    levanta `ValueError` y el que la mandó ve un error.
+    """
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if "instagram.com" in value.lower():
+        resto = re.split(r"instagram\.com/", value, maxsplit=1, flags=re.IGNORECASE)[-1]
+        value = resto.split("?")[0].split("#")[0].split("/")[0]
+    elif value.startswith(("http://", "https://")):
+        raise ValueError("no es un link de Instagram")
+    handle = value.lstrip("@").strip()
+    if not _INSTAGRAM_HANDLE_RE.match(handle):
+        raise ValueError("usuario de Instagram inválido")
+    return handle

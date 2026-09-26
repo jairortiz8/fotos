@@ -8,6 +8,7 @@ from apps.photographers.views import (
     PhotographerCoverView,
     PhotographerFeaturedUploadView,
     PhotographerPortalView,
+    PhotographerSocialView,
     PhotographerUploadStatusView,
     PhotographerUploadView,
 )
@@ -23,4 +24,5 @@ urlpatterns = [
     path(
         "<str:token>/destacada/", PhotographerFeaturedUploadView.as_view(), name="featured_upload"
     ),
+    path("<str:token>/redes/", PhotographerSocialView.as_view(), name="social"),
 ]

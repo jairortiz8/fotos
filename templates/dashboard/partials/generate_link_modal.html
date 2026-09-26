@@ -25,6 +25,12 @@
         <label class="rf-label" for="{{ form.photographer_phone.id_for_label }}">{% trans "Teléfono / WhatsApp (opcional)" %}</label>
         {{ form.photographer_phone }}
       </div>
+      <div>
+        <label class="rf-label" for="{{ form.photographer_instagram.id_for_label }}">{% trans "Instagram (opcional)" %}</label>
+        {{ form.photographer_instagram }}
+        <p class="text-text-3 text-[11px] mt-1">{% trans "Sale en su carpeta del álbum. El fotógrafo también lo puede cargar desde su portal." %}</p>
+        {% if form.photographer_instagram.errors %}<p class="text-danger text-[11px] mt-1">{{ form.photographer_instagram.errors.0 }}</p>{% endif %}
+      </div>
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="rf-label" for="{{ form.expires_in_days.id_for_label }}">{% trans "Expira en" %}</label>

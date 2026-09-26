@@ -81,6 +81,31 @@
     </div>
   </section>
 
+  {% comment %}Instagram del fotógrafo: sale como link en su carpeta del álbum.{% endcomment %}
+  <section class="px-6 md:px-14 pt-4" x-data="instagramCard()">
+    <div class="rf-card p-4 flex items-center gap-4 flex-wrap">
+      <div class="w-24 h-16 rounded-lg bg-ink-2 shrink-0 border border-border grid place-items-center text-text-3">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1"/></svg>
+      </div>
+      <div class="min-w-0 flex-1">
+        <label for="ig-handle" class="font-display font-bold text-[15px] block">{% trans "Tu Instagram" %}</label>
+        <div class="text-[12px] mt-0.5" :class="error ? 'text-danger' : 'text-text-3'"
+             x-text="status || '{% trans "Aparece como link en tu carpeta, para que te encuentren." %}'"></div>
+        <div class="mt-2 flex items-center gap-2">
+          <span class="font-mono text-text-3 text-[14px]" aria-hidden="true">@</span>
+          <input id="ig-handle" type="text" inputmode="text" autocapitalize="none" autocorrect="off" spellcheck="false"
+                 class="rf-input !py-1.5 flex-1 min-w-0" placeholder="{% trans "tuusuario" %}"
+                 x-model="handle" @keydown.enter.prevent="save()"
+                 aria-label="{% trans "Tu usuario de Instagram" %}">
+        </div>
+      </div>
+      <button type="button" @click="save()" class="rf-cta !py-2 !px-4 shrink-0" :disabled="busy">
+        <span x-show="!busy">{% trans "Guardar" %}</span>
+        <span x-show="busy" x-cloak>{% trans "Guardando..." %}</span>
+      </button>
+    </div>
+  </section>
+
   {# ============================================================== #}
   {# Dropzone (Alpine + XHR por archivo, con barra de progreso)      #}
   {# ============================================================== #}
@@ -231,6 +256,39 @@
 
 {% block extra_scripts %}
 <script>
+// Instagram del fotógrafo. Lo normaliza el server (acepta @usuario o el link
+// pegado de Instagram) y devuelve el usuario limpio, que es lo que mostramos.
+function instagramCard() {
+  return {
+    handle: "{{ link.instagram|escapejs }}",
+    busy: false,
+    error: false,
+    status: "",
+    save() {
+      this.busy = true; this.error = false; this.status = "";
+      const fd = new FormData(); fd.append("instagram", this.handle);
+      fetch("{% url 'photographer:social' token=token %}", { method: "POST", body: fd })
+        .then((r) => r.json().then((d) => ({ ok: r.ok, d })))
+        .then(({ ok, d }) => {
+          if (ok) {
+            this.handle = d.instagram;
+            this.status = d.instagram
+              ? "{% trans 'Listo, ya aparece en tu carpeta.' %}"
+              : "{% trans 'Instagram borrado.' %}";
+          } else if (d && d.error === "invalid_instagram") {
+            this.error = true;
+            this.status = "{% trans 'Ese usuario no parece de Instagram. Poné tu usuario o pegá el link de tu perfil.' %}";
+          } else {
+            this.error = true;
+            this.status = "{% trans 'No se pudo guardar. Probá de nuevo.' %}";
+          }
+        })
+        .catch(() => { this.error = true; this.status = "{% trans 'Error de conexión.' %}"; })
+        .finally(() => { this.busy = false; });
+    },
+  };
+}
+
 // Imagen destacada de la carpeta del fotógrafo (la portada de su "carpeta").
 function featuredCover() {
   return {
