@@ -69,22 +69,32 @@ jobs:
               # Asi que para cada orientacion arrancamos por las candidatas que la
               # BD dice que son de ese lado (acierta casi siempre) y confirmamos
               # mirando la imagen.
-              def candidatas(db_landscape_primero: bool):
+              def candidatas(db_landscape_primero: bool, solo_surf_city: bool):
                   orden = "DESC" if db_landscape_primero else "ASC"
-                  cur.execute(f"""SELECT p.id, p.original_key, count(f.id)
+                  donde = "p.event_id=%s" if solo_surf_city else "p.event_id IS NOT NULL"
+                  args = (sc,) if solo_surf_city else ()
+                  cur.execute(f"""SELECT p.id, p.original_key, count(f.id), e.slug
                                   FROM photos_photo p
                                   JOIN photos_faceembedding f ON f.photo_id = p.id
-                                  WHERE p.event_id=%s AND p.status='approved'
+                                  JOIN events_event e ON e.id = p.event_id
+                                  WHERE {donde} AND p.status='approved'
                                     AND p.original_key<>''
-                                  GROUP BY p.id, p.original_key, p.width, p.height
+                                  GROUP BY p.id, p.original_key, p.width, p.height, e.slug
                                   HAVING count(f.id) >= 1
                                   ORDER BY (p.width > p.height) {orden}, p.id
-                                  LIMIT 120""", (sc,))
+                                  LIMIT 120""", args)
                   return cur.fetchall()
 
               for buscada, primero in (("horizontal", True), ("vertical", False)):
                   hecho = False
-                  for pid, key, caras in candidatas(primero):
+                  # Primero dentro de surf-city (la referencia que pidio Jair); si
+                  # ahi no hay de esa orientacion, buscamos en cualquier evento.
+                  pool = list(candidatas(primero, True)) + list(candidatas(primero, False))
+                  vistas = set()
+                  for pid, key, caras, slug in pool:
+                      if pid in vistas:
+                          continue
+                      vistas.add(pid)
                       buf = io.BytesIO(); s3.download_fileobj(BUCKET, key, buf); buf.seek(0)
                       im = ImageOps.exif_transpose(Image.open(buf)).convert("RGB")
                       real = "vertical" if im.height > im.width else "horizontal"
@@ -94,7 +104,7 @@ jobs:
                       marcada = apply_brand_overlay(im, "utcom_2026")
                       nombre = f"surfcity_{buscada}_utcom.jpg"
                       marcada.save(out / nombre, quality=90)
-                      notas.append(f"{buscada}: foto {pid} ({caras} caras) -> {marcada.size} -> {nombre}")
+                      notas.append(f"{buscada}: foto {pid} de {slug} ({caras} caras) -> {marcada.size} -> {nombre}")
                       hecho = True
                       break
                   if not hecho:
