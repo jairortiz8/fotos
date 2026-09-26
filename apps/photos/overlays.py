@@ -149,39 +149,39 @@ TEMPLATES: dict[str, CornersTemplate | StackedTemplate] = {
     ),
     # UTCOM 2026 (THE NORTH FACE · BLACK AND WHITE EDITION): un solo logo, así
     # que va CENTRADO en vez de repartido. Al estar solo puede ser más grande
-    # que cualquiera de los otros: 34% del ancho en vertical, contra el 22-24%
+    # que cualquiera de los otros: 41% del ancho en vertical, contra el 22-24%
     # de cada logo de Surf City (que son dos) y el 13% del principal de SÉPTIMO
     # (que son cinco).
     #
-    # El aire de abajo es casi el doble que en los otros templates (11% del lado
-    # corto contra 6,3%): estas verticales terminan en historias de Instagram,
+    # El aire de abajo es mayor que en los otros templates (9% del lado corto
+    # contra 6,3%): estas verticales terminan en historias de Instagram,
     # donde la barra de la app se come el pie de la foto. Si el logo va pegado
     # abajo, en una historia queda tapado.
     "utcom_2026": StackedTemplate(
         rows=(
             LogoRow(
                 logos=(LogoSpec("utcom_2026.webp"),),
-                h_pct=0.171,  # 34% del ancho en una vertical
+                h_pct=0.205,  # 41% del ancho en una vertical
                 spread="centrado",
             ),
         ),
-        bottom_pct=0.11,
+        bottom_pct=0.09,
         scrim_factor=1.7,
         scrim_alpha=205,
         # En horizontal el lado corto es el ALTO, así que con el mismo h_pct el
-        # logo saldría gigante respecto al ancho. 0.15 lo deja en ~20% del ancho,
+        # logo saldría gigante respecto al ancho. 0.18 lo deja en ~24% del ancho,
         # en línea con los logos de Surf City en horizontal.
         landscape_rows=(
             LogoRow(
                 logos=(LogoSpec("utcom_2026.webp"),),
-                h_pct=0.15,
+                h_pct=0.18,
                 spread="centrado",
             ),
         ),
         landscape_scale=1.0,
-        # En vertical el aire de abajo es grande a propósito (historias); en
+        # En vertical el aire de abajo es mayor a propósito (historias); en
         # horizontal no hace falta y el logo quedaría flotando.
-        landscape_bottom_pct=0.065,
+        landscape_bottom_pct=0.058,
     ),
 }
 

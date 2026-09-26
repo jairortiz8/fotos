@@ -434,7 +434,7 @@ def test_utcom_es_mas_grande_que_un_logo_de_los_otros_templates() -> None:
     w, h = 1067, 1600
     alto = round(min(w, h) * cfg.rows[0].h_pct)
     ancho = round(alto * logo.width / logo.height)
-    assert 0.30 <= ancho / w <= 0.40, f"ocupa {ancho / w:.0%} del ancho"
+    assert 0.36 <= ancho / w <= 0.46, f"ocupa {ancho / w:.0%} del ancho"
 
 
 def test_utcom_deja_mas_aire_abajo_en_vertical_que_en_horizontal() -> None:
