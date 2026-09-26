@@ -1,0 +1,3 @@
+horizontal: foto 1031 de prueba (2 caras) -> (1200, 800) -> surfcity_horizontal_utcom.jpg
+vertical: foto 5510 de surf-city-2026 (1 caras) -> (798, 1200) -> surfcity_vertical_utcom.jpg
+evento utcom-2026 YA EXISTIA (id=10, status=draft): no lo toque
