@@ -278,3 +278,101 @@ def test_sin_nombre_no_pide_attachment(r2) -> None:  # type: ignore[no-untyped-d
     q = parse_qs(urlparse(url).query)
     assert "response-content-disposition" not in q
     assert "response-content-type" not in q
+
+
+# ---------------------------------------------------------------------------
+# Scraper: límite por IP REAL + bots declarados
+# ---------------------------------------------------------------------------
+def _req(xff: str = "", remote: str = "100.64.0.2", ua: str = UA_ANDROID):  # type: ignore[no-untyped-def]
+    from django.test import RequestFactory
+
+    meta = {"REMOTE_ADDR": remote, "HTTP_USER_AGENT": ua}
+    if xff:
+        meta["HTTP_X_FORWARDED_FOR"] = xff
+    return RequestFactory().get("/descargas/foto/1/", **meta)
+
+
+def test_la_clave_del_limite_es_la_ip_real_y_no_la_del_proxy() -> None:
+    """Detrás de Railway REMOTE_ADDR es siempre el proxy (100.64.0.x). Si la clave
+    fuera esa, todos los corredores compartirían el mismo cupo."""
+    from apps.core.utils import ip_real_para_limite
+
+    a = ip_real_para_limite("g", _req(xff="190.86.10.5", remote="100.64.0.2"))
+    b = ip_real_para_limite("g", _req(xff="181.10.20.30", remote="100.64.0.2"))
+    assert a == "190.86.10.5"
+    assert a != b, "dos corredores detrás del mismo nodo del proxy no comparten cupo"
+
+
+def test_un_xff_inventado_no_esquiva_el_limite() -> None:
+    """El cliente puede mandar su propio X-Forwarded-For, pero Railway agrega al
+    final la IP que vio: la clave es esa, no la inventada."""
+    from apps.core.utils import ip_real_para_limite
+
+    assert ip_real_para_limite("g", _req(xff="1.2.3.4, 190.86.10.5")) == "190.86.10.5"
+
+
+def test_ipv6_se_agrupa_por_64() -> None:
+    """Un mismo celular rota direcciones dentro de su /64: si la clave fuera la
+    dirección entera, rotando se esquiva el límite."""
+    from apps.core.utils import ip_real_para_limite
+
+    a = ip_real_para_limite("g", _req(xff="2803:d100:1:2::aaaa"))
+    b = ip_real_para_limite("g", _req(xff="2803:d100:1:2::bbbb"))
+    c = ip_real_para_limite("g", _req(xff="2803:d100:1:3::aaaa"))
+    assert a == b
+    assert a != c
+
+
+@pytest.mark.django_db
+def test_el_scraper_topa_y_el_corredor_de_al_lado_no(r2, settings) -> None:  # type: ignore[no-untyped-def]
+    """De punta a punta: una IP que agota su cupo recibe 429, y otra IP que sale
+    por el MISMO nodo del proxy sigue bajando."""
+    settings.PHOTO_DOWNLOAD_R2_DIRECT = "all"  # redirect: no mueve bytes, el loop es rápido
+    photo = _foto(r2)
+    url = reverse("downloads:photo", kwargs={"photo_id": photo.id})
+    c = Client()
+    proxy = {"REMOTE_ADDR": "100.64.0.2", "HTTP_USER_AGENT": UA_ANDROID}
+
+    for _ in range(200):
+        assert c.get(url, HTTP_X_FORWARDED_FOR="203.0.113.9", **proxy).status_code == 302
+    assert c.get(url, HTTP_X_FORWARDED_FOR="203.0.113.9", **proxy).status_code == 429
+    assert c.get(url, HTTP_X_FORWARDED_FOR="198.51.100.7", **proxy).status_code == 302
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "ua",
+    [
+        "Lightpanda/1.0",
+        "Mozilla/5.0 (compatible; meta-externalagent/1.1)",
+        "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+        "python-requests/2.32.3",
+        "curl/8.5.0",
+    ],
+)
+def test_un_bot_declarado_no_descarga(r2, settings, ua: str) -> None:  # type: ignore[no-untyped-def]
+    settings.PHOTO_DOWNLOAD_R2_DIRECT = "off"
+    photo = _foto(r2)
+    resp = _bajar(photo, ua=ua)
+    assert resp.status_code == 403
+    photo.refresh_from_db()
+    assert photo.download_count == 0, "un bot no infla el contador del dashboard"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "ua",
+    [
+        UA_ANDROID,
+        UA_IPHONE,
+        UA_INSTAGRAM_ANDROID,
+        # Marca real de celulares: un filtro genérico por "bot" la bloquearía.
+        "Mozilla/5.0 (Linux; Android 12; CUBOT KINGKONG 7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36",
+        # El DownloadManager de Android, cuando un navegador in-app le pasa la URL.
+        "AndroidDownloadManager/13 (Linux; U; Android 13; SM-A546E Build/TP1A.220624.014)",
+    ],
+)
+def test_los_celulares_de_verdad_si_descargan(r2, settings, ua: str) -> None:  # type: ignore[no-untyped-def]
+    settings.PHOTO_DOWNLOAD_R2_DIRECT = "off"
+    assert _bajar(_foto(r2), ua=ua).status_code == 200

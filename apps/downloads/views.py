@@ -135,6 +135,23 @@ DOWNLOAD_URL_TTL = 900
 # El Safari de iPad se presenta como Mac ("Macintosh"), por eso va en la lista.
 _APPLE_UA = re.compile(r"iPhone|iPad|iPod|Macintosh")
 
+# Clientes que se DECLARAN automatizados. robots.txt ya les prohíbe /descargas/;
+# esto es para los que no lo leen. En septiembre 2026 `Lightpanda/1.0` (un
+# navegador para bots) hizo el 30% de las descargas medidas. Sólo nombres
+# explícitos: nada genérico tipo "bot", que pega con marcas de celulares reales
+# (CUBOT). `facebookexternalhit` es la vista previa de WhatsApp/Facebook: si
+# alguien comparte el link de descarga, bajaría la foto entera para armarla.
+_BOT_UA = re.compile(
+    r"Lightpanda|HeadlessChrome|meta-externalagent|facebookexternalhit|GPTBot|"
+    r"ClaudeBot|CCBot|Bytespider|PerplexityBot|Amazonbot|python-requests|"
+    r"python-urllib|aiohttp|Scrapy|Go-http-client|curl/|Wget/|node-fetch|axios/",
+    re.IGNORECASE,
+)
+
+
+def es_bot_declarado(request: HttpRequest) -> bool:
+    return bool(_BOT_UA.search(request.META.get("HTTP_USER_AGENT", "")))
+
 
 def descarga_directa_de_r2(request: HttpRequest) -> bool:
     """¿Esta descarga sale directo de R2 (302) o pasa por acá (proxy)?
@@ -188,6 +205,8 @@ class PhotoDownloadView(View):
         download_key = photo.download_key()
         if not download_key:
             raise Http404
+        if es_bot_declarado(request):
+            return JsonResponse({"error": "automated_client"}, status=403)
         if not check_photo_download_rate_limit(request):
             return JsonResponse({"error": "rate_limited"}, status=429)
 

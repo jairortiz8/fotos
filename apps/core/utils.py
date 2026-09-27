@@ -207,13 +207,40 @@ def check_zip_rate_limit(request: HttpRequest) -> bool:
     return not limited
 
 
+def ip_real_para_limite(group: str, request: HttpRequest) -> str:
+    """Clave de rate limit: la IP REAL del cliente, no la del proxy de Railway.
+
+    `key="ip"` de django-ratelimit lee `REMOTE_ADDR`, y detrás de Railway eso es
+    SIEMPRE un nodo del proxy (100.64.0.x, ~23 distintos). Medido en prod el
+    2026-09-27: 10.567 descargas, todas con REMOTE_ADDR del proxy. Resultado: el
+    "200 por hora por IP" era 200 por hora por NODO, compartido entre todos — un
+    scraper se bajaba ~3.700 fotos por hora y los corredores de verdad se comían
+    429 cuando él llenaba el cupo del nodo que les tocaba.
+
+    `get_client_ip` sí devuelve la IP del cliente (verificado: los links de
+    fotógrafo usados después del 17-09 registraron IPs públicas). IPv6 se agrupa
+    por /64, como hace django-ratelimit: un mismo equipo rota direcciones dentro
+    de su /64 y así no se esquiva el límite.
+    """
+    ip = get_client_ip(request) or ""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip or "sin-ip"
+    if addr.version == 6:
+        return str(ipaddress.ip_network(f"{addr}/64", strict=False).network_address)
+    return str(addr)
+
+
 def check_photo_download_rate_limit(request: HttpRequest) -> bool:
-    """200 descargas de foto/hora por IP. Generoso (un corredor baja varias de a
-    una), pero frena el scrapeo de un evento entero por el proxy. True = permitido."""
+    """200 descargas de foto/hora por IP REAL (ver `ip_real_para_limite`).
+    Generoso (un corredor baja varias de a una, y varios corredores pueden salir
+    por la misma IP de la operadora), pero frena el scrapeo de un evento entero.
+    True = permitido."""
     limited = is_ratelimited(
         request,
         group="photo-download",
-        key="ip",
+        key=ip_real_para_limite,
         rate="200/h",
         method=("GET",),
         increment=True,
