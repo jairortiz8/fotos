@@ -1,0 +1,54 @@
+name: setvar (one-off)
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-setvar"]
+concurrency:
+  group: setvar
+  cancel-in-progress: true
+permissions:
+  contents: write
+jobs:
+  medir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
+    steps:
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install --quiet requests "psycopg[binary]" boto3
+      - name: Medir (solo lectura)
+        run: |
+          mkdir -p salida
+          python3 - <<'PYX'
+          import os, requests, pathlib
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          P,E,W=os.environ["PROJECT_ID"],os.environ["ENV_ID"],os.environ["WEB_ID"]
+          L=[]
+          m='mutation($i:VariableUpsertInput!){ variableUpsert(input:$i) }'
+          r=requests.post(API,headers=H,json={"query":m,"variables":{"i":{"projectId":P,"environmentId":E,"serviceId":W,
+              "name":"PHOTO_DOWNLOAD_R2_DIRECT","value":"non_apple","skipDeploys":True}}},timeout=60).json()
+          L.append(f"variableUpsert: {r.get('data')} errores={[e.get('message') for e in r.get('errors',[])]}")
+          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          v=(requests.post(API,headers=H,json={"query":V,"variables":{"p":P,"e":E,"s":W}},timeout=40).json().get("data") or {}).get("variables") or {}
+          L.append(f"PHOTO_DOWNLOAD_R2_DIRECT en el web = {v.get('PHOTO_DOWNLOAD_R2_DIRECT')!r}")
+          L.append(f"PHOTO_DOWNLOAD_RATE={v.get('PHOTO_DOWNLOAD_RATE')!r} PHOTO_DOWNLOAD_PROXY_BUDGET={v.get('PHOTO_DOWNLOAD_PROXY_BUDGET')!r} (None = default del codigo)")
+          pathlib.Path("salida").mkdir(exist_ok=True); pathlib.Path("salida/setvar.txt").write_text("\n".join(L)); print("\n".join(L))
+          PYX
+      - name: Publicar
+        if: always()
+        run: |
+          mkdir -p salida && touch salida/setvar.txt
+          git init -q pub && cd pub
+          git config user.name "ci"; git config user.email "ci@local"
+          git checkout -q --orphan resultado-setvar
+          cp ../salida/* .
+          git add -A && git commit -q -m "medicion r2"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" resultado-setvar
