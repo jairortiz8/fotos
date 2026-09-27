@@ -27,90 +27,96 @@ jobs:
         run: |
           mkdir -p salida
           python3 - <<'PYX'
-          import os, requests, psycopg, boto3, urllib.parse as up, pathlib
+          import os, re, json, requests, psycopg, datetime as dt, pathlib, collections, ipaddress
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
-          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          def vars_de(sid):
-              r=requests.post(API,headers=H,json={"query":V,"variables":{"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}},timeout=40).json()
-              return (r.get("data") or {}).get("variables") or {}
-          pg=vars_de(os.environ["PG_ID"]); web=vars_de(os.environ["WEB_ID"])
+          PID=os.environ["PROJECT_ID"]; ENV=os.environ["ENV_ID"]; WEB=os.environ["WEB_ID"]
           L=[]
-          host = up.urlparse(web.get("R2_ENDPOINT_URL","")).hostname or "(default AWS)"
-          L.append("R2 endpoint: *." + ".".join(host.split(".")[-3:]))
-          L.append(f"FACE_SEARCH_ENABLED(web)={web.get('FACE_SEARCH_ENABLED')} PHOTO_DOWNLOAD_*={[k for k in web if 'DOWNLOAD' in k]}")
+          def gql(q, v=None):
+              r=requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=90)
+              try: return r.json()
+              except Exception: return {"errors":[{"message":f"http {r.status_code}"}]}
+          def err(d): return "; ".join(e.get("message","")[:200] for e in d.get("errors",[]))
 
+          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          pg=(gql(V,{"p":PID,"e":ENV,"s":os.environ["PG_ID"]}).get("data") or {}).get("variables") or {}
+
+          # ---------- 1) egreso del web por dia, SUMANDO todos los pedazos ----------
+          L.append("== egreso del servicio web por dia (Railway, sumando todos los pedazos) ==")
+          Q='''query($p:String!,$s:DateTime,$e:DateTime){ usage(projectId:$p, measurements:[NETWORK_TX_GB],
+               groupBy:[SERVICE_ID], startDate:$s, endDate:$e){ measurement value tags{ serviceId } } }'''
+          ini=dt.datetime(2026,9,1,tzinfo=dt.UTC); ahora=dt.datetime.now(dt.UTC)
+          egr={}
+          d0=ini
+          while d0<ahora:
+              d1=min(d0+dt.timedelta(days=1),ahora)
+              u=gql(Q,{"p":PID,"s":d0.isoformat(),"e":d1.isoformat()})
+              egr[d0.strftime("%m-%d")]=sum(f["value"] for f in ((u.get("data") or {}).get("usage") or []) if f["tags"]["serviceId"]==WEB)
+              d0=d1
+
+          # ---------- 2) descargas y subidas por dia (DB) ----------
           with psycopg.connect(pg["DATABASE_PUBLIC_URL"], connect_timeout=40) as cx, cx.cursor() as cur:
-              L.append("\n== descargas por dia (EventMetric, septiembre) ==")
-              cur.execute("""SELECT to_char(date_trunc('day', bucket),'MM-DD'), sum(count)
-                             FROM events_eventmetric WHERE metric='download' AND bucket >= '2026-09-01'
-                             GROUP BY 1 ORDER BY 1""")
-              tot=0
-              for d,c in cur.fetchall():
-                  tot+=c; L.append(f"{d}  {c}")
-              L.append(f"TOTAL descargas septiembre: {tot}")
-              cur.execute("""SELECT to_char(date_trunc('day', bucket),'MM-DD'), sum(count)
-                             FROM events_eventmetric WHERE metric='view' AND bucket >= '2026-09-01'
-                             GROUP BY 1 ORDER BY 1""")
-              vistas=cur.fetchall(); L.append(f"vistas septiembre: {sum(c for _,c in vistas)}")
-              L.append("\n== descargas por evento (septiembre) ==")
-              cur.execute("""SELECT e.slug, sum(m.count) FROM events_eventmetric m JOIN events_event e ON e.id=m.event_id
-                             WHERE m.metric='download' AND m.bucket >= '2026-09-01' GROUP BY 1 ORDER BY 2 DESC""")
-              for s,c in cur.fetchall(): L.append(f"{s:<32}{c}")
-              L.append("\n== tamano promedio de lo descargado (ponderado por descargas, historico) ==")
-              cur.execute("""SELECT e.slug, sum(p.download_count), sum(p.download_count::bigint*p.file_size)/nullif(sum(p.download_count),0)/1e6,
-                                    count(*) FILTER (WHERE p.branded_key<>'')
-                             FROM photos_photo p JOIN events_event e ON e.id=p.event_id
-                             WHERE p.download_count>0 GROUP BY 1 ORDER BY 2 DESC""")
-              for s,n,mb,br in cur.fetchall(): L.append(f"{s:<32} descargas={n:<7} MB_prom_original={mb:.2f} con_version_logos={br}")
-              cur.execute("SELECT sum(download_count::bigint*file_size)/nullif(sum(download_count),0)/1e6 FROM photos_photo WHERE download_count>0")
-              L.append(f"MB promedio global (original): {cur.fetchone()[0]:.2f}")
+              cur.execute("""SELECT to_char(date_trunc('day',bucket),'MM-DD'), sum(count) FROM events_eventmetric
+                             WHERE metric='download' AND bucket>='2026-09-01' GROUP BY 1""")
+              desc=dict(cur.fetchall())
+              cur.execute("""SELECT to_char(date_trunc('day',created_at),'MM-DD'), count(*), sum(file_size)/1e9 FROM photos_photo
+                             WHERE created_at>='2026-09-01' GROUP BY 1""")
+              sub={d:(n,gb) for d,n,gb in cur.fetchall()}
+              # pico horario de descargas: si el limite fuera compartido se veria un techo
+              cur.execute("""SELECT to_char(bucket,'MM-DD HH24'), sum(count) FROM events_eventmetric
+                             WHERE metric='download' AND bucket>='2026-09-01' GROUP BY 1 ORDER BY 2 DESC LIMIT 8""")
+              picos=cur.fetchall()
+          L.append(f"{'dia':<7}{'egreso GB':>10}{'descargas':>11}{'GB/desc MB':>12}{'subidas':>9}{'GB subidos':>11}")
+          for d in sorted(egr):
+              n=desc.get(d,0); s=sub.get(d,(0,0))
+              L.append(f"{d:<7}{egr[d]:>10.2f}{n:>11}{(egr[d]*1000/n if n else 0):>12.2f}{s[0]:>9}{float(s[1]):>11.2f}")
+          L.append(f"TOTAL egreso web {sum(egr.values()):.1f} GB · descargas {sum(desc.values())} · subidas {sum(v[0] for v in sub.values())} ({sum(float(v[1]) for v in sub.values()):.1f} GB)")
+          L.append("\nhoras pico de descargas (hora UTC):")
+          for h,c in picos: L.append(f"  {h}h  {c}")
 
-              # foto mas descargada, para probar la URL firmada
-              cur.execute("""SELECT p.id, coalesce(nullif(p.branded_key,''), p.original_key), p.original_filename, p.file_size
-                             FROM photos_photo p WHERE p.status='approved' AND p.original_key<>''
-                             ORDER BY p.download_count DESC LIMIT 1""")
-              pid, key, fname, fsize = cur.fetchone()
-
-          s3=boto3.client("s3", endpoint_url=web["R2_ENDPOINT_URL"], aws_access_key_id=web["R2_ACCESS_KEY_ID"],
-                          aws_secret_access_key=web["R2_SECRET_ACCESS_KEY"], region_name="auto")
-          B=web["R2_BUCKET_NAME"]
-          # La cabecera de tamaño real del objeto que se baja
-          h=s3.head_object(Bucket=B, Key=key)
-          L.append(f"\n== objeto de prueba: foto {pid}, {h['ContentLength']/1e6:.2f} MB, ContentType guardado={h.get('ContentType')} ==")
-
-          def probar(nombre, **extra):
-              params={"Bucket":B,"Key":key, **extra}
-              url=s3.generate_presigned_url("get_object", Params=params, ExpiresIn=300)
-              r=requests.get(url, headers={"Range":"bytes=0-0"}, timeout=40)
-              L.append(f"[{nombre}] status={r.status_code} content-type={r.headers.get('content-type')!r} "
-                       f"content-disposition={r.headers.get('content-disposition')!r} cache-control={r.headers.get('cache-control')!r}")
-          probar("sin overrides")
-          probar("attachment ascii", ResponseContentDisposition='attachment; filename="6K2A8244.jpg"', ResponseContentType="image/jpeg")
-          # Lo que genera django.utils.http.content_disposition_header para un nombre no-ASCII
-          cd = "attachment; filename*=utf-8''Foto%20Marat%C3%B3n%201.jpg"
-          probar("attachment rfc5987 (no-ascii)", ResponseContentDisposition=cd, ResponseContentType="image/jpeg")
-          probar("octet-stream", ResponseContentDisposition='attachment; filename="6K2A8244.jpg"', ResponseContentType="application/octet-stream")
-          # URL vencida: el control negativo
-          url=s3.generate_presigned_url("get_object", Params={"Bucket":B,"Key":key}, ExpiresIn=1)
-          import time; time.sleep(3)
-          r=requests.get(url, headers={"Range":"bytes=0-0"}, timeout=40)
-          L.append(f"[vencida] status={r.status_code} content-type={r.headers.get('content-type')!r}")
-          # objeto inexistente: lo que veria el usuario si redirigimos a algo que no esta
-          url=s3.generate_presigned_url("get_object", Params={"Bucket":B,"Key":key+".no-existe"}, ExpiresIn=300)
-          r=requests.get(url, timeout=40)
-          L.append(f"[no existe] status={r.status_code} content-type={r.headers.get('content-type')!r} cuerpo={r.text[:80]!r}")
-
-          pathlib.Path("salida/medicion.txt").write_text("\n".join(L))
+          # ---------- 3) logs: que IP ve gunicorn (REMOTE_ADDR) y cuantos 429 ----------
+          D='''query($i:DeploymentListInput!){ deployments(first:8, input:$i){ edges{ node{ id status createdAt } } } }'''
+          dep=gql(D,{"i":{"projectId":PID,"environmentId":ENV,"serviceId":WEB}})
+          nodos=[e["node"] for e in (((dep.get("data") or {}).get("deployments") or {}).get("edges") or [])]
+          L.append(f"\n== logs de gunicorn (deployments del web: {len(nodos)}; {err(dep)}) ==")
+          LG='''query($d:String!,$f:String,$n:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$n){ timestamp message } }'''
+          hs=collections.Counter(); st=collections.Counter(); uas=collections.Counter(); lineas=0; bytes_=[]
+          rx=re.compile(r'^(\S+) \S+ \S+ \[[^\]]+\] "GET (/descargas/foto/\S*) [^"]*" (\d{3}) (\S+) "[^"]*" "([^"]*)"')
+          for n in nodos:
+              lg=gql(LG,{"d":n["id"],"f":"descargas/foto","n":5000})
+              if lg.get("errors"): L.append(f"  {n['createdAt'][:16]} {n['status']}: {err(lg)}"); continue
+              for x in (lg.get("data") or {}).get("deploymentLogs") or []:
+                  m=rx.match(x["message"])
+                  if not m: continue
+                  lineas+=1; h,_,s,b,ua=m.groups()
+                  hs[h]+=1; st[s]+=1
+                  if b.isdigit() and s=="200": bytes_.append(int(b))
+                  fam="iPhone/iPad/Mac" if re.search(r"iPhone|iPad|iPod|Macintosh",ua) else ("Android" if "Android" in ua else "otro")
+                  if re.search(r"Instagram|FBAN|FBAV|FB_IAB",ua): fam+=" (in-app Meta)"
+                  uas[fam]+=1
+          L.append(f"lineas de GET /descargas/foto/ encontradas: {lineas}")
+          def tipo(ip):
+              try: a=ipaddress.ip_address(ip)
+              except ValueError: return "no-ip"
+              return "PRIVADA/proxy" if (a.is_private or a in ipaddress.ip_network("100.64.0.0/10")) else "publica"
+          por_tipo=collections.Counter(tipo(h) for h in hs.elements())
+          L.append(f"IPs distintas que ve Django (REMOTE_ADDR): {len(hs)} · por tipo: {dict(por_tipo)}")
+          for h,c in hs.most_common(6):
+              L.append(f"   {h if tipo(h)!='publica' else '(publica)'}  {c}")
+          L.append(f"status: {dict(st)}")
+          L.append(f"user agents: {dict(uas)}")
+          if bytes_: L.append(f"bytes promedio por descarga 200: {sum(bytes_)/len(bytes_)/1e6:.2f} MB (n={len(bytes_)})")
+          pathlib.Path("salida").mkdir(exist_ok=True)
+          pathlib.Path("salida/medicion2.txt").write_text("\n".join(L))
           print("\n".join(L))
           PYX
       - name: Publicar
         if: always()
         run: |
-          mkdir -p salida && touch salida/medicion.txt
+          mkdir -p salida && touch salida/medicion2.txt
           git init -q pub && cd pub
           git config user.name "ci"; git config user.email "ci@local"
-          git checkout -q --orphan resultado-medir-r2
+          git checkout -q --orphan resultado-medir2
           cp ../salida/* .
           git add -A && git commit -q -m "medicion r2"
-          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" resultado-medir-r2
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" resultado-medir2
