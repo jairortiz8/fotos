@@ -22,35 +22,49 @@ jobs:
     steps:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install --quiet requests "psycopg[binary]" boto3
+      - run: pip install --quiet requests "psycopg[binary]" boto3 redis
       - name: Medir (solo lectura)
         run: |
           mkdir -p salida
           python3 - <<'PYX'
-          import os, json, requests, psycopg, pathlib
+          import os, io, requests, psycopg, pathlib, boto3, redis
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
           V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          pg=(requests.post(API,headers=H,json={"query":V,"variables":{"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":os.environ["PG_ID"]}},timeout=40).json().get("data") or {}).get("variables") or {}
+          def vars_de(s): return (requests.post(API,headers=H,json={"query":V,"variables":{"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":s}},timeout=40).json().get("data") or {}).get("variables") or {}
+          pg=vars_de(os.environ["PG_ID"]); web=vars_de(os.environ["WEB_ID"]); rd=vars_de("37559685-4af5-4b9a-851d-84d9424f7424")
+          s3=boto3.client("s3", endpoint_url=web["R2_ENDPOINT_URL"], aws_access_key_id=web["R2_ACCESS_KEY_ID"], aws_secret_access_key=web["R2_SECRET_ACCESS_KEY"], region_name="auto")
+          B=web["R2_BUCKET_NAME"]
+          out=pathlib.Path("salida"); out.mkdir(exist_ok=True)
           L=[]
           with psycopg.connect(pg["DATABASE_PUBLIC_URL"], connect_timeout=40) as cx, cx.cursor() as cur:
-              cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='core_auditlog'")
-              cols={r[0] for r in cur.fetchall()}
-              cur.execute("UPDATE photographers_photographerlink SET photographer_name='Julio Barraza', updated_at=now() WHERE id=27 AND photographer_name='Enrique Valencia'")
-              L.append(f"surf-city id=27 -> Julio Barraza: filas={cur.rowcount}")
-              campos="action,target_type,target_id,metadata,created_at"+(",updated_at" if "updated_at" in cols else "")
-              vals="%s,%s,%s,%s::jsonb,now()"+(",now()" if "updated_at" in cols else "")
-              cur.execute(f"INSERT INTO core_auditlog ({campos}) VALUES ({vals})", ["photographer_link.renamed","photographers.photographerlink","27",json.dumps({"de":"Enrique Valencia","a":"Julio Barraza","motivo":"el album de Surf City es de Julio (Jair)"})])
-              cx.commit()
-              cur.execute("""SELECT l.id, e.slug, l.photographer_name, l.is_active, l.revoked_at, l.expires_at, l.photo_limit, l.photos_uploaded, l.last_used_at
-                             FROM photographers_photographerlink l JOIN events_event e ON e.id=l.event_id
-                             WHERE e.slug='utcom-2026' OR l.id=27 ORDER BY l.id""")
-              for f in cur.fetchall():
-                  L.append(f"  link id={f[0]} evento={f[1]} nombre={f[2]!r} activo={f[3]} revocado={f[4]} vence={f[5]} limite={f[6]} subidas={f[7]} ultimo_uso={f[8]}")
-              cur.execute("""SELECT id, status, visibility, date, location, brand_overlay, public_until, searchable_until, permanent_archive, photo_count, pending_count
-                             FROM events_event WHERE slug='utcom-2026'""")
-              L.append(f"evento utcom-2026: {cur.fetchone()}")
-          pathlib.Path("salida").mkdir(exist_ok=True); pathlib.Path("salida/renombrar.txt").write_text("\n".join(L)); print("\n".join(L))
+              cur.execute("""SELECT p.id, p.status, p.created_at, p.capture_time, p.width, p.height, p.file_size,
+                                    p.original_key, p.preview_key, p.thumbnail_key, p.branded_key, p.has_faces_detected
+                             FROM photos_photo p JOIN events_event e ON e.id=p.event_id WHERE e.slug='utcom-2026' ORDER BY p.id""")
+              fotos=cur.fetchall()
+              L.append(f"fotos en utcom-2026: {len(fotos)}")
+              for f in fotos:
+                  pid=f[0]
+                  L.append(f"foto {pid}: status={f[1]} subida={f[2]} disparo={f[3]} {f[4]}x{f[5]} {f[6]/1e6:.1f}MB caras_detectadas={f[11]}")
+                  for nombre,k in (("original",f[7]),("preview",f[8]),("thumbnail",f[9]),("con logos",f[10])):
+                      if not k: L.append(f"   {nombre}: (sin key)"); continue
+                      try:
+                          h=s3.head_object(Bucket=B,Key=k); L.append(f"   {nombre}: OK en R2 ({h['ContentLength']/1e6:.2f} MB, {h.get('ContentType')})")
+                      except Exception as e: L.append(f"   {nombre}: FALTA en R2 ({type(e).__name__})")
+                  cur.execute("SELECT number, source, round(confidence::numeric,2) FROM photos_bib WHERE photo_id=%s", (pid,))
+                  L.append(f"   dorsales: {cur.fetchall()}")
+                  cur.execute("SELECT count(*) FROM photos_faceembedding WHERE photo_id=%s", (pid,))
+                  L.append(f"   caras indexadas: {cur.fetchone()[0]}")
+                  for nombre,k in (("preview",f[8]),("con_logos",f[10])):
+                      if k:
+                          buf=io.BytesIO(); s3.download_fileobj(B,k,buf)
+                          ext="webp" if k.endswith(".webp") else "jpg"
+                          (out/f"foto{pid}_{nombre}.{ext}").write_bytes(buf.getvalue())
+              cur.execute("""SELECT count(*) FROM photos_photo WHERE status IN ('processing','uploaded') AND created_at < now() - interval '15 minutes'""")
+              L.append(f"fotos trabadas en procesamiento (>15 min, todo el sitio): {cur.fetchone()[0]}")
+          r=redis.Redis.from_url(rd["REDIS_PUBLIC_URL"])
+          L.append("colas: " + ", ".join(f"{q}={r.llen(q)}" for q in ("fast","faces","celery")))
+          (out/"renombrar.txt").write_text("\n".join(L)); print("\n".join(L))
           PYX
       - name: Publicar
         if: always()
