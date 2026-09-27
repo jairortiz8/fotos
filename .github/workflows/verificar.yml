@@ -1,0 +1,82 @@
+name: verificar descargas (one-off)
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-verificar"]
+concurrency:
+  group: verificar
+  cancel-in-progress: true
+permissions:
+  contents: write
+jobs:
+  medir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
+    steps:
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install --quiet requests "psycopg[binary]" boto3
+      - name: Medir (solo lectura)
+        run: |
+          mkdir -p salida
+          python3 - <<'PYX'
+          import os, time, requests, psycopg, pathlib, urllib.parse as up
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          pg=(requests.post(API,headers=H,json={"query":V,"variables":{"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":os.environ["PG_ID"]}},timeout=40).json().get("data") or {}).get("variables") or {}
+          with psycopg.connect(pg["DATABASE_PUBLIC_URL"], connect_timeout=40) as cx, cx.cursor() as cur:
+              cur.execute("""SELECT p.id FROM photos_photo p JOIN events_event e ON e.id=p.event_id
+                             WHERE e.slug='surf-city-2026' AND p.status='approved' ORDER BY p.id LIMIT 1""")
+              pid=cur.fetchone()[0]
+          BASE="https://findyourfoto.com"
+          URL=f"{BASE}/descargas/foto/{pid}/"
+          UA={"android":"Mozilla/5.0 (Linux; Android 14; SM-A546E) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36",
+              "iphone":"Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+              "bot":"Lightpanda/1.0"}
+          L=[f"foto de prueba: {pid} (surf-city-2026)"]
+          # esperar a que el deploy nuevo este sirviendo: Android recibe 302
+          t0=time.time(); ok=False
+          while time.time()-t0 < 1500:
+              try:
+                  r=requests.get(URL,headers={"User-Agent":UA["android"]},allow_redirects=False,timeout=30,stream=True); r.close()
+                  if r.status_code==302: ok=True; break
+              except Exception: pass
+              time.sleep(20)
+          L.append(f"deploy nuevo sirviendo: {ok} (a los {int(time.time()-t0)} s)")
+          def mostrar(nombre, r):
+              loc=r.headers.get("location","")
+              host=up.urlparse(loc).hostname or ""
+              q=up.parse_qs(up.urlparse(loc).query)
+              L.append(f"[{nombre}] status={r.status_code} cache-control={r.headers.get('cache-control')!r} "
+                       f"content-disposition={r.headers.get('content-disposition')!r} content-type={r.headers.get('content-type')!r} "
+                       f"location_host=*.{'.'.join(host.split('.')[-3:]) if host else '-'} "
+                       f"rcd={q.get('response-content-disposition',[''])[0]!r} expira={q.get('X-Amz-Expires',[''])[0]!r}")
+              return loc
+          r=requests.get(URL,headers={"User-Agent":UA["android"]},allow_redirects=False,timeout=30); loc=mostrar("android", r)
+          if loc:
+              r2=requests.get(loc,headers={"Range":"bytes=0-0"},timeout=30)
+              L.append(f"  -> R2: status={r2.status_code} content-disposition={r2.headers.get('content-disposition')!r} content-type={r2.headers.get('content-type')!r}")
+          r=requests.get(URL,headers={"User-Agent":UA["iphone"]},allow_redirects=False,timeout=60,stream=True); mostrar("iphone", r); r.close()
+          r=requests.get(URL,headers={"User-Agent":UA["bot"]},allow_redirects=False,timeout=30); mostrar("bot", r)
+          L.append(f"  bot body: {r.text[:60]!r}")
+          r=requests.get(f"{BASE}/healthz/lite",timeout=30); L.append(f"healthz/lite: {r.status_code}")
+          pathlib.Path("salida").mkdir(exist_ok=True); pathlib.Path("salida/verificacion.txt").write_text("\n".join(L)); print("\n".join(L))
+          PYX
+      - name: Publicar
+        if: always()
+        run: |
+          mkdir -p salida && touch salida/verificacion.txt
+          git init -q pub && cd pub
+          git config user.name "ci"; git config user.email "ci@local"
+          git checkout -q --orphan resultado-verificar
+          cp ../salida/* .
+          git add -A && git commit -q -m "medicion r2"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" resultado-verificar
