@@ -1,9 +1,11 @@
-"""Vistas de descarga ZIP: crear pedido + polling de estado."""
+"""Vistas de descarga: una foto (proxy o R2 directo) y ZIP (dormido)."""
 
 from __future__ import annotations
 
+import re
 from io import BytesIO
 
+from django.conf import settings
 from django.db.models import F
 from django.http import (
     FileResponse,
@@ -11,9 +13,11 @@ from django.http import (
     HttpRequest,
     HttpResponse,
     HttpResponseBase,
+    HttpResponseRedirect,
     JsonResponse,
 )
 from django.shortcuts import get_object_or_404, render
+from django.utils.cache import add_never_cache_headers
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
@@ -123,13 +127,48 @@ class ZipStatusView(View):
 # ---------------------------------------------------------------------------
 # Descarga de UNA foto (original, alta resolución, sin watermark)
 # ---------------------------------------------------------------------------
-class PhotoDownloadView(View):
-    """Sirve el ORIGINAL (alta resolución, sin watermark) como DESCARGA.
+# La URL firmada que devuelve el redirect. 15 min es el máximo que permite
+# CLAUDE.md §3; alcanza de sobra para que el navegador (o el DownloadManager de
+# Android, que a veces la vuelve a pedir un rato después) arranque la descarga.
+DOWNLOAD_URL_TTL = 900
 
-    Lo servimos same-origin con `Content-Disposition: attachment` (en vez de
-    redirigir a una URL firmada de R2) para que el navegador lo baje como
-    ARCHIVO. En iOS/Safari un redirect a una imagen la abría como página ("se
-    descarga como webpage"); same-origin + attachment la baja al carrete/Archivos.
+# El Safari de iPad se presenta como Mac ("Macintosh"), por eso va en la lista.
+_APPLE_UA = re.compile(r"iPhone|iPad|iPod|Macintosh")
+
+
+def descarga_directa_de_r2(request: HttpRequest) -> bool:
+    """¿Esta descarga sale directo de R2 (302) o pasa por acá (proxy)?
+
+    Ver `PHOTO_DOWNLOAD_R2_DIRECT` en settings. `?via=r2` / `?via=proxy` fuerzan
+    una vía para probar en producción sin tocar la variable."""
+    via = request.GET.get("via", "")
+    if via == "r2":
+        return True
+    if via == "proxy":
+        return False
+    modo = getattr(settings, "PHOTO_DOWNLOAD_R2_DIRECT", "off")
+    if modo == "all":
+        return True
+    if modo == "non_apple":
+        return not _APPLE_UA.search(request.META.get("HTTP_USER_AGENT", ""))
+    return False
+
+
+class PhotoDownloadView(View):
+    """Descarga el ORIGINAL (alta resolución, sin watermark) como ARCHIVO.
+
+    Dos vías para los bytes, con las MISMAS validaciones, límite y conteo:
+
+    - **proxy**: Django baja la foto de R2 y la re-sirve same-origin con
+      `Content-Disposition: attachment`. Es lo que hay desde junio 2026: un
+      redirect a R2 se abrió como página en un iPhone y el arreglo (proxy +
+      atributo `download`) cambió dos cosas a la vez, así que nunca se supo cuál
+      fue la que sirvió.
+    - **R2 directo**: 302 a una URL firmada de R2 que pide el mismo
+      `attachment`. Railway cobra el tráfico de salida y R2 no, y las descargas
+      eran un tercio de la factura.
+
+    Qué vía se usa lo decide `descarga_directa_de_r2`.
     """
 
     http_method_names = ["get"]
@@ -156,6 +195,23 @@ class PhotoDownloadView(View):
         if not filename.lower().endswith((".jpg", ".jpeg")):
             filename = f"{filename}.jpg"
 
+        if descarga_directa_de_r2(request):
+            try:
+                url = default_storage().get_signed_url(
+                    download_key,
+                    expires_in=DOWNLOAD_URL_TTL,
+                    download_filename=filename,
+                    content_type="image/jpeg",
+                )
+            except R2NotConfiguredError as exc:
+                raise Http404 from exc
+            # Acá no vemos los bytes: se cuenta al mandar al navegador a R2.
+            _contar_descarga(photo, event)
+            resp = HttpResponseRedirect(url)
+            # Nunca cachear un redirect a una URL que vence.
+            add_never_cache_headers(resp)
+            return resp
+
         buf = BytesIO()
         try:
             default_storage().download_fileobj(download_key, buf)
@@ -163,13 +219,17 @@ class PhotoDownloadView(View):
             raise Http404 from exc
         buf.seek(0)
 
-        # Contamos la descarga SOLO cuando el original bajó OK de R2 (atómico, sin
-        # carrera). Alimenta el contador por foto + el total por evento del dashboard.
-        photo.increment_download_count()
-        Event.objects.filter(pk=event.id).update(download_count=F("download_count") + 1)
-        record_event_metric(event.id, Metric.DOWNLOAD)
-
+        # Por proxy contamos SOLO cuando el original bajó OK de R2.
+        _contar_descarga(photo, event)
         return FileResponse(buf, as_attachment=True, filename=filename, content_type="image/jpeg")
+
+
+def _contar_descarga(photo: Photo, event: Event) -> None:
+    """Contador por foto + total por evento + curva por hora del dashboard.
+    Atómico (F()), sin carrera."""
+    photo.increment_download_count()
+    Event.objects.filter(pk=event.id).update(download_count=F("download_count") + 1)
+    record_event_metric(event.id, Metric.DOWNLOAD)
 
 
 # ---------------------------------------------------------------------------

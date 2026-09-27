@@ -555,6 +555,20 @@ R2_PUBLIC_BASE_URL = env("R2_PUBLIC_BASE_URL")
 # Tamaño máximo de upload del fotógrafo (bytes).
 PHOTO_UPLOAD_MAX_BYTES = env("PHOTO_UPLOAD_MAX_MB") * 1024 * 1024
 
+# Descarga de UNA foto directo desde R2 (apps/downloads/views.py). Railway cobra
+# el tráfico de salida ($0.05/GB) y R2 no: con el redirect la foto no pasa por
+# este servidor. En septiembre 2026 las descargas fueron ~190 GB (un tercio de la
+# factura). La vista sigue validando, limitando y contando; sólo cambia de dónde
+# salen los bytes.
+#   off        → como siempre: Django baja la foto de R2 y la re-sirve (proxy).
+#   non_apple  → R2 directo, salvo iPhone/iPad/Mac, que siguen por proxy (en
+#                junio un redirect a R2 se abrió como página en iOS y nunca se
+#                aisló por qué).
+#   all        → R2 directo para todos.
+# Cualquier otro valor cuenta como `off`. Para probar sin tocar esto:
+# `/descargas/foto/<id>/?via=r2` (o `?via=proxy`).
+PHOTO_DOWNLOAD_R2_DIRECT = env.str("PHOTO_DOWNLOAD_R2_DIRECT", default="off").strip().lower()
+
 # ----------------------------------------------------------------------------
 # Logging — JSON-ish para Sentry / Railway
 # ----------------------------------------------------------------------------

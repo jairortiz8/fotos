@@ -20,6 +20,7 @@ import boto3
 from botocore.client import Config
 from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
+from django.utils.http import content_disposition_header
 
 logger = logging.getLogger(__name__)
 
@@ -139,16 +140,30 @@ class R2Storage:
         key: str,
         expires_in: int = PRESIGNED_URL_DEFAULT_TTL,
         download_filename: str | None = None,
+        content_type: str | None = None,
     ) -> str:
         """URL firmada para `GET`. Default 15 min (CLAUDE.md §3).
 
         Si `download_filename` está seteado, el navegador fuerza la DESCARGA
         (Content-Disposition: attachment) con ese nombre — se usa para bajar el
-        ORIGINAL en alta resolución (no el preview con watermark).
+        ORIGINAL en alta resolución (no el preview con watermark). `content_type`
+        pisa el Content-Type que devuelve R2.
+
+        Los dos van como `response-*` en la URL y quedan dentro de la firma: nadie
+        los puede cambiar sin que R2 devuelva 403. Verificado contra el bucket real
+        (2026-09-27): R2 los respeta, incluso `filename*` con acentos.
         """
         params: dict[str, str] = {"Bucket": self.bucket, "Key": key}
         if download_filename:
-            params["ResponseContentDisposition"] = f'attachment; filename="{download_filename}"'
+            # El mismo header que arma Django en FileResponse: `filename="…"` si es
+            # ASCII, `filename*=utf-8''…` si no. Así el nombre sale igual por las
+            # dos vías (proxy y R2 directo).
+            params["ResponseContentDisposition"] = (
+                content_disposition_header(as_attachment=True, filename=download_filename)
+                or "attachment"
+            )
+        if content_type:
+            params["ResponseContentType"] = content_type
         return self.client.generate_presigned_url(
             "get_object",
             Params=params,
