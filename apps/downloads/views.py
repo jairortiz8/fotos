@@ -197,9 +197,9 @@ class PhotoDownloadView(View):
         if es_bot_declarado(request):
             return JsonResponse({"error": "automated_client"}, status=403)
         if not check_photo_download_rate_limit(request):
-            resp = JsonResponse({"error": "rate_limited"}, status=429)
-            resp["Retry-After"] = "3600"
-            return resp
+            rechazo = JsonResponse({"error": "rate_limited"}, status=429)
+            rechazo["Retry-After"] = "3600"
+            return rechazo
 
         photo = get_object_or_404(
             Photo.objects.select_related("event"),
