@@ -1,0 +1,102 @@
+name: prender workers (one-off)
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-prender"]
+concurrency:
+  group: prender
+  cancel-in-progress: true
+permissions:
+  contents: write
+jobs:
+  medir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
+      SHA: b3b83b5b4338fccbeb4dc2be297b7d1d1e92994b
+    steps:
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install --quiet requests "psycopg[binary]" boto3 celery redis
+      - name: Medir (solo lectura)
+        run: |
+          mkdir -p salida
+          python3 - <<'PYX'
+          import os, time, json, requests, pathlib
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          P,E=os.environ["PROJECT_ID"],os.environ["ENV_ID"]
+          SHA=os.environ["SHA"]
+          SERV={"worker":"1846c52a-57c3-4a8b-b4ec-1cc200a8e652","worker_fast":"e4289c40-a254-436a-be02-35ec0e935363","beat":"0a364656-8700-4f69-bac0-b91c50cd722b"}
+          REDIS_ID="37559685-4af5-4b9a-851d-84d9424f7424"
+          L=[]
+          def gql(q,v): 
+              r=requests.post(API,headers=H,json={"query":q,"variables":v},timeout=60)
+              try: return r.json()
+              except Exception: return {"errors":[{"message":f"http {r.status_code}"}]}
+          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          def vars_de(s): return (gql(V,{"p":P,"e":E,"s":s}).get("data") or {}).get("variables") or {}
+          # 0) flags (sin secretos)
+          for n,s in SERV.items():
+              v=vars_de(s)
+              ver={k:v.get(k) for k in ["PROCESS_TYPE","WORKER_QUEUES","CELERY_CONCURRENCY","FACE_PROCESSING_ENABLED","FACE_SEARCH_ENABLED","OCR_BACKEND","MINOR_BLUR_ENABLED","PREVIEW_WATERMARK_ENABLED"] if k in v}
+              ver["GEMINI_API_KEY"]="seteada" if v.get("GEMINI_API_KEY") else "FALTA"
+              L.append(f"{n}: {ver}")
+          # 1) prender en el commit de main
+          D='mutation($s:String!,$e:String!,$c:String){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e, commitSha:$c) }'
+          for n,s in SERV.items():
+              r=gql(D,{"s":s,"e":E,"c":SHA})
+              L.append(f"deploy {n}: {r.get('data')} {[e.get('message') for e in r.get('errors',[])]}")
+          # 2) esperar a que los deploys terminen, verificando el commit
+          Q='''query($i:DeploymentListInput!){ deployments(first:1, input:$i){ edges{ node{ id status createdAt meta } } } }'''
+          fin={}
+          t0=time.time()
+          while time.time()-t0<1500 and len(fin)<len(SERV):
+              for n,s in SERV.items():
+                  if n in fin: continue
+                  d=gql(Q,{"i":{"projectId":P,"environmentId":E,"serviceId":s}})
+                  e=(((d.get("data") or {}).get("deployments") or {}).get("edges") or [])
+                  if not e: continue
+                  nd=e[0]["node"]; meta=nd.get("meta") or {}
+                  commit=(meta.get("commitHash") or "")[:7]
+                  if nd["status"] in ("SUCCESS","FAILED","CRASHED","REMOVED"):
+                      fin[n]=(nd["status"],commit,int(time.time()-t0))
+              time.sleep(20)
+          for n in SERV: L.append(f"estado {n}: {fin.get(n,('TIMEOUT',))} (esperado commit {SHA[:7]})")
+          # 3) preguntarle a la cola quien escucha
+          from celery import Celery
+          url=vars_de(REDIS_ID).get("REDIS_PUBLIC_URL")
+          app=Celery(broker=url)
+          time.sleep(30)
+          for intento in range(8):
+              pong=app.control.ping(timeout=8) or []
+              if len(pong)>=2: break
+              time.sleep(20)
+          L.append(f"workers que contestan el ping: {len(pong)}")
+          colas=app.control.inspect(timeout=8).active_queues() or {}
+          for nodo,qs in colas.items():
+              L.append(f"  {nodo.split('@')[0]}@...  colas={sorted(q['name'] for q in qs)}")
+          stats=app.control.inspect(timeout=8).stats() or {}
+          for nodo,st in stats.items():
+              L.append(f"  {nodo.split('@')[0]}@...  procesos={st.get('pool',{}).get('max-concurrency')}")
+          import redis
+          rc=redis.Redis.from_url(url)
+          L.append("pendientes por cola: " + ", ".join(f"{q}={rc.llen(q)}" for q in ("fast","faces","celery")))
+          pathlib.Path("salida").mkdir(exist_ok=True); pathlib.Path("salida/prender.txt").write_text("\n".join(L)); print("\n".join(L))
+          PYX
+      - name: Publicar
+        if: always()
+        run: |
+          mkdir -p salida && touch salida/prender.txt
+          git init -q pub && cd pub
+          git config user.name "ci"; git config user.email "ci@local"
+          git checkout -q --orphan resultado-prender
+          cp ../salida/* .
+          git add -A && git commit -q -m "medicion r2"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" resultado-prender
