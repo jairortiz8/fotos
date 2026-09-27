@@ -27,96 +27,93 @@ jobs:
         run: |
           mkdir -p salida
           python3 - <<'PYX'
-          import os, re, json, requests, psycopg, datetime as dt, pathlib, collections, ipaddress
+          import os, re, json, hashlib, secrets, requests, pathlib, collections
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
           PID=os.environ["PROJECT_ID"]; ENV=os.environ["ENV_ID"]; WEB=os.environ["WEB_ID"]
+          SAL=secrets.token_hex(8)  # sal de un solo uso: las IPs no se pueden recuperar ni cruzar
+          def anon(ip): return hashlib.sha256((SAL+ip).encode()).hexdigest()[:8]
           L=[]
           def gql(q, v=None):
-              r=requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=90)
+              r=requests.post(API,headers=H,json={"query":q,"variables":v or {}},timeout=120)
               try: return r.json()
               except Exception: return {"errors":[{"message":f"http {r.status_code}"}]}
-          def err(d): return "; ".join(e.get("message","")[:200] for e in d.get("errors",[]))
+          def err(d): return "; ".join(e.get("message","")[:300] for e in d.get("errors",[]))
 
-          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          pg=(gql(V,{"p":PID,"e":ENV,"s":os.environ["PG_ID"]}).get("data") or {}).get("variables") or {}
-
-          # ---------- 1) egreso del web por dia, SUMANDO todos los pedazos ----------
-          L.append("== egreso del servicio web por dia (Railway, sumando todos los pedazos) ==")
-          Q='''query($p:String!,$s:DateTime,$e:DateTime){ usage(projectId:$p, measurements:[NETWORK_TX_GB],
-               groupBy:[SERVICE_ID], startDate:$s, endDate:$e){ measurement value tags{ serviceId } } }'''
-          ini=dt.datetime(2026,9,1,tzinfo=dt.UTC); ahora=dt.datetime.now(dt.UTC)
-          egr={}
-          d0=ini
-          while d0<ahora:
-              d1=min(d0+dt.timedelta(days=1),ahora)
-              u=gql(Q,{"p":PID,"s":d0.isoformat(),"e":d1.isoformat()})
-              egr[d0.strftime("%m-%d")]=sum(f["value"] for f in ((u.get("data") or {}).get("usage") or []) if f["tags"]["serviceId"]==WEB)
-              d0=d1
-
-          # ---------- 2) descargas y subidas por dia (DB) ----------
-          with psycopg.connect(pg["DATABASE_PUBLIC_URL"], connect_timeout=40) as cx, cx.cursor() as cur:
-              cur.execute("""SELECT to_char(date_trunc('day',bucket),'MM-DD'), sum(count) FROM events_eventmetric
-                             WHERE metric='download' AND bucket>='2026-09-01' GROUP BY 1""")
-              desc=dict(cur.fetchall())
-              cur.execute("""SELECT to_char(date_trunc('day',created_at),'MM-DD'), count(*), sum(file_size)/1e9 FROM photos_photo
-                             WHERE created_at>='2026-09-01' GROUP BY 1""")
-              sub={d:(n,gb) for d,n,gb in cur.fetchall()}
-              # pico horario de descargas: si el limite fuera compartido se veria un techo
-              cur.execute("""SELECT to_char(bucket,'MM-DD HH24'), sum(count) FROM events_eventmetric
-                             WHERE metric='download' AND bucket>='2026-09-01' GROUP BY 1 ORDER BY 2 DESC LIMIT 8""")
-              picos=cur.fetchall()
-          L.append(f"{'dia':<7}{'egreso GB':>10}{'descargas':>11}{'GB/desc MB':>12}{'subidas':>9}{'GB subidos':>11}")
-          for d in sorted(egr):
-              n=desc.get(d,0); s=sub.get(d,(0,0))
-              L.append(f"{d:<7}{egr[d]:>10.2f}{n:>11}{(egr[d]*1000/n if n else 0):>12.2f}{s[0]:>9}{float(s[1]):>11.2f}")
-          L.append(f"TOTAL egreso web {sum(egr.values()):.1f} GB · descargas {sum(desc.values())} · subidas {sum(v[0] for v in sub.values())} ({sum(float(v[1]) for v in sub.values()):.1f} GB)")
-          L.append("\nhoras pico de descargas (hora UTC):")
-          for h,c in picos: L.append(f"  {h}h  {c}")
-
-          # ---------- 3) logs: que IP ve gunicorn (REMOTE_ADDR) y cuantos 429 ----------
-          D='''query($i:DeploymentListInput!){ deployments(first:8, input:$i){ edges{ node{ id status createdAt } } } }'''
-          dep=gql(D,{"i":{"projectId":PID,"environmentId":ENV,"serviceId":WEB}})
+          dep=gql('query($i:DeploymentListInput!){ deployments(first:8, input:$i){ edges{ node{ id status createdAt } } } }',
+                  {"i":{"projectId":PID,"environmentId":ENV,"serviceId":WEB}})
           nodos=[e["node"] for e in (((dep.get("data") or {}).get("deployments") or {}).get("edges") or [])]
-          L.append(f"\n== logs de gunicorn (deployments del web: {len(nodos)}; {err(dep)}) ==")
-          LG='''query($d:String!,$f:String,$n:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$n){ timestamp message } }'''
-          hs=collections.Counter(); st=collections.Counter(); uas=collections.Counter(); lineas=0; bytes_=[]
-          rx=re.compile(r'^(\S+) \S+ \S+ \[[^\]]+\] "GET (/descargas/foto/\S*) [^"]*" (\d{3}) (\S+) "[^"]*" "([^"]*)"')
-          for n in nodos:
-              lg=gql(LG,{"d":n["id"],"f":"descargas/foto","n":5000})
-              if lg.get("errors"): L.append(f"  {n['createdAt'][:16]} {n['status']}: {err(lg)}"); continue
-              for x in (lg.get("data") or {}).get("deploymentLogs") or []:
-                  m=rx.match(x["message"])
-                  if not m: continue
-                  lineas+=1; h,_,s,b,ua=m.groups()
-                  hs[h]+=1; st[s]+=1
-                  if b.isdigit() and s=="200": bytes_.append(int(b))
-                  fam="iPhone/iPad/Mac" if re.search(r"iPhone|iPad|iPod|Macintosh",ua) else ("Android" if "Android" in ua else "otro")
-                  if re.search(r"Instagram|FBAN|FBAV|FB_IAB",ua): fam+=" (in-app Meta)"
-                  uas[fam]+=1
-          L.append(f"lineas de GET /descargas/foto/ encontradas: {lineas}")
-          def tipo(ip):
-              try: a=ipaddress.ip_address(ip)
-              except ValueError: return "no-ip"
-              return "PRIVADA/proxy" if (a.is_private or a in ipaddress.ip_network("100.64.0.0/10")) else "publica"
-          por_tipo=collections.Counter(tipo(h) for h in hs.elements())
-          L.append(f"IPs distintas que ve Django (REMOTE_ADDR): {len(hs)} · por tipo: {dict(por_tipo)}")
-          for h,c in hs.most_common(6):
-              L.append(f"   {h if tipo(h)!='publica' else '(publica)'}  {c}")
-          L.append(f"status: {dict(st)}")
-          L.append(f"user agents: {dict(uas)}")
-          if bytes_: L.append(f"bytes promedio por descarga 200: {sum(bytes_)/len(bytes_)/1e6:.2f} MB (n={len(bytes_)})")
+
+          # ---------- A) logs HTTP del borde de Railway: IP real + bytes reales ----------
+          t=gql('{ __type(name:"HttpLog"){ fields{ name } } }')
+          campos=[f["name"] for f in ((((t.get("data") or {}).get("__type") or {}).get("fields")) or [])]
+          L.append(f"== HttpLog: campos disponibles: {campos or err(t)}")
+          quiero=[c for c in ["timestamp","path","method","httpStatus","srcIp","clientUa","txBytes","totalDuration"] if c in campos]
+          http=[]
+          if quiero:
+              q='query($d:String!,$f:String,$n:Int){ httpLogs(deploymentId:$d, filter:$f, limit:$n){ '+" ".join(quiero)+' } }'
+              for n in nodos:
+                  for filtro in ("@path:/descargas/foto", None):
+                      r=gql(q,{"d":n["id"],"f":filtro,"n":5000})
+                      if r.get("errors"):
+                          L.append(f"  httpLogs {n['createdAt'][:16]} filtro={filtro}: {err(r)}"); continue
+                      filas=(r.get("data") or {}).get("httpLogs") or []
+                      http+= [dict(x, _filtro=bool(filtro)) for x in filas]
+          L.append(f"filas de httpLogs: {len(http)}")
+
+          def ruta(p):
+              p=(p or "").split("?")[0]
+              p=re.sub(r"/\d+", "/<id>", p)
+              p=re.sub(r"^/u/[^/]+", "/u/<token>", p)       # nunca imprimir tokens de fotografo
+              p=re.sub(r"^/invitados/[^/]+", "/invitados/<t>", p)
+              seg=p.split("/")
+              return "/".join(seg[:4]) if len(seg)>4 else p
+
+          desc=[x for x in http if "/descargas/foto" in (x.get("path") or "")]
+          todo=[x for x in http if not x["_filtro"]]
+          if desc:
+              ips=collections.Counter(x.get("srcIp","?") for x in desc)
+              L.append(f"\n== DESCARGAS (muestra {len(desc)}) ==")
+              L.append(f"clientes distintos (IP real): {len(ips)}")
+              for ip,c in ips.most_common(10):
+                  uas=collections.Counter(x.get("clientUa","") for x in desc if x.get("srcIp")==ip).most_common(1)
+                  horas=sorted({(x.get("timestamp") or "")[:13] for x in desc if x.get("srcIp")==ip})
+                  L.append(f"  cliente {anon(ip)}: {c} descargas ({c*100/len(desc):.0f}%) · horas {horas[0] if horas else ''}..{horas[-1] if horas else ''} ({len(horas)}h) · UA: {uas[0][0][:110] if uas else ''}")
+              tb=[int(x["txBytes"]) for x in desc if str(x.get("txBytes","")).isdigit()]
+              if tb: L.append(f"bytes reales por descarga (borde): prom {sum(tb)/len(tb)/1e6:.2f} MB")
+              st=collections.Counter(x.get("httpStatus") for x in desc); L.append(f"status: {dict(st)}")
+          uagg=collections.Counter()
+          for x in desc: uagg[(x.get("clientUa") or "")[:120]]+=1
+          L.append("\nUA mas frecuentes en descargas:")
+          for u,c in uagg.most_common(8): L.append(f"  {c:>6}  {u}")
+
+          # ---------- B) todo el trafico: bytes por ruta ----------
+          if todo:
+              by=collections.Counter(); cnt=collections.Counter()
+              for x in todo:
+                  r_=ruta(x.get("path")); cnt[r_]+=1
+                  if str(x.get("txBytes","")).isdigit(): by[r_]+=int(x["txBytes"])
+              tot=sum(by.values()) or 1
+              L.append(f"\n== TODO EL TRAFICO (muestra {len(todo)} pedidos, {tot/1e9:.2f} GB) — bytes por ruta ==")
+              for r_,b in by.most_common(15):
+                  L.append(f"  {b*100/tot:5.1f}%  {b/1e6:9.1f} MB  {cnt[r_]:>6} pedidos  {r_}")
+              ipt=collections.Counter(x.get("srcIp","?") for x in todo)
+              L.append(f"clientes distintos en la muestra: {len(ipt)}; top: " + ", ".join(f"{anon(i)}={c}" for i,c in ipt.most_common(5)))
+              ua2=collections.Counter((x.get("clientUa") or "")[:90] for x in todo)
+              L.append("UA mas frecuentes en todo el trafico:")
+              for u,c in ua2.most_common(6): L.append(f"  {c:>6}  {u}")
+
           pathlib.Path("salida").mkdir(exist_ok=True)
-          pathlib.Path("salida/medicion2.txt").write_text("\n".join(L))
+          pathlib.Path("salida/medicion3.txt").write_text("\n".join(L))
           print("\n".join(L))
           PYX
       - name: Publicar
         if: always()
         run: |
-          mkdir -p salida && touch salida/medicion2.txt
+          mkdir -p salida && touch salida/medicion3.txt
           git init -q pub && cd pub
           git config user.name "ci"; git config user.email "ci@local"
-          git checkout -q --orphan resultado-medir2
+          git checkout -q --orphan resultado-medir3
           cp ../salida/* .
           git add -A && git commit -q -m "medicion r2"
-          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" resultado-medir2
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" resultado-medir3
