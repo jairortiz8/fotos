@@ -32,31 +32,20 @@ jobs:
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
           V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
           pg=(requests.post(API,headers=H,json={"query":V,"variables":{"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":os.environ["PG_ID"]}},timeout=40).json().get("data") or {}).get("variables") or {}
-          NUEVO="Enrique Valencia"
+          FIX={45:"Enrique Valencia - Meta Previa Salidas", 46:"Enrique Valencia - Meta Llegadas"}
           L=[]
           with psycopg.connect(pg["DATABASE_PUBLIC_URL"], connect_timeout=40) as cx, cx.cursor() as cur:
-              cur.execute("""SELECT l.id, e.slug, l.photographer_name, l.is_active, l.photos_uploaded
-                             FROM photographers_photographerlink l JOIN events_event e ON e.id=l.event_id
-                             WHERE l.photographer_name ILIKE '%julio%barraza%' ORDER BY l.id""")
-              filas=cur.fetchall()
-              L.append(f"links que coinciden: {len(filas)}")
-              for f in filas: L.append(f"  antes: id={f[0]} evento={f[1]} nombre={f[2]!r} activo={f[3]} fotos={f[4]}")
-              cur.execute("SELECT target_type FROM core_auditlog WHERE action LIKE 'photographer_link.%' AND target_type<>'' LIMIT 1")
-              tt=(cur.fetchone() or ["photographers.photographerlink"])[0]
               cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='core_auditlog'")
               cols={r[0] for r in cur.fetchall()}
-              for lid, slug, viejo, *_ in filas:
-                  cur.execute("UPDATE photographers_photographerlink SET photographer_name=%s, updated_at=now() WHERE id=%s", (NUEVO, lid))
-                  campos=["action","target_type","target_id","metadata","created_at"]; vals=["photographer_link.renamed", tt, str(lid), json.dumps({"de":viejo,"a":NUEVO,"event":slug,"via":"pedido de Jair (sesion Claude)"})]
-                  sql_vals="%s,%s,%s,%s::jsonb,now()"
-                  if "updated_at" in cols: campos.append("updated_at"); sql_vals+=",now()"
-                  cur.execute(f"INSERT INTO core_auditlog ({','.join(campos)}) VALUES ({sql_vals})", vals)
+              for lid, nombre in FIX.items():
+                  cur.execute("UPDATE photographers_photographerlink SET photographer_name=%s, updated_at=now() WHERE id=%s AND photographer_name='Enrique Valencia'", (nombre, lid))
+                  L.append(f"id={lid}: filas={cur.rowcount}")
+                  campos="action,target_type,target_id,metadata,created_at"+(",updated_at" if "updated_at" in cols else "")
+                  vals="%s,%s,%s,%s::jsonb,now()"+(",now()" if "updated_at" in cols else "")
+                  cur.execute(f"INSERT INTO core_auditlog ({campos}) VALUES ({vals})", ["photographer_link.renamed","photographers.photographerlink",str(lid),json.dumps({"de":"Enrique Valencia","a":nombre,"motivo":"restaurar sufijo pisado"})])
               cx.commit()
-              cur.execute("""SELECT l.id, e.slug, l.photographer_name FROM photographers_photographerlink l JOIN events_event e ON e.id=l.event_id
-                             WHERE l.id = ANY(%s) ORDER BY l.id""", ([f[0] for f in filas],))
-              for f in cur.fetchall(): L.append(f"  despues: id={f[0]} evento={f[1]} nombre={f[2]!r}")
-              cur.execute("SELECT count(*) FROM photographers_photographerlink WHERE photographer_name ILIKE '%julio%barraza%'")
-              L.append(f"quedan con 'Julio Barraza': {cur.fetchone()[0]}")
+              cur.execute("""SELECT l.id, e.slug, l.photographer_name FROM photographers_photographerlink l JOIN events_event e ON e.id=l.event_id WHERE l.id IN (27,45,46) ORDER BY l.id""")
+              for f in cur.fetchall(): L.append(f"  ahora: id={f[0]} evento={f[1]} nombre={f[2]!r}")
           pathlib.Path("salida").mkdir(exist_ok=True); pathlib.Path("salida/renombrar.txt").write_text("\n".join(L)); print("\n".join(L))
           PYX
       - name: Publicar
