@@ -376,3 +376,80 @@ def test_un_bot_declarado_no_descarga(r2, settings, ua: str) -> None:  # type: i
 def test_los_celulares_de_verdad_si_descargan(r2, settings, ua: str) -> None:  # type: ignore[no-untyped-def]
     settings.PHOTO_DOWNLOAD_R2_DIRECT = "off"
     assert _bajar(_foto(r2), ua=ua).status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Lo que agregó la revisión adversarial
+# ---------------------------------------------------------------------------
+def test_una_ipv4_escrita_como_ipv6_no_hace_global_el_limite() -> None:
+    """`::ffff:a.b.c.d` agrupado por /64 da "::" para todos: un solo cupo para el
+    sitio entero. Tiene que tratarse como la IPv4 que es."""
+    from apps.core.utils import ip_real_para_limite
+
+    a = ip_real_para_limite("g", _req(xff="::ffff:190.86.10.5"))
+    b = ip_real_para_limite("g", _req(xff="::ffff:181.10.20.30"))
+    assert a == "190.86.10.5"
+    assert a != b
+
+
+@pytest.mark.parametrize(
+    ("valor", "esperado"),
+    [
+        ("600/h", "600/h"),
+        (" 50/M ", "50/m"),
+        ("0/h", "200/h"),
+        ("doscientos", "200/h"),
+        ("", "200/h"),
+    ],
+)
+def test_una_tasa_mal_escrita_en_railway_no_rompe_las_descargas(
+    monkeypatch, valor: str, esperado: str
+) -> None:  # type: ignore[no-untyped-def]
+    """Una tasa inválida hace que django-ratelimit tire 500 en CADA descarga, y
+    "0/h" las bloquea todas. Las dos caen al default."""
+    from config.settings import base
+
+    monkeypatch.setenv("PHOTO_DOWNLOAD_RATE", valor)
+    assert base._tasa("PHOTO_DOWNLOAD_RATE", "200/h") == esperado
+
+
+@pytest.mark.django_db
+def test_la_tasa_sale_de_la_configuracion(r2, settings) -> None:  # type: ignore[no-untyped-def]
+    settings.PHOTO_DOWNLOAD_RATE = "3/h"
+    settings.PHOTO_DOWNLOAD_R2_DIRECT = "all"
+    photo = _foto(r2)
+    for _ in range(3):
+        assert _bajar(photo).status_code == 302
+    resp = _bajar(photo)
+    assert resp.status_code == 429
+    assert resp["Retry-After"] == "3600"
+
+
+@pytest.mark.django_db
+def test_sin_cupo_global_en_el_proxy_sale_por_r2_en_vez_de_fallar(r2, settings) -> None:  # type: ignore[no-untyped-def]
+    """Un iPhone (que va por proxy) no se queda sin foto porque un scraper con
+    muchas IPs llenó el cupo del servidor: sale por R2."""
+    settings.PHOTO_DOWNLOAD_R2_DIRECT = "non_apple"
+    settings.PHOTO_DOWNLOAD_PROXY_BUDGET = "2/h"
+    photo = _foto(r2)
+    assert _bajar(photo, ua=UA_IPHONE).status_code == 200
+    assert _bajar(photo, ua=UA_IPHONE).status_code == 200
+    assert _bajar(photo, ua=UA_IPHONE).status_code == 302
+
+
+@pytest.mark.django_db
+def test_lo_que_sale_por_r2_no_gasta_cupo_del_proxy(r2, settings) -> None:  # type: ignore[no-untyped-def]
+    settings.PHOTO_DOWNLOAD_R2_DIRECT = "non_apple"
+    settings.PHOTO_DOWNLOAD_PROXY_BUDGET = "1/h"
+    photo = _foto(r2)
+    for _ in range(5):
+        assert _bajar(photo, ua=UA_ANDROID).status_code == 302
+    assert _bajar(photo, ua=UA_IPHONE).status_code == 200, "el cupo sigue entero para Apple"
+
+
+@pytest.mark.django_db
+def test_un_bot_se_rechaza_sin_tocar_la_base(r2, django_assert_num_queries) -> None:  # type: ignore[no-untyped-def]
+    """Un scraper rechazado en loop no puede costar una query por intento."""
+    photo = _foto(r2)
+    with django_assert_num_queries(0):
+        assert _bajar(photo, ua="Lightpanda/1.0").status_code == 403

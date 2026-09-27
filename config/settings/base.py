@@ -569,6 +569,25 @@ PHOTO_UPLOAD_MAX_BYTES = env("PHOTO_UPLOAD_MAX_MB") * 1024 * 1024
 # `/descargas/foto/<id>/?via=r2` (o `?via=proxy`).
 PHOTO_DOWNLOAD_R2_DIRECT = env.str("PHOTO_DOWNLOAD_R2_DIRECT", default="off").strip().lower()
 
+
+def _tasa(nombre: str, default: str) -> str:
+    """Una tasa de django-ratelimit desde una env var ("200/h"). Si viene mal
+    escrita se usa el default: una tasa inválida tira 500 en CADA request."""
+    import re as _re
+
+    valor = env.str(nombre, default=default).strip().lower()
+    return valor if _re.fullmatch(r"[1-9]\d*/[smhd]", valor) else default
+
+
+# Descargas de una foto por hora por IP REAL (ver apps/core/utils.py). Si el día
+# de un evento mucha gente baja desde el mismo WiFi y topa, se sube acá sin tocar
+# código.
+PHOTO_DOWNLOAD_RATE = _tasa("PHOTO_DOWNLOAD_RATE", "200/h")
+# Techo GLOBAL de las descargas que pasan por este servidor (proxy). Con el
+# límite por IP real, un scraper con muchas IPs no tendría techo; pasado este
+# cupo, la descarga sale por R2 en vez de ocupar threads y RAM acá.
+PHOTO_DOWNLOAD_PROXY_BUDGET = _tasa("PHOTO_DOWNLOAD_PROXY_BUDGET", "3000/h")
+
 # ----------------------------------------------------------------------------
 # Logging — JSON-ish para Sentry / Railway
 # ----------------------------------------------------------------------------

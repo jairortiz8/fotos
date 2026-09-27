@@ -23,6 +23,7 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
 from apps.core.utils import (
+    check_photo_download_proxy_budget,
     check_photo_download_rate_limit,
     check_zip_rate_limit,
     get_client_ip,
@@ -191,6 +192,15 @@ class PhotoDownloadView(View):
     http_method_names = ["get"]
 
     def get(self, request: HttpRequest, photo_id: int) -> HttpResponseBase:
+        # Primero lo barato (Redis), después la base: un scraper rechazado en loop
+        # no tiene que costar una query por intento.
+        if es_bot_declarado(request):
+            return JsonResponse({"error": "automated_client"}, status=403)
+        if not check_photo_download_rate_limit(request):
+            resp = JsonResponse({"error": "rate_limited"}, status=429)
+            resp["Retry-After"] = "3600"
+            return resp
+
         photo = get_object_or_404(
             Photo.objects.select_related("event"),
             id=photo_id,
@@ -205,16 +215,13 @@ class PhotoDownloadView(View):
         download_key = photo.download_key()
         if not download_key:
             raise Http404
-        if es_bot_declarado(request):
-            return JsonResponse({"error": "automated_client"}, status=403)
-        if not check_photo_download_rate_limit(request):
-            return JsonResponse({"error": "rate_limited"}, status=429)
 
         filename = photo.original_filename or f"foto_{photo.id}.jpg"
         if not filename.lower().endswith((".jpg", ".jpeg")):
             filename = f"{filename}.jpg"
 
-        if descarga_directa_de_r2(request):
+        # Si el cupo global del proxy se agotó, sale por R2 en vez de rechazarla.
+        if descarga_directa_de_r2(request) or not check_photo_download_proxy_budget(request):
             try:
                 url = default_storage().get_signed_url(
                     download_key,

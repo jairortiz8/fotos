@@ -227,6 +227,10 @@ def ip_real_para_limite(group: str, request: HttpRequest) -> str:
         addr = ipaddress.ip_address(ip)
     except ValueError:
         return ip or "sin-ip"
+    if addr.version == 6 and addr.ipv4_mapped:
+        # "::ffff:190.86.10.5" es una IPv4: agrupada por /64 daría "::" para
+        # TODOS los clientes y el límite volvería a ser global.
+        addr = addr.ipv4_mapped
     if addr.version == 6:
         return str(ipaddress.ip_network(f"{addr}/64", strict=False).network_address)
     return str(addr)
@@ -241,7 +245,27 @@ def check_photo_download_rate_limit(request: HttpRequest) -> bool:
         request,
         group="photo-download",
         key=ip_real_para_limite,
-        rate="200/h",
+        rate=settings.PHOTO_DOWNLOAD_RATE,
+        method=("GET",),
+        increment=True,
+    )
+    return not limited
+
+
+def check_photo_download_proxy_budget(request: HttpRequest) -> bool:
+    """¿Queda cupo GLOBAL para servir una descarga por este servidor (proxy)?
+
+    Antes, por el bug de la IP del proxy, había sin querer un techo de ~4.600
+    descargas/hora para todo el sitio. Con el límite por IP real ese techo
+    desaparece: un scraper con muchas IPs podría ocupar los 8 threads del único
+    proceso web bajando originales de hasta 40 MB. Este cupo lo repone, pero sólo
+    para el camino caro: pasado el cupo la descarga NO se rechaza, sale por R2.
+    True = hay cupo."""
+    limited = is_ratelimited(
+        request,
+        group="photo-download-proxy-global",
+        key=lambda group, req: "global",
+        rate=settings.PHOTO_DOWNLOAD_PROXY_BUDGET,
         method=("GET",),
         increment=True,
     )
