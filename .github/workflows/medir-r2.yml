@@ -27,40 +27,49 @@ jobs:
         run: |
           mkdir -p salida
           python3 - <<'PYX'
-          import os, requests, psycopg, pathlib, ipaddress
+          import os, socket, requests, psycopg, pathlib, ipaddress, collections
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
           V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          pg=(requests.post(API,headers=H,json={"query":V,"variables":{"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":os.environ["PG_ID"]}},timeout=40).json().get("data") or {}).get("variables") or {}
-          def tipo(ip):
-              if not ip: return "vacia"
+          def vars_de(sid):
+              return (requests.post(API,headers=H,json={"query":V,"variables":{"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":sid}},timeout=40).json().get("data") or {}).get("variables") or {}
+          pg=vars_de(os.environ["PG_ID"]); web=vars_de(os.environ["WEB_ID"])
+          CF=[ipaddress.ip_network(n) for n in requests.get("https://www.cloudflare.com/ips-v4",timeout=30).text.split()]
+          def es_cf(ip):
               try: a=ipaddress.ip_address(str(ip))
-              except ValueError: return "invalida"
-              if a in ipaddress.ip_network("100.64.0.0/10"): return "PROXY railway (100.64/10)"
-              return "privada" if a.is_private else "PUBLICA (cliente real)"
-          L=["El deploy con get_client_ip = ULTIMO salto de XFF salio el 2026-09-17 ~04:40 UTC (commit 8b0a21d) y se re-desplego el 26.",""]
+              except ValueError: return False
+              return any(a in n for n in CF)
+          L=[]
+          dominios={web.get("SITE_DOMAIN",""), web.get("RAILWAY_PUBLIC_DOMAIN","")} | set(web.get("ALLOWED_HOSTS","").split(","))
+          for d in sorted(x.strip() for x in dominios if x and x.strip() and x.strip() not in ("*",) and not x.strip().startswith(".")):
+              try:
+                  ips={ai[4][0] for ai in socket.getaddrinfo(d,443,socket.AF_INET)}
+                  L.append(f"DNS {d}: {len(ips)} IPs, Cloudflare={all(es_cf(i) for i in ips)}")
+              except Exception as e:
+                  L.append(f"DNS {d}: {type(e).__name__}")
+              try:
+                  r=requests.get(f"https://{d}/healthz/lite",timeout=20)
+                  L.append(f"   headers: server={r.headers.get('server')!r} cf-ray={'si' if 'cf-ray' in r.headers else 'no'} via={r.headers.get('via')!r} x-railway={'si' if any(k.lower().startswith('x-railway') for k in r.headers) else 'no'}")
+              except Exception as e:
+                  L.append(f"   GET: {type(e).__name__}")
           with psycopg.connect(pg["DATABASE_PUBLIC_URL"], connect_timeout=40) as cx, cx.cursor() as cur:
-              for antes, cond in (("DESPUES del 17-09 04:40", "last_used_at >= '2026-09-17 04:45+00'"), ("ANTES", "last_used_at < '2026-09-17 04:39+00'")):
-                  cur.execute(f"SELECT last_used_ip FROM photographers_photographerlink WHERE last_used_ip IS NOT NULL AND {cond}")
-                  filas=[r[0] for r in cur.fetchall()]
-                  from collections import Counter
-                  L.append(f"links de fotografo usados {antes}: {len(filas)} -> {dict(Counter(tipo(x) for x in filas))}")
-              for antes, cond in (("DESPUES del 17-09 04:40", "created_at >= '2026-09-17 04:45+00'"), ("ANTES (ultimos 30d)", "created_at < '2026-09-17 04:39+00' AND created_at > '2026-08-17'")):
-                  cur.execute(f"SELECT ip_address FROM core_auditlog WHERE ip_address IS NOT NULL AND {cond}")
-                  filas=[r[0] for r in cur.fetchall()]
-                  from collections import Counter
-                  L.append(f"audit log con IP {antes}: {len(filas)} -> {dict(Counter(tipo(x) for x in filas))}")
-              cur.execute("SELECT action, count(*) FROM core_auditlog WHERE created_at >= '2026-09-17 04:45+00' GROUP BY 1 ORDER BY 2 DESC LIMIT 8")
-              L.append("acciones del audit log desde el 17-09: " + ", ".join(f"{a}={c}" for a,c in cur.fetchall()))
-          pathlib.Path("salida").mkdir(exist_ok=True); pathlib.Path("salida/medicion4.txt").write_text("\n".join(L)); print("\n".join(L))
+              cur.execute("SELECT last_used_ip, last_used_at >= '2026-09-17 04:45+00' FROM photographers_photographerlink WHERE last_used_ip IS NOT NULL")
+              c=collections.Counter(("despues" if d else "antes", "CLOUDFLARE" if es_cf(ip) else "no-cloudflare") for ip,d in cur.fetchall())
+              L.append(f"links de fotografo: {dict(c)}")
+              cur.execute("SELECT ip_address FROM core_auditlog WHERE ip_address IS NOT NULL AND created_at > '2026-08-17'")
+              c=collections.Counter("CLOUDFLARE" if es_cf(ip) else "no-cloudflare" for (ip,) in cur.fetchall())
+              L.append(f"audit log (primer salto, antes del 17-09): {dict(c)}")
+              cur.execute("SELECT count(DISTINCT last_used_ip) FROM photographers_photographerlink WHERE last_used_at >= '2026-09-17 04:45+00'")
+              L.append(f"IPs /24 distintas entre los links usados despues del 17-09: {cur.fetchone()[0]}")
+          pathlib.Path("salida").mkdir(exist_ok=True); pathlib.Path("salida/medicion5.txt").write_text("\n".join(L)); print("\n".join(L))
           PYX
       - name: Publicar
         if: always()
         run: |
-          mkdir -p salida && touch salida/medicion4.txt
+          mkdir -p salida && touch salida/medicion5.txt
           git init -q pub && cd pub
           git config user.name "ci"; git config user.email "ci@local"
-          git checkout -q --orphan resultado-medir4
+          git checkout -q --orphan resultado-medir5
           cp ../salida/* .
           git add -A && git commit -q -m "medicion r2"
-          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" resultado-medir4
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" resultado-medir5
