@@ -70,7 +70,9 @@ def test_detect_bibs_gemini_wraps_network_errors(race_jpg: Path, settings) -> No
         detect_bibs_gemini(race_jpg)
 
 
-def test_detect_bibs_gemini_no_candidates_gives_zero_without_retry(race_jpg: Path, settings) -> None:  # type: ignore[no-untyped-def]
+def test_detect_bibs_gemini_no_candidates_gives_zero_without_retry(
+    race_jpg: Path, settings
+) -> None:  # type: ignore[no-untyped-def]
     """Respuesta sin candidates (p.ej. bloqueada): 0 dorsales y NO se reintenta
     (con temperature 0 volver a pedir da lo mismo y sólo gasta crédito)."""
     settings.GEMINI_API_KEY = "test-key"
