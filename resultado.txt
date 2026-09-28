@@ -1,0 +1,75 @@
+=== makemigrations --check (mi migracion tiene que coincidir con el modelo) ===
+No changes detected
+
+=== ruff ===
+All checks passed!
+210 files already formatted
+
+=== mypy ===
+Success: no issues found in 210 source files
+
+=== pytest: solo los del Instagram ===
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+django: version: 5.1.15, settings: config.settings.dev (from env)
+rootdir: /home/runner/work/fotos/fotos
+configfile: pyproject.toml
+plugins: Faker-40.39.0, platformdirs-4.12.1, github-actions-annotate-failures-0.4.2, django-4.14.0, cov-7.1.0, anyio-4.15.1
+collected 25 items
+
+tests/photographers/test_instagram.py ...::warning file=../../../../../opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/django/core/handlers/base.py,line=61::No directory at: /home/runner/work/fotos/fotos/staticfiles/
+.::warning file=../../../../../opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/django/core/handlers/base.py,line=61::No directory at: /home/runner/work/fotos/fotos/staticfiles/
+.::warning file=../../../../../opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/django/core/handlers/base.py,line=61::No directory at: /home/runner/work/fotos/fotos/staticfiles/
+.::warning file=../../../../../opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/django/core/handlers/base.py,line=61::No directory at: /home/runner/work/fotos/fotos/staticfiles/
+.::warning file=../../../../../opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/django/core/handlers/base.py,line=61::No directory at: /home/runner/work/fotos/fotos/staticfiles/
+.::warning file=../../../../../opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/django/core/handlers/base.py,line=61::No directory at: /home/runner/work/fotos/fotos/staticfiles/
+.::warning file=../../../../../opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/django/core/handlers/base.py,line=61::No directory at: /home/runner/work/fotos/fotos/staticfiles/
+.::warning file=../../../../../opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/django/core/handlers/base.py,line=61::No directory at: /home/runner/work/fotos/fotos/staticfiles/
+...............          [100%]
+
+=============================== warnings summary ===============================
+tests/photographers/test_instagram.py::test_el_fotografo_guarda_su_instagram_desde_el_portal
+tests/photographers/test_instagram.py::test_puede_borrarlo_mandando_vacio
+tests/photographers/test_instagram.py::test_un_usuario_invalido_devuelve_400_y_no_pisa_lo_guardado
+tests/photographers/test_instagram.py::test_con_un_token_que_no_existe_no_se_puede_guardar
+tests/photographers/test_instagram.py::test_con_el_link_revocado_tampoco
+tests/photographers/test_instagram.py::test_sale_en_la_tarjeta_de_la_carpeta
+tests/photographers/test_instagram.py::test_al_entrar_a_la_carpeta_el_instagram_es_clickeable
+tests/photographers/test_instagram.py::test_sin_instagram_la_carpeta_no_muestra_una_arroba_vacia
+  /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/django/core/handlers/base.py:61: UserWarning: No directory at: /home/runner/work/fotos/fotos/staticfiles/
+    mw_instance = middleware(adapted_handler)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 25 passed, 8 warnings in 1.19s ========================
+
+=== pytest: suite completa ===
+tests/core/test_audit_log.py: 2 warnings
+tests/core/test_encrypted_field.py: 2 warnings
+tests/core/test_user_mfa_stub.py: 4 warnings
+tests/dashboard/test_analytics.py: 5 warnings
+tests/dashboard/test_approval.py: 25 warnings
+tests/dashboard/test_auth.py: 2 warnings
+tests/dashboard/test_events.py: 15 warnings
+tests/dashboard/test_misc.py: 66 warnings
+tests/dashboard/test_smoke.py: 6 warnings
+tests/privacy/test_cleanup_tasks.py: 2 warnings
+tests/reviewers/test_reviewer.py: 1 warning
+  /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/factory/django.py:182: DeprecationWarning: SuperUserFactory._after_postgeneration will stop saving the instance after postgeneration hooks in the next major release.
+  If the save call is extraneous, set skip_postgeneration_save=True in the SuperUserFactory.Meta.
+  To keep saving the instance, move the save call to your postgeneration hooks or override _after_postgeneration.
+    warnings.warn(
+
+tests/dashboard/test_auth.py: 2 warnings
+tests/reviewers/test_reviewer.py: 24 warnings
+  /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/factory/django.py:182: DeprecationWarning: UserFactory._after_postgeneration will stop saving the instance after postgeneration hooks in the next major release.
+  If the save call is extraneous, set skip_postgeneration_save=True in the UserFactory.Meta.
+  To keep saving the instance, move the save call to your postgeneration hooks or override _after_postgeneration.
+    warnings.warn(
+
+tests/photos/test_overlays.py::test_landscape_logos_smaller_than_portrait_same_width
+tests/photos/test_overlays.py::test_landscape_logos_smaller_than_portrait_same_width
+  /home/runner/work/fotos/fotos/tests/photos/test_overlays.py:93: DeprecationWarning: Image.Image.getdata is deprecated and will be removed in Pillow 14 (2027-10-15). Use get_flattened_data instead.
+    return sum(1 for r, g, b in img.getdata() if r > 180 and g > 180 and b > 180)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+========= 707 passed, 1 deselected, 475 warnings in 107.56s (0:01:47) ==========
