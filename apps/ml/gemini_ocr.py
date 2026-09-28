@@ -23,7 +23,7 @@ import urllib.request
 from pathlib import Path
 
 from django.conf import settings
-from PIL import Image
+from PIL import Image, ImageOps
 
 from apps.ml.ocr import BibDetection, is_bib_like, normalize_bib
 
@@ -37,10 +37,16 @@ _PROMPT = (
     "(printed bibs pinned on chest/waist). Do NOT include numbers from signs, clocks, "
     'banners or cars. Respond ONLY with JSON: {"bibs": ["123"]} — use [] if none readable.'
 )
-# Reintentos internos para transitorios (429/5xx/red). Si se agotan, el caller
-# cae al OCR local — nunca se pierde el procesamiento de la foto.
+# Reintentos internos para transitorios (429/5xx/cortes de red). Un TIMEOUT no
+# se reintenta acá (ver abajo): lo reintenta Celery más tarde.
 _ATTEMPTS = 3
 _RETRY_DELAY_S = 5
+# Tope de la respuesta. Algunas fotos hacían que el modelo escribiera listas
+# interminables de números (hasta ~5.000 "dorsales", decenas de miles de
+# tokens): cada llamada tardaba >30 s, se reintentaba y, como Google cobra lo
+# generado aunque cortemos por timeout, vaciaron el crédito prepago (UTCOM
+# 2026-09-27 → HTTP 402). 12 dorsales son ~100 tokens: 256 sobra.
+_MAX_OUTPUT_TOKENS = 256
 
 
 class GeminiOCRError(Exception):
@@ -69,32 +75,60 @@ def detect_bibs_gemini(image_path: Path, *, timeout: int = 90) -> list[BibDetect
             )
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 body = json.load(response)
-            text = body["candidates"][0]["content"]["parts"][0]["text"]
-            return _to_detections(_parse_bibs(text))
         except urllib.error.HTTPError as exc:
             last_error = exc
-            # 429/5xx son transitorios → reintentar; 4xx de config no.
+            if exc.code == 402:
+                logger.error("Gemini SIN CRÉDITO (HTTP 402): recargar en AI Studio → Billing")
+            # 429/5xx son transitorios → reintentar; 4xx de config/pago no.
             if exc.code not in (429, 500, 502, 503, 504) or attempt == _ATTEMPTS:
                 break
-        except (OSError, http.client.HTTPException) as exc:
+        except (OSError, http.client.HTTPException, ValueError) as exc:
             # Red: URLError y TimeoutError son OSError, pero urllib NO envuelve
             # los cortes al leer la respuesta (ConnectionResetError,
-            # RemoteDisconnected, IncompleteRead, ssl.SSLError): antes se
-            # escapaban sin los reintentos internos ni el GeminiOCRError.
+            # RemoteDisconnected, IncompleteRead, ssl.SSLError); ValueError = el
+            # cuerpo llegó cortado. Un TIMEOUT no se reintenta acá: la llamada ya
+            # retuvo el proceso `timeout` s (y Google puede seguir generando y
+            # cobrando): lo reintenta Celery más tarde, con espera.
             last_error = exc
-            if attempt == _ATTEMPTS:
+            if _is_timeout(exc) or attempt == _ATTEMPTS:
                 break
-        except (KeyError, IndexError, ValueError, json.JSONDecodeError) as exc:
-            # Respuesta con estructura inesperada — no tiene sentido reintentar.
-            last_error = exc
-            break
+        else:
+            return _detections_from_body(body)
         time.sleep(_RETRY_DELAY_S * attempt)
 
     raise GeminiOCRError(f"{type(last_error).__name__}: {last_error}") from last_error
 
 
+def _is_timeout(exc: BaseException) -> bool:
+    return isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
+
+
+def _detections_from_body(body: dict) -> list[BibDetection]:
+    """Respuesta 200 → dorsales. Una respuesta INSERVIBLE (cortada por el tope,
+    bloqueada, sin texto, JSON roto) da 0 dorsales SIN reintentar: con
+    temperature 0 volver a pedir devuelve lo mismo y sólo gasta crédito. El
+    admin puede corregir a mano o tocar "Re-detectar"."""
+    candidates = body.get("candidates") or []
+    if not candidates:
+        block = (body.get("promptFeedback") or {}).get("blockReason")
+        logger.warning("Gemini sin respuesta (blockReason=%s) → 0 dorsales", block)
+        return []
+    candidate = candidates[0]
+    if candidate.get("finishReason") == "MAX_TOKENS":
+        logger.warning("Gemini cortado por el tope de %s tokens → 0 dorsales", _MAX_OUTPUT_TOKENS)
+        return []
+    try:
+        text = candidate["content"]["parts"][0]["text"]
+        return _to_detections(_parse_bibs(text))
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        logger.warning("Respuesta de Gemini inservible (%s) → 0 dorsales", exc)
+        return []
+
+
 def _build_request_body(image_path: Path) -> bytes:
-    img = Image.open(image_path)
+    # exif_transpose: las fotos verticales le llegaban a Gemini acostadas
+    # (la orientación viene en el EXIF, no en los píxeles).
+    img = ImageOps.exif_transpose(Image.open(image_path))
     img.thumbnail((_MAX_SIDE, _MAX_SIDE))
     buf = io.BytesIO()
     img.convert("RGB").save(buf, "JPEG", quality=88)
@@ -113,7 +147,11 @@ def _build_request_body(image_path: Path) -> bytes:
                     ]
                 }
             ],
-            "generationConfig": {"response_mime_type": "application/json", "temperature": 0},
+            "generationConfig": {
+                "response_mime_type": "application/json",
+                "temperature": 0,
+                "maxOutputTokens": _MAX_OUTPUT_TOKENS,
+            },
         }
     ).encode()
 
