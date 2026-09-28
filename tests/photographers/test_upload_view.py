@@ -218,3 +218,35 @@ def test_upload_different_content_not_flagged_duplicate(
     assert client.post(url, {"file": _jpeg_upload("a.jpg", "1042")}).status_code == 200
     assert client.post(url, {"file": _jpeg_upload("b.jpg", "7777")}).status_code == 200
     assert Photo.objects.filter(event=link.event).count() == 2
+
+
+# ---------------------------------------------------------------------------
+# Rate limit (600/m por token)
+# ---------------------------------------------------------------------------
+@pytest.mark.django_db
+def test_upload_rate_limited_returns_429_not_403(client: Client, link_token, r2_bucket) -> None:
+    """Pasado el límite, 429 + Retry-After: el portal lo trata como transitorio
+    y reintenta. Antes era 403 (PermissionDenied) y el portal lo marcaba como
+    error permanente (incidente UTCOM 2026-09-27: 2.258 fotos en "Error")."""
+    _link, raw_token = link_token
+    with patch("django_ratelimit.decorators.is_ratelimited", return_value=True):
+        response = client.post(
+            reverse("photographer:upload", args=[raw_token]), {"file": _jpeg_upload()}
+        )
+    assert response.status_code == 429
+    assert response.json()["error"] == "rate_limited"
+    assert response["Retry-After"] == "10"
+    assert not Photo.objects.exists()
+
+
+@pytest.mark.django_db
+def test_upload_rate_limit_kicks_in_after_600_per_minute(
+    client: Client, link_token, r2_bucket
+) -> None:
+    """El límite real: los primeros 600 pedidos pasan (acá sin archivo → 400),
+    el 601 ya es 429."""
+    _link, raw_token = link_token
+    url = reverse("photographer:upload", args=[raw_token])
+    statuses = [client.post(url, {}).status_code for _ in range(601)]
+    assert set(statuses[:600]) == {400}
+    assert statuses[600] == 429

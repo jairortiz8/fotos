@@ -198,7 +198,11 @@ class PhotographerPortalView(View):
 # ---------------------------------------------------------------------------
 @method_decorator(csrf_exempt, name="dispatch")
 @method_decorator(
-    ratelimit(key=upload_ratelimit_key, rate="600/m", method="POST", block=True),
+    # block=False: el exceso se contesta abajo con 429 (transitorio → el portal
+    # espera y reintenta). Con block=True salía un 403 que el portal toma como
+    # error permanente: el 2026-09-27 un fotógrafo terminó con 2.258 fotos en
+    # "Error" que en realidad sólo había que reintentar.
+    ratelimit(key=upload_ratelimit_key, rate="600/m", method="POST", block=False),
     name="dispatch",
 )
 class PhotographerUploadView(View):
@@ -207,6 +211,11 @@ class PhotographerUploadView(View):
     http_method_names = ["post"]
 
     def post(self, request: HttpRequest, token: str) -> HttpResponse:
+        if getattr(request, "limited", False):
+            response = JsonResponse({"error": "rate_limited"}, status=429)
+            response["Retry-After"] = "10"
+            return response
+
         link = lookup_link(token)
         if link is None or not is_link_authenticatable(link):
             return JsonResponse({"error": "invalid_link"}, status=410)

@@ -164,6 +164,21 @@
         </div>
       </div>
 
+      {% comment %}
+        Cola en pausa: el navegador no puede leer los archivos (tarjeta/disco
+        desconectado, carpeta movida). Sin esto, Safari mandaba cada foto vacía,
+        todas fallaban al instante y la cola entera terminaba en "Error".
+      {% endcomment %}
+      <div x-show="paused" x-cloak role="alert"
+           class="mb-3.5 rounded-xl border border-warning/40 bg-warning/10 p-4 flex items-start gap-3 flex-wrap">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-warning shrink-0 mt-0.5" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+        <div class="min-w-0 flex-1 text-[13px] text-text-1">
+          <div class="font-display font-bold text-[15px] mb-1">{% trans "Subida en pausa: no podemos leer tus fotos" %}</div>
+          <p class="text-text-2">{% trans "¿Se desconectó la tarjeta o el disco, o moviste la carpeta? Conectalo de nuevo y tocá Reanudar. Si moviste las fotos, recargá la página y volvé a arrastrarlas: las que ya subiste se marcan como repetidas." %}</p>
+        </div>
+        <button type="button" @click="resume()" class="rf-cta !py-2 !px-4 shrink-0">{% trans "Reanudar" %}</button>
+      </div>
+
       <div class="bg-ink-1 border border-border rounded-xl overflow-hidden">
         <template x-for="(item, index) in queue" :key="item.key">
           <div class="flex items-center gap-3 p-3 md:p-4 border-b border-border last:border-b-0">
@@ -327,6 +342,7 @@ function uploader(opts) {
     _pollTimer: null,
     _active: 0,
     _pending: [],
+    paused: false,
 
     get totalSize() {
       const bytes = this.queue.reduce((sum, item) => sum + item.size, 0);
@@ -389,6 +405,7 @@ function uploader(opts) {
     // Sube de a MAX_CONCURRENT a la vez; el resto espera "En cola". Esto permite
     // soltar 300+ fotos de una sin disparar 300 requests ni perder ninguna.
     pump() {
+      if (this.paused) return;
       while (this._active < MAX_CONCURRENT && this._pending.length > 0) {
         const item = this._pending.shift();
         this._active += 1;
@@ -401,11 +418,47 @@ function uploader(opts) {
       this.pump();
     },
 
-    uploadOne(item) {
+    // ¿El navegador todavía puede leer el archivo? Si la tarjeta/disco se
+    // desconectó o la carpeta se movió, Safari manda la foto VACÍA en vez de
+    // fallar: leemos 2 bytes antes de mandarla para detectarlo.
+    async _canRead(file) {
+      try {
+        const buf = await file.slice(0, 2).arrayBuffer();
+        return buf.byteLength === Math.min(2, file.size);
+      } catch (e) {
+        return false;
+      }
+    },
+
+    // No se puede leer: la foto vuelve al frente de la cola y se pausa TODO
+    // (si una no se lee, las demás de la misma carpeta tampoco). Nada se marca
+    // como error: al reanudar siguen desde donde quedaron.
+    _pauseUnreadable(item) {
+      this._active = Math.max(0, this._active - 1);
+      item.progress = 0;
+      item.color = "#F59E0B";
+      item.status = "{% trans 'En pausa' %}";
+      item.statusKey = "queued";
+      this._pending.unshift(item);
+      // Al reanudar, en el orden en que se eligieron (key crece con la selección).
+      this._pending.sort((a, b) => a.key - b.key);
+      this.paused = true;
+    },
+
+    resume() {
+      this.paused = false;
+      this.pump();
+    },
+
+    async uploadOne(item) {
       item.status = "{% trans 'Subiendo' %}";
       item.statusKey = "uploading";
       item.color = "#FC5200";
       item.progress = 0;
+      if (!(await this._canRead(item.file))) {
+        this._pauseUnreadable(item);
+        return;
+      }
       const fd = new FormData();
       fd.append("file", item.file);
       const xhr = new XMLHttpRequest();
@@ -440,8 +493,14 @@ function uploader(opts) {
           item.statusKey = "duplicate";
           this._slotDone();
         } else if (s === 429 || s >= 500) {
-          // Transitorio (server ocupado / error temporal) → se reintenta solo.
-          this._retryTransient(item);
+          // Transitorio (server ocupado / error temporal) → se reintenta solo,
+          // esperando lo que pida el server (Retry-After) si lo dice.
+          const wait = parseInt(xhr.getResponseHeader("Retry-After") || "", 10);
+          this._retryTransient(item, s === 429 && wait > 0 ? wait * 1000 : 0);
+        } else if (s === 400 && this._errorCode(xhr) === "no_file") {
+          // Llegó sin la foto adentro: el navegador no pudo leerla (misma causa
+          // que _canRead, por si el chequeo previo no la agarró).
+          this._pauseUnreadable(item);
         } else {
           // Permanente (formato, tamaño, link): reintentar no cambia nada.
           this._failPermanent(item, xhr);
@@ -455,7 +514,7 @@ function uploader(opts) {
     // Reintenta una falla TRANSITORIA (red, server ocupado, 5xx) con backoff.
     // La gracia: que el fotógrafo NO tenga que cazar la que falló. Tras varios
     // intentos la deja en error, pero "Reintentar las que fallaron" la re-encola.
-    _retryTransient(item) {
+    _retryTransient(item, minDelayMs = 0) {
       this._active = Math.max(0, this._active - 1);
       if (item.retries >= 6) {
         item.color = "#EF4444";
@@ -470,19 +529,22 @@ function uploader(opts) {
         setTimeout(() => {
           this._pending.push(item);
           this.pump();
-        }, 2000 + item.retries * 2000);
+        }, Math.max(minDelayMs, 2000 + item.retries * 2000));
       }
       this.pump();
     },
 
+    _errorCode(xhr) {
+      try {
+        return (JSON.parse(xhr.responseText) || {}).error || "";
+      } catch (e) {
+        return "";
+      }
+    },
+
     // Falla PERMANENTE: mostramos el motivo claro (no se reintenta sola).
     _failPermanent(item, xhr) {
-      let err = "";
-      try {
-        err = (JSON.parse(xhr.responseText) || {}).error || "";
-      } catch (e) {
-        /* sin json */
-      }
+      const err = this._errorCode(xhr);
       item.status =
         err === "invalid_format"
           ? "{% trans 'Solo JPG' %}"
@@ -500,6 +562,7 @@ function uploader(opts) {
 
     // Re-encola TODAS las que quedaron en error (un toque, sin buscar por nombre).
     retryFailed() {
+      this.paused = false;
       this.queue
         .filter((i) => i.statusKey === "error" && i.file)
         .forEach((i) => {
