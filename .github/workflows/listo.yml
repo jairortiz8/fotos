@@ -1,0 +1,80 @@
+name: listo para subir (one-off)
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-listo"]
+concurrency:
+  group: listo
+  cancel-in-progress: true
+permissions:
+  contents: write
+jobs:
+  medir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: main }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install --quiet requests "psycopg[binary]" boto3 redis celery
+      - name: Medir (solo lectura)
+        run: |
+          mkdir -p salida
+          python3 - <<'PYX'
+          import os, requests, pathlib, redis
+          from celery import Celery
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          P,E=os.environ["PROJECT_ID"],os.environ["ENV_ID"]
+          def gql(q,v):
+              try: return requests.post(API,headers=H,json={"query":q,"variables":v},timeout=90).json()
+              except Exception as e: return {"errors":[{"message":str(e)}]}
+          L=[]
+          d=gql('query($id:String!){ project(id:$id){ services{ edges{ node{ id name } } } } }',{"id":P})
+          servs=[(e["node"]["id"],e["node"]["name"]) for e in (((d.get("data") or {}).get("project") or {}).get("services") or {}).get("edges",[])]
+          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          Q='query($i:DeploymentListInput!){ deployments(first:1, input:$i){ edges{ node{ status createdAt meta } } } }'
+          redis_url=None
+          for sid,name in servs:
+              v=(gql(V,{"p":P,"e":E,"s":sid}).get("data") or {}).get("variables") or {}
+              if v.get("REDIS_PUBLIC_URL"): redis_url=v["REDIS_PUBLIC_URL"]
+              e=(((gql(Q,{"i":{"projectId":P,"environmentId":E,"serviceId":sid}}).get("data") or {}).get("deployments") or {}).get("edges") or [])
+              nd=e[0]["node"] if e else {}
+              ver={k:v.get(k) for k in ("PROCESS_TYPE","WORKER_QUEUES","CELERY_CONCURRENCY","OCR_QUEUE","OCR_LOCAL_FALLBACK","GEMINI_OCR_TIMEOUT","OCR_BACKEND") if k in v}
+              L.append(f"{name:<12} id={sid} deploy={nd.get('status')} commit={((nd.get('meta') or {}).get('commitHash') or '')[:7]} {nd.get('createdAt','')[:16]} vars={ver}")
+          rc=redis.Redis.from_url(redis_url); app=Celery(broker=redis_url)
+          L.append("colas: "+", ".join(f"{q}={rc.llen(q)}" for q in ("fast","ocr","faces","celery")))
+          aq=app.control.inspect(timeout=10).active_queues() or {}
+          st=app.control.inspect(timeout=10).stats() or {}
+          for n,qs in aq.items(): L.append(f"  {n.split('@')[1][:12]} colas={sorted(q['name'] for q in qs)} procesos={len((st.get(n) or {}).get('pool',{}).get('processes',[]))}")
+          import psycopg
+          V2='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          pgv=(gql(V2,{"p":P,"e":E,"s":"17602daf-d2a8-4b4e-99b9-738d2583e624"}).get("data") or {}).get("variables") or {}
+          with psycopg.connect(pgv["DATABASE_PUBLIC_URL"],connect_timeout=40) as cx, cx.cursor() as cur:
+              cur.execute("""SELECT count(*), count(*) FILTER (WHERE p.updated_at > '2026-09-28 22:52+00' AND p.branded_key<>''), count(*) FILTER (WHERE p.branded_key='')
+                             FROM photos_photo p JOIN events_event e ON e.id=p.event_id WHERE e.slug='utcom-2026' AND p.status<>'deleted' AND p.original_key<>''""")
+              t,h,s=cur.fetchone(); L.append(f"UTCOM: {t} fotos · regeneradas desde el deploy {h} · sin logos {s}")
+              cur.execute("SELECT count(*), max(created_at) FROM photos_photo WHERE created_at > now()-interval '30 minutes'")
+              L.append("subidas en los ultimos 30 min: %s (ultima %s)" % cur.fetchone())
+              cur.execute("SELECT count(*) FROM photos_photo WHERE status IN ('uploading','processing') AND updated_at < now()-interval '10 minutes'")
+              L.append(f"trabadas >10 min: {cur.fetchone()[0]}")
+          pathlib.Path("salida").mkdir(exist_ok=True); pathlib.Path("salida/colas.txt").write_text("\n".join(L)); print("\n".join(L))
+          PYX
+      - name: Publicar
+        if: always()
+        run: |
+          mkdir -p salida && touch salida/colas.txt
+          git init -q pub && cd pub
+          git config user.name "ci"; git config user.email "ci@local"
+          git checkout -q --orphan resultado-colas
+          cp ../salida/* .
+          git add -A && git commit -q -m "medicion r2"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" resultado-colas
