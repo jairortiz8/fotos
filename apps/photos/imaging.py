@@ -315,7 +315,14 @@ def generate_clean_render(original_bytes: bytes, long_edge: int, quality: int) -
 # ---------------------------------------------------------------------------
 # Original con logos de marca (lo que se DESCARGA en eventos brandeados)
 # ---------------------------------------------------------------------------
-BRANDED_QUALITY = 92
+# Calidad del JPEG con logos. Medido el 2026-09-28 sobre 60 fotos reales de UTCOM
+# contra "original + logos" sin comprimir: con q92 y color 4:2:0 la mediana daba
+# 44,5 dB (justo en el límite de lo que se nota) y la peor foto 33,7 dB (se notaba
+# en vegetación y barro), pesando casi la mitad que el original. Con q95 y color
+# 4:4:4: 50,5 dB de mediana y 42,8 dB la peor, +52% de peso (sigue por debajo del
+# original). Los originales de los fotógrafos vienen a ~q91 y la mitad en 4:4:4.
+BRANDED_QUALITY = 95
+BRANDED_SUBSAMPLING = 0  # 4:4:4: el color con la misma resolución que el brillo
 
 
 def generate_branded_original(
@@ -350,7 +357,17 @@ def generate_branded_original(
         branded = apply_brand_overlay(img, template)  # full-res, mismos % que el preview
 
         buf = BytesIO()
-        branded.save(buf, format="JPEG", quality=BRANDED_QUALITY, optimize=True)
+        branded.save(
+            buf,
+            format="JPEG",
+            quality=BRANDED_QUALITY,
+            subsampling=BRANDED_SUBSAMPLING,
+            optimize=True,
+            # Conservar el perfil de color del original: sin él, una foto en
+            # Adobe RGB se vería apagada. (Todos los de UTCOM usan sRGB, pero no
+            # cuesta nada no perderlo.) None → se guarda sin perfil, como antes.
+            icc_profile=img.info.get("icc_profile"),
+        )
         buf.seek(0)
 
         key = key_for_branded(photo.event.slug, _photo_uid(photo))

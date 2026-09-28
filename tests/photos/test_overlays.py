@@ -203,6 +203,62 @@ def test_generate_branded_original_creates_jpeg_with_logos() -> None:
         storage_module.reset_default_storage_for_tests()
 
 
+def _branded_bytes(img: Image.Image) -> bytes:
+    """Corre generate_branded_original con un storage falso y devuelve el JPEG."""
+    from apps.photos.imaging import generate_branded_original
+    from tests.factories import EventFactory, PhotoFactory
+
+    subido: dict[str, bytes] = {}
+
+    class _Storage:
+        def upload(self, fileobj, key, content_type=None):  # type: ignore[no-untyped-def]
+            subido["body"] = fileobj.read()
+            return key
+
+    photo = PhotoFactory(event=EventFactory(brand_overlay="utcom_2026"))
+    key = generate_branded_original(photo, img_object=img, storage=_Storage())  # type: ignore[arg-type]
+    assert key is not None
+    return subido["body"]
+
+
+@pytest.mark.django_db
+def test_la_version_con_logos_guarda_el_color_sin_submuestrear() -> None:
+    """4:4:4: con 4:2:0 el color quedaba a la mitad de resolución (medido: la peor
+    foto de UTCOM bajaba a 33,7 dB, se notaba en vegetación y barro)."""
+    from PIL import JpegImagePlugin
+
+    im = Image.open(BytesIO(_branded_bytes(_solid(1200, 800))))
+    assert JpegImagePlugin.get_sampling(im) == 0
+
+
+@pytest.mark.django_db
+def test_la_version_con_logos_usa_calidad_alta() -> None:
+    """La tabla de cuantización de luminancia de un JPEG q95 empieza en 2 (q92: 3,
+    q90: 3, q85: 5). Si alguien baja la calidad, esto lo nota."""
+    im = Image.open(BytesIO(_branded_bytes(_solid(1200, 800))))
+    assert im.quantization[0][0] <= 2
+
+
+@pytest.mark.django_db
+def test_la_version_con_logos_conserva_el_perfil_de_color() -> None:
+    """Una foto en Adobe RGB sin su perfil se ve apagada. Se copia tal cual."""
+    from PIL import ImageCms
+
+    perfil = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    src = _solid(1200, 800)
+    src.info["icc_profile"] = perfil
+    im = Image.open(BytesIO(_branded_bytes(src)))
+    assert im.info.get("icc_profile") == perfil
+
+
+@pytest.mark.django_db
+def test_sin_perfil_de_color_se_guarda_igual() -> None:
+    """La mitad de los originales de UTCOM no traen perfil: no puede romper."""
+    im = Image.open(BytesIO(_branded_bytes(_solid(1200, 800))))
+    assert im.format == "JPEG"
+    assert "icc_profile" not in im.info or not im.info["icc_profile"]
+
+
 @pytest.mark.django_db
 def test_download_key_selects_branded_only_for_branded_event() -> None:
     """`download_key()` = branded sólo si el evento tiene overlay Y hay branded_key;
