@@ -16,11 +16,12 @@ import logging
 import re
 import unicodedata
 import uuid
+from datetime import timedelta
 from io import BytesIO
 from typing import Any
 
 from django.conf import settings
-from django.db.models import F
+from django.db.models import F, Q
 from django.http import (
     FileResponse,
     Http404,
@@ -256,9 +257,15 @@ class PhotographerUploadView(View):
         upload.seek(0)
         content_hash = hashlib.sha256(upload.read()).hexdigest()
         upload.seek(0)
+        # Las filas sin original (original_key="") de hace >10 min son subidas que
+        # murieron a mitad de camino: no cuentan, si no bloquearían para siempre
+        # volver a subir esa foto. Las recientes sí (subida en curso de la misma
+        # foto → no duplicarla).
+        orphan = Q(original_key="", created_at__lt=timezone.now() - timedelta(minutes=10))
         duplicate_id = (
             Photo.objects.filter(event=link.event, content_hash=content_hash)
             .exclude(status=PhotoStatus.DELETED)
+            .exclude(orphan)
             .values_list("id", flat=True)
             .first()
         )
@@ -388,9 +395,12 @@ class PhotographerAlreadyUploadedView(View):
         except (ValueError, TypeError, KeyError):
             return JsonResponse({"error": "bad_request"}, status=400)
 
+        # Sólo las que tienen el original en R2 (original_key se setea recién al
+        # terminar de subir): una a medio subir o huérfana NO cuenta como subida.
         have = set(
             Photo.objects.filter(photographer_link=link)
             .exclude(status=PhotoStatus.DELETED)
+            .exclude(original_key="")
             .values_list("original_filename", "file_size")
         )
         return JsonResponse({"uploaded": [pair in have for pair in pairs]})

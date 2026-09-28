@@ -334,3 +334,54 @@ def test_already_uploaded_rate_limited_returns_429(client: Client, link_token) -
     with patch("django_ratelimit.decorators.is_ratelimited", return_value=True):
         response = _already(client, raw_token, [["a.jpg", 1]])
     assert response.status_code == 429
+
+
+@pytest.mark.django_db
+def test_already_uploaded_ignores_rows_without_original(client: Client, link_token) -> None:
+    """Una fila a medio subir (original_key vacío) no cuenta como subida: si no,
+    el portal no la volvería a mandar y la foto se perdería."""
+    from tests.factories import PhotoFactory
+
+    link, raw_token = link_token
+    PhotoFactory(
+        event=link.event,
+        photographer_link=link,
+        original_filename="C.jpg",
+        file_size=10,
+        original_key="",
+        status=PhotoStatus.UPLOADING,
+    )
+    assert _already(client, raw_token, [["C.jpg", 10]]).json() == {"uploaded": [False]}
+
+
+@pytest.mark.django_db
+def test_upload_orphan_row_does_not_block_reupload(client: Client, link_token, r2_bucket) -> None:
+    """Una subida que murió a mitad (fila sin original, vieja) no bloquea volver
+    a subir la misma foto; una en curso (reciente) sí la bloquea."""
+    import datetime as dt
+    import hashlib
+
+    from django.utils import timezone
+
+    from tests.factories import PhotoFactory
+
+    link, raw_token = link_token
+    upload = _jpeg_upload()
+    content_hash = hashlib.sha256(upload.read()).hexdigest()
+    upload.seek(0)
+    orphan = PhotoFactory(
+        event=link.event,
+        photographer_link=link,
+        original_key="",
+        content_hash=content_hash,
+        status=PhotoStatus.PROCESSING_FAILED,
+    )
+    Photo.objects.filter(id=orphan.id).update(created_at=timezone.now() - dt.timedelta(hours=2))
+    response = client.post(reverse("photographer:upload", args=[raw_token]), {"file": upload})
+    assert response.status_code == 200
+
+    # Ahora hay una fila reciente sin original (subida "en curso") con el mismo hash.
+    Photo.objects.exclude(id=orphan.id).update(original_key="")
+    again = _jpeg_upload()
+    response = client.post(reverse("photographer:upload", args=[raw_token]), {"file": again})
+    assert response.status_code == 409

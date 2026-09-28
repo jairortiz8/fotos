@@ -160,7 +160,7 @@
             <span x-show="counts.dup" x-cloak style="color:#8a8a93"><span x-text="counts.dup"></span> {% trans "repetidas" %}</span>
             <span x-show="counts.error" x-cloak class="font-semibold" style="color:#EF4444"><span x-text="counts.error"></span> {% trans "con error" %}</span>
           </span>
-          <button x-show="counts.error" x-cloak type="button" @click="retryFailed()"
+          <button x-show="counts.retryable" x-cloak type="button" @click="retryFailed()"
                   class="rf-cta !py-1.5 !px-3.5 text-[11px]">{% trans "Reintentar las que fallaron" %}</button>
         </div>
       </div>
@@ -179,7 +179,7 @@
           <div class="font-display font-bold text-[15px] mb-1">
             {% trans "Subida en pausa: no podemos leer" %} <span class="font-mono" x-text="pausedOn"></span>
           </div>
-          <p class="text-text-2">{% trans "¿Se desconectó la tarjeta o el disco, o cambiaste de lugar la carpeta? Conectalo de nuevo y tocá Reanudar: vuelve a intentar las que no se pudieron leer. Si la moviste, recargá la página y volvé a arrastrar la carpeta entera: las fotos que ya subiste no se vuelven a mandar." %}</p>
+          <p class="text-text-2">{% trans "¿Se desconectó la tarjeta o el disco, o cambiaste de lugar la carpeta? Conectalo de nuevo y tocá Reanudar: vuelve a intentar las que no se pudieron leer. Si la moviste, recargá la página, abrí la carpeta, seleccioná todas las fotos (Cmd+A) y arrastralas: las que ya subiste no se vuelven a mandar." %}</p>
         </div>
         <button type="button" @click="resume()" class="rf-cta !py-2 !px-4 shrink-0">{% trans "Reanudar" %}</button>
       </div>
@@ -358,14 +358,16 @@ function uploader(opts) {
 
     // Resumen para el encabezado: subidas (en el server) / en curso / repetidas / error.
     get counts() {
-      let ready = 0, busy = 0, error = 0, dup = 0;
+      let ready = 0, busy = 0, error = 0, dup = 0, retryable = 0;
       for (const i of this.queue) {
         if (i.statusKey === "uploaded") ready++;
-        else if (i.statusKey === "error") error++;
-        else if (i.statusKey === "duplicate") dup++;
+        else if (i.statusKey === "error") {
+          error++;
+          if (i.retryable !== false) retryable++;
+        } else if (i.statusKey === "duplicate") dup++;
         else busy++;
       }
-      return { ready, busy, error, dup };
+      return { ready, busy, error, dup, retryable };
     },
 
     onPick(ev) {
@@ -379,9 +381,9 @@ function uploader(opts) {
     },
 
     handleFiles(fileList) {
-      const fresh = [];
-      Array.from(fileList).forEach((file) => {
-        const item = {
+      const files = Array.from(fileList);
+      if (!files.length) return;
+      const raw = files.map((file) => ({
           key: this.nextKey++,
           file,
           name: file.name,
@@ -396,21 +398,28 @@ function uploader(opts) {
           polls: 0,
           retries: 0,
           unreadable: 0,
-        };
-        this.queue.unshift(item);
-        // El proxy reactivo de Alpine (no el objeto crudo): así cada cambio de
-        // estado se ve en pantalla y las comparaciones con `queue` funcionan.
-        const it = this.queue[0];
-        // Solo JPG. Lo que no sea JPG se marca con error VISIBLE, nunca en silencio.
-        const isJpeg = file.type === "image/jpeg" || /\.(jpe?g)$/i.test(file.name);
+          retryable: true,
+        }));
+      // UN solo unshift (la lista muestra primero las más nuevas): uno por
+      // archivo sobre el array reactivo es O(n²) y congelaba la página ~18 s
+      // con 4.500 fotos. Después se usan los proxies reactivos de Alpine (no
+      // los objetos crudos): así cada cambio se ve en pantalla.
+      this.queue.unshift(...raw.slice().reverse());
+      const added = this.queue.slice(0, raw.length).reverse();
+      const fresh = [];
+      for (const it of added) {
+        // Solo JPG. Lo que no sea JPG se marca con error VISIBLE, nunca en
+        // silencio (y no se reintenta: el server lo va a rechazar siempre).
+        const isJpeg = it.file.type === "image/jpeg" || /\.(jpe?g)$/i.test(it.name);
         if (!isJpeg) {
           it.color = "#EF4444";
           it.status = "{% trans 'Solo JPG' %}";
           it.statusKey = "error";
-          return;
+          it.retryable = false;
+          continue;
         }
         fresh.push(it);
-      });
+      }
       if (!fresh.length) return;
       // Soltar fotos con la cola en pausa = casi siempre re-arrastrar desde otro
       // lugar (otra tarjeta, carpeta vuelta a montar): se despausa y las nuevas
@@ -419,12 +428,17 @@ function uploader(opts) {
       this._skipAlreadyUploaded(fresh).then(() => {
         // Copias viejas de las mismas fotos (mismo nombre + tamaño) que quedaron
         // esperando o sin poder leerse: las reemplazan las recién soltadas.
+        // Sólo filas MÁS VIEJAS que esta tanda: si se sueltan las mismas fotos
+        // dos veces seguidas, sin esto cada tanda marcaba a la otra y no subía
+        // casi ninguna.
         const keys = new Set(fresh.map((i) => i.name + "|" + i.size));
-        const freshKeys = new Set(fresh.map((i) => i.key));
+        const oldest = Math.min(...fresh.map((i) => i.key));
         const stale = (i) =>
-          !freshKeys.has(i.key) &&
+          i.key < oldest &&
           keys.has(i.name + "|" + i.size) &&
-          (i.statusKey === "queued" || i.status === "{% trans 'No se puede leer' %}");
+          (i.statusKey === "queued" ||
+            i.status === "{% trans 'Reintentando' %}" ||
+            i.status === "{% trans 'No se puede leer' %}");
         for (const i of this.queue) {
           if (stale(i)) {
             i.statusKey = "duplicate";
@@ -433,7 +447,7 @@ function uploader(opts) {
             i.progress = 0;
           }
         }
-        this._pending = this._pending.filter((i) => i.statusKey === "queued");
+        this._pending = this._pending.filter((i) => i.statusKey !== "duplicate");
         const toQueue = fresh.filter((i) => i.statusKey === "queued");
         // Se despausa recién acá, con las nuevas ya adelante: si no, durante la
         // consulta de arriba se colaban las viejas ilegibles y volvían a pausar.
@@ -576,7 +590,7 @@ function uploader(opts) {
           item.color = "#10B981";
           item.status = "{% trans 'Subida' %}";
           item.statusKey = "uploaded";
-          this._streak = [];
+          if (!this.paused) this._streak = [];
           item.polls = 0;
           try {
             item.photoId = JSON.parse(xhr.responseText).id;
@@ -591,7 +605,7 @@ function uploader(opts) {
           item.color = "#8a8a93";
           item.status = "{% trans 'Repetida' %}";
           item.statusKey = "duplicate";
-          this._streak = [];
+          if (!this.paused) this._streak = [];
           this._slotDone();
         } else if (s === 429 || s >= 500) {
           // Transitorio (server ocupado / error temporal) → se reintenta solo,
@@ -628,6 +642,7 @@ function uploader(opts) {
         item.statusKey = "uploading";
         item.progress = 0;
         setTimeout(() => {
+          if (item.statusKey === "duplicate") return; // reemplazada mientras esperaba
           this._pending.push(item);
           this.pump();
         }, Math.max(minDelayMs, 2000 + item.retries * 2000));
@@ -665,7 +680,7 @@ function uploader(opts) {
     retryFailed() {
       this._clearPause();
       this.queue
-        .filter((i) => i.statusKey === "error" && i.file)
+        .filter((i) => i.statusKey === "error" && i.file && i.retryable !== false)
         .forEach((i) => {
           i.retries = 0;
           i.unreadable = 0;
