@@ -113,6 +113,7 @@
            x-data="uploader({
               uploadUrl: '{% url 'photographer:upload' token=token %}',
               statusUrl: '{% url 'photographer:upload_status' token=token %}',
+              alreadyUrl: '{% url 'photographer:already_uploaded' token=token %}',
               csrfToken: '{{ csrf_token }}',
               maxMb: {{ max_upload_mb }},
            })">
@@ -168,13 +169,17 @@
         Cola en pausa: el navegador no puede leer los archivos (tarjeta/disco
         desconectado, carpeta movida). Sin esto, Safari mandaba cada foto vacía,
         todas fallaban al instante y la cola entera terminaba en "Error".
+        Una foto ilegible queda en error ("No se puede leer") al instante y la
+        cola sigue; sólo se pausa si fallan 3 seguidas (disco desconectado).
       {% endcomment %}
       <div x-show="paused" x-cloak role="alert"
            class="mb-3.5 rounded-xl border border-warning/40 bg-warning/10 p-4 flex items-start gap-3 flex-wrap">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-warning shrink-0 mt-0.5" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
         <div class="min-w-0 flex-1 text-[13px] text-text-1">
-          <div class="font-display font-bold text-[15px] mb-1">{% trans "Subida en pausa: no podemos leer tus fotos" %}</div>
-          <p class="text-text-2">{% trans "¿Se desconectó la tarjeta o el disco, o moviste la carpeta? Conectalo de nuevo y tocá Reanudar. Si moviste las fotos, recargá la página y volvé a arrastrarlas: las que ya subiste se marcan como repetidas." %}</p>
+          <div class="font-display font-bold text-[15px] mb-1">
+            {% trans "Subida en pausa: no podemos leer" %} <span class="font-mono" x-text="pausedOn"></span>
+          </div>
+          <p class="text-text-2">{% trans "¿Se desconectó la tarjeta o el disco, o cambiaste de lugar la carpeta? Conectalo de nuevo y tocá Reanudar: vuelve a intentar las que no se pudieron leer. Si la moviste, recargá la página y volvé a arrastrar la carpeta entera: las fotos que ya subiste no se vuelven a mandar." %}</p>
         </div>
         <button type="button" @click="resume()" class="rf-cta !py-2 !px-4 shrink-0">{% trans "Reanudar" %}</button>
       </div>
@@ -343,6 +348,8 @@ function uploader(opts) {
     _active: 0,
     _pending: [],
     paused: false,
+    pausedOn: "",
+    _streak: [],
 
     get totalSize() {
       const bytes = this.queue.reduce((sum, item) => sum + item.size, 0);
@@ -372,6 +379,7 @@ function uploader(opts) {
     },
 
     handleFiles(fileList) {
+      const fresh = [];
       Array.from(fileList).forEach((file) => {
         const item = {
           key: this.nextKey++,
@@ -387,19 +395,83 @@ function uploader(opts) {
           thumb: "",
           polls: 0,
           retries: 0,
+          unreadable: 0,
         };
         this.queue.unshift(item);
+        // El proxy reactivo de Alpine (no el objeto crudo): así cada cambio de
+        // estado se ve en pantalla y las comparaciones con `queue` funcionan.
+        const it = this.queue[0];
         // Solo JPG. Lo que no sea JPG se marca con error VISIBLE, nunca en silencio.
         const isJpeg = file.type === "image/jpeg" || /\.(jpe?g)$/i.test(file.name);
         if (!isJpeg) {
-          item.color = "#EF4444";
-          item.status = "{% trans 'Solo JPG' %}";
-          item.statusKey = "error";
+          it.color = "#EF4444";
+          it.status = "{% trans 'Solo JPG' %}";
+          it.statusKey = "error";
           return;
         }
-        this._pending.push(item);
+        fresh.push(it);
       });
-      this.pump();
+      if (!fresh.length) return;
+      // Soltar fotos con la cola en pausa = casi siempre re-arrastrar desde otro
+      // lugar (otra tarjeta, carpeta vuelta a montar): se despausa y las nuevas
+      // pasan ADELANTE de las viejas que esperaban.
+      const wasPaused = this.paused;
+      this._skipAlreadyUploaded(fresh).then(() => {
+        // Copias viejas de las mismas fotos (mismo nombre + tamaño) que quedaron
+        // esperando o sin poder leerse: las reemplazan las recién soltadas.
+        const keys = new Set(fresh.map((i) => i.name + "|" + i.size));
+        const freshKeys = new Set(fresh.map((i) => i.key));
+        const stale = (i) =>
+          !freshKeys.has(i.key) &&
+          keys.has(i.name + "|" + i.size) &&
+          (i.statusKey === "queued" || i.status === "{% trans 'No se puede leer' %}");
+        for (const i of this.queue) {
+          if (stale(i)) {
+            i.statusKey = "duplicate";
+            i.status = "{% trans 'Reemplazada' %}";
+            i.color = "#8a8a93";
+            i.progress = 0;
+          }
+        }
+        this._pending = this._pending.filter((i) => i.statusKey === "queued");
+        const toQueue = fresh.filter((i) => i.statusKey === "queued");
+        // Se despausa recién acá, con las nuevas ya adelante: si no, durante la
+        // consulta de arriba se colaban las viejas ilegibles y volvían a pausar.
+        if (wasPaused || this.paused) this._clearPause();
+        this._pending = wasPaused ? toQueue.concat(this._pending) : this._pending.concat(toQueue);
+        this.pump();
+      });
+    },
+
+    // Pregunta al server cuáles de estas fotos YA están subidas (nombre +
+    // tamaño) y las marca sin mandarlas. Así, tras recargar, se puede
+    // re-arrastrar la carpeta entera y sólo suben las que faltan. Si la
+    // consulta falla, se suben igual (el server detecta repetidas por hash).
+    async _skipAlreadyUploaded(items) {
+      if (!opts.alreadyUrl) return;
+      for (let i = 0; i < items.length; i += 2000) {
+        const chunk = items.slice(i, i + 2000);
+        try {
+          const r = await fetch(opts.alreadyUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-CSRFToken": opts.csrfToken },
+            body: JSON.stringify({ files: chunk.map((it) => [it.name, it.size]) }),
+          });
+          if (!r.ok) return;
+          const data = await r.json();
+          (data.uploaded || []).forEach((yes, j) => {
+            const it = chunk[j];
+            if (yes && it) {
+              it.progress = 1;
+              it.color = "#8a8a93";
+              it.status = "{% trans 'Ya estaba subida' %}";
+              it.statusKey = "duplicate";
+            }
+          });
+        } catch (e) {
+          return;
+        }
+      }
     },
 
     // Sube de a MAX_CONCURRENT a la vez; el resto espera "En cola". Esto permite
@@ -422,6 +494,11 @@ function uploader(opts) {
     // desconectó o la carpeta se movió, Safari manda la foto VACÍA en vez de
     // fallar: leemos 2 bytes antes de mandarla para detectarlo.
     async _canRead(file) {
+      // Navegadores viejos (Safari ≤ 13) no tienen Blob.arrayBuffer: sin chequeo
+      // previo (queda la red de seguridad del no_file del server).
+      if (typeof Blob === "undefined" || typeof Blob.prototype.arrayBuffer !== "function") {
+        return true;
+      }
       try {
         const buf = await file.slice(0, 2).arrayBuffer();
         return buf.byteLength === Math.min(2, file.size);
@@ -430,23 +507,45 @@ function uploader(opts) {
       }
     },
 
-    // No se puede leer: la foto vuelve al frente de la cola y se pausa TODO
-    // (si una no se lee, las demás de la misma carpeta tampoco). Nada se marca
-    // como error: al reanudar siguen desde donde quedaron.
-    _pauseUnreadable(item) {
+    // No se puede leer: la foto queda en error ("No se puede leer") AL INSTANTE,
+    // así una foto borrada/dañada/modificada nunca traba a las demás. Si fallan
+    // 3 seguidas por primera vez (sin ninguna subida en el medio), lo normal es
+    // que se haya desconectado la tarjeta/disco: se PAUSA todo en vez de quemar
+    // la cola entera. Las que fallan en su 2ª oportunidad no cuentan para pausar.
+    _onUnreadable(item) {
       this._active = Math.max(0, this._active - 1);
       item.progress = 0;
-      item.color = "#F59E0B";
-      item.status = "{% trans 'En pausa' %}";
-      item.statusKey = "queued";
-      this._pending.unshift(item);
-      // Al reanudar, en el orden en que se eligieron (key crece con la selección).
-      this._pending.sort((a, b) => a.key - b.key);
-      this.paused = true;
+      item.unreadable += 1;
+      item.color = "#EF4444";
+      item.status = "{% trans 'No se puede leer' %}";
+      item.statusKey = "error";
+      if (item.unreadable === 1) {
+        this._streak.push(item);
+        if (this._streak.length >= 3 && !this.paused) {
+          this.paused = true;
+          this.pausedOn = this._streak[0].name;
+        }
+      }
+      this.pump();
     },
 
-    resume() {
+    _clearPause() {
       this.paused = false;
+      this.pausedOn = "";
+      this._streak = [];
+    },
+
+    // Reanudar: las de la racha que causó la pausa tienen UNA oportunidad más
+    // (al frente, en orden de selección); si vuelven a fallar quedan en error.
+    resume() {
+      const again = this._streak.filter((i) => i.unreadable === 1).sort((a, b) => a.key - b.key);
+      for (const i of again) {
+        i.color = "#8a8a93";
+        i.status = "{% trans 'En cola' %}";
+        i.statusKey = "queued";
+      }
+      this._pending = again.concat(this._pending);
+      this._clearPause();
       this.pump();
     },
 
@@ -456,7 +555,7 @@ function uploader(opts) {
       item.color = "#FC5200";
       item.progress = 0;
       if (!(await this._canRead(item.file))) {
-        this._pauseUnreadable(item);
+        this._onUnreadable(item);
         return;
       }
       const fd = new FormData();
@@ -477,6 +576,7 @@ function uploader(opts) {
           item.color = "#10B981";
           item.status = "{% trans 'Subida' %}";
           item.statusKey = "uploaded";
+          this._streak = [];
           item.polls = 0;
           try {
             item.photoId = JSON.parse(xhr.responseText).id;
@@ -491,6 +591,7 @@ function uploader(opts) {
           item.color = "#8a8a93";
           item.status = "{% trans 'Repetida' %}";
           item.statusKey = "duplicate";
+          this._streak = [];
           this._slotDone();
         } else if (s === 429 || s >= 500) {
           // Transitorio (server ocupado / error temporal) → se reintenta solo,
@@ -500,7 +601,7 @@ function uploader(opts) {
         } else if (s === 400 && this._errorCode(xhr) === "no_file") {
           // Llegó sin la foto adentro: el navegador no pudo leerla (misma causa
           // que _canRead, por si el chequeo previo no la agarró).
-          this._pauseUnreadable(item);
+          this._onUnreadable(item);
         } else {
           // Permanente (formato, tamaño, link): reintentar no cambia nada.
           this._failPermanent(item, xhr);
@@ -562,11 +663,12 @@ function uploader(opts) {
 
     // Re-encola TODAS las que quedaron en error (un toque, sin buscar por nombre).
     retryFailed() {
-      this.paused = false;
+      this._clearPause();
       this.queue
         .filter((i) => i.statusKey === "error" && i.file)
         .forEach((i) => {
           i.retries = 0;
+          i.unreadable = 0;
           i.progress = 0;
           i.status = "{% trans 'En cola' %}";
           i.statusKey = "queued";

@@ -11,6 +11,7 @@ Rate limiting:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 import unicodedata
@@ -340,6 +341,59 @@ class PhotographerUploadView(View):
                 "key": photo.original_key,
             }
         )
+
+
+# ---------------------------------------------------------------------------
+# AlreadyUploadedView (POST) — ¿cuáles de estas fotos ya están subidas?
+#
+# Incidente UTCOM 2026-09-27: a mitad de una subida de 4.500 fotos el navegador
+# dejó de poder leer los archivos. La salida era recargar y volver a arrastrar
+# la carpeta, pero eso re-mandaba ENTERAS (~17 MB c/u, 29 GB) las 1.756 que ya
+# estaban, sólo para recibir "Repetida" (el hash se calcula con el archivo ya
+# recibido). Con esto el portal pregunta antes por nombre + tamaño y sólo manda
+# las que faltan: el fotógrafo no tiene que saber "desde cuál" seguir.
+# ---------------------------------------------------------------------------
+ALREADY_UPLOADED_MAX_FILES = 5000
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+@method_decorator(
+    ratelimit(key=upload_ratelimit_key, rate="60/m", method="POST", block=False),
+    name="dispatch",
+)
+class PhotographerAlreadyUploadedView(View):
+    """`{"files": [[nombre, bytes], ...]}` → `{"uploaded": [bool, ...]}` (mismo orden).
+
+    Compara contra las fotos de ESTE link (no borradas), con el nombre saneado
+    igual que al subir. csrf_exempt: la autenticación es el token de la URL.
+    """
+
+    http_method_names = ["post"]
+
+    def post(self, request: HttpRequest, token: str) -> HttpResponse:
+        if getattr(request, "limited", False):
+            response = JsonResponse({"error": "rate_limited"}, status=429)
+            response["Retry-After"] = "10"
+            return response
+
+        link = lookup_link(token)
+        if link is None or not is_link_authenticatable(link):
+            return JsonResponse({"error": "invalid_link"}, status=410)
+
+        try:
+            files = json.loads(request.body)["files"]
+            if not isinstance(files, list) or len(files) > ALREADY_UPLOADED_MAX_FILES:
+                raise ValueError
+            pairs = [(sanitize_filename(str(name)), int(size)) for name, size in files]
+        except (ValueError, TypeError, KeyError):
+            return JsonResponse({"error": "bad_request"}, status=400)
+
+        have = set(
+            Photo.objects.filter(photographer_link=link)
+            .exclude(status=PhotoStatus.DELETED)
+            .values_list("original_filename", "file_size")
+        )
+        return JsonResponse({"uploaded": [pair in have for pair in pairs]})
 
 
 # ---------------------------------------------------------------------------

@@ -247,6 +247,90 @@ def test_upload_rate_limit_kicks_in_after_600_per_minute(
     el 601 ya es 429."""
     _link, raw_token = link_token
     url = reverse("photographer:upload", args=[raw_token])
-    statuses = [client.post(url, {}).status_code for _ in range(601)]
+    # Reloj fijo: la ventana de django-ratelimit es de 60 s con un desfase según
+    # el token; sin esto el loop podía cruzar el corte y el test fallaba al azar.
+    with patch("django_ratelimit.core.time.time", return_value=1_790_000_000.0):
+        statuses = [client.post(url, {}).status_code for _ in range(601)]
     assert set(statuses[:600]) == {400}
     assert statuses[600] == 429
+
+
+# ---------------------------------------------------------------------------
+# ¿Cuáles ya están subidas? (para no re-mandar al re-arrastrar la carpeta)
+# ---------------------------------------------------------------------------
+def _already(client: Client, token: str, files: object):  # type: ignore[no-untyped-def]
+    import json
+
+    return client.post(
+        reverse("photographer:already_uploaded", args=[token]),
+        data=json.dumps({"files": files}),
+        content_type="application/json",
+    )
+
+
+@pytest.mark.django_db
+def test_already_uploaded_matches_by_sanitized_name_and_size(client: Client, link_token) -> None:
+    from tests.factories import PhotoFactory
+
+    link, raw_token = link_token
+    PhotoFactory(
+        event=link.event,
+        photographer_link=link,
+        original_filename="IMG_2380.jpg",
+        file_size=17_000_000,
+    )
+    PhotoFactory(
+        event=link.event, photographer_link=link, original_filename="Foto_n_1.jpg", file_size=5
+    )
+    response = _already(
+        client,
+        raw_token,
+        [
+            ["IMG_2380.jpg", 17_000_000],  # misma foto → ya está
+            ["IMG_2380.jpg", 16_999_999],  # mismo nombre, otro tamaño → no
+            ["IMG_4186.jpg", 17_000_000],  # no subida
+            ["Foto ñ 1.jpg", 5],  # el server compara con el nombre saneado
+        ],
+    )
+    assert response.status_code == 200
+    assert response.json() == {"uploaded": [True, False, False, True]}
+
+
+@pytest.mark.django_db
+def test_already_uploaded_ignores_other_links_and_deleted(client: Client, link_token) -> None:
+    from tests.factories import PhotoFactory
+
+    link, raw_token = link_token
+    other, _ = PhotographerLink.generate_token_and_create(link.event, name="Otro")
+    PhotoFactory(event=link.event, photographer_link=other, original_filename="A.jpg", file_size=10)
+    PhotoFactory(
+        event=link.event,
+        photographer_link=link,
+        original_filename="B.jpg",
+        file_size=10,
+        status=PhotoStatus.DELETED,
+    )
+    response = _already(client, raw_token, [["A.jpg", 10], ["B.jpg", 10]])
+    assert response.json() == {"uploaded": [False, False]}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "files", [None, "x", [["solo-nombre"]], [["a.jpg", "no-numero"]], [["a.jpg", 1]] * 5001]
+)
+def test_already_uploaded_rejects_bad_payload(client: Client, link_token, files) -> None:  # type: ignore[no-untyped-def]
+    _link, raw_token = link_token
+    assert _already(client, raw_token, files).status_code == 400
+
+
+@pytest.mark.django_db
+def test_already_uploaded_requires_valid_token(client: Client) -> None:
+    assert _already(client, "token-que-no-existe", [["a.jpg", 1]]).status_code == 410
+
+
+@pytest.mark.django_db
+def test_already_uploaded_rate_limited_returns_429(client: Client, link_token) -> None:
+    _link, raw_token = link_token
+    with patch("django_ratelimit.decorators.is_ratelimited", return_value=True):
+        response = _already(client, raw_token, [["a.jpg", 1]])
+    assert response.status_code == 429

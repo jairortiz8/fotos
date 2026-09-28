@@ -5,6 +5,7 @@ from __future__ import annotations
 from django.urls import path
 
 from apps.photographers.views import (
+    PhotographerAlreadyUploadedView,
     PhotographerCoverView,
     PhotographerFeaturedUploadView,
     PhotographerPortalView,
@@ -21,6 +22,11 @@ urlpatterns = [
     path("<str:token>/", PhotographerPortalView.as_view(), name="portal"),
     path("<str:token>/upload/", PhotographerUploadView.as_view(), name="upload"),
     path("<str:token>/status/", PhotographerUploadStatusView.as_view(), name="upload_status"),
+    path(
+        "<str:token>/ya-subidas/",
+        PhotographerAlreadyUploadedView.as_view(),
+        name="already_uploaded",
+    ),
     path(
         "<str:token>/destacada/", PhotographerFeaturedUploadView.as_view(), name="featured_upload"
     ),
