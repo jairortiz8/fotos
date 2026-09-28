@@ -21,7 +21,8 @@ En Railway, cada servicio en **1 réplica** (no 0):
 |---|---|---|
 | `fotos` (web) | sitio, subida, búsquedas | el sitio no carga |
 | `worker` | reconocimiento facial (selfie) | las caras nunca se indexan |
-| `worker_fast` | preview, thumbnail y OCR | **las fotos quedan en "Procesando" para siempre** |
+| `worker_fast` | preview y thumbnail | **las fotos quedan en "Procesando" para siempre** |
+| `worker-fast` (con guion) = **worker de OCR** | lectura de dorsales (Gemini) | las fotos se ven y se aprueban, pero **ninguna tiene dorsal** y la búsqueda por dorsal da vacío |
 | `beat` | cron de retención y limpieza | nada urgente, pero conviene |
 | `Postgres`, `Redis` | siempre arriba | — |
 
@@ -30,19 +31,33 @@ ni 0 réplicas.
 
 ### 1.2 Las colas y quién las atiende
 
-Este es el punto que causó el atasco. Las tareas se reparten en tres colas y
+Este es el punto que causó el atasco. Las tareas se reparten en cuatro colas y
 **cada cola necesita alguien que la consuma**:
 
 | cola | tareas | la consume |
 |---|---|---|
-| `fast` | `process_photo`, `run_ocr_on_photo` | `worker_fast` |
+| `fast` | `process_photo` (preview, thumbnail) | `worker_fast` |
+| `ocr` | `run_ocr_on_photo` (dorsales) | worker de OCR (`worker-fast`, con guion) |
 | `faces` | `run_face_recognition_on_photo` | `worker` |
 | `celery` | avatares, crons, todo lo demás | `worker_fast` |
 
 Variables que definen el reparto:
 
 - `worker.WORKER_QUEUES` = `faces`
-- `worker_fast.PROCESS_TYPE` = `worker` · `WORKER_QUEUES` = `fast,celery` · `CELERY_CONCURRENCY` = `4`
+- `worker_fast.PROCESS_TYPE` = `worker` · `WORKER_QUEUES` = `fast,celery` · `CELERY_CONCURRENCY` = `10` · `OCR_QUEUE` = `ocr`
+- worker de OCR (`worker-fast`): `PROCESS_TYPE` = `worker` · `WORKER_QUEUES` = `ocr` · `CELERY_CONCURRENCY` = `10` · `OCR_QUEUE` = `ocr`
+- `fotos` (web): `OCR_QUEUE` = `ocr` (el botón "Re-detectar" del dashboard)
+- En los tres: `OCR_LOCAL_FALLBACK` = `false`, `GEMINI_OCR_TIMEOUT` = `30`
+
+> **Por qué el OCR tiene worker propio** (UTCOM, 2026-09-27): con Gemini lento,
+> cada lectura de dorsales retenía un proceso ~100 s. Compartiendo procesos con
+> los previews, las subidas en vivo se frenaban. Separados, Gemini lento sólo
+> demora los dorsales. Y **sin fallback local**: el OCR local cargaba ~2-3 GB por
+> proceso y agotó los hilos del worker (900 fotos sin preview).
+>
+> **Orden de deploy**: primero el worker de OCR, después `worker_fast`. Si
+> `worker_fast` tiene `OCR_QUEUE=ocr` y el worker de OCR está apagado, no hay
+> error visible: simplemente no se lee ningún dorsal.
 
 > **Ojo**: el rol `worker_fast` del entrypoint tiene la cola fija en `fast` y no
 > respeta `WORKER_QUEUES`. Por eso el servicio `worker_fast` corre con
@@ -133,8 +148,10 @@ Si se queda en "Procesando" más de unos minutos → volvé al punto 1.2.
 
 ### 2.3 Orden de la cola
 
-Todas las tareas de preview entran primero y **el OCR se encola detrás**. Es
-normal ver 0 dorsales hasta que los previews terminan. No es una falla.
+Los previews (`fast`) y los dorsales (`ocr`) van por colas y workers separados:
+los dorsales aparecen unos segundos después del preview. Si Gemini está lento
+pueden tardar más (reintenta solo hasta ~1,5 h). **Si pasan varios minutos y
+ninguna foto nueva tiene dorsal, revisá que el worker de OCR esté prendido.**
 
 ---
 
@@ -142,7 +159,7 @@ normal ver 0 dorsales hasta que los previews terminan. No es una falla.
 
 Comprobar, en este orden:
 
-1. **Las tres colas en cero** (`fast`, `faces`, `celery`).
+1. **Las cuatro colas en cero** (`fast`, `ocr`, `faces`, `celery`).
 2. **Ninguna foto** en `processing`, `uploading` ni `processing_failed`.
 3. **Ninguna foto sin** original, preview ni thumbnail.
 4. **Dorsales leídos > 0** y un porcentaje razonable de fotos con dorsal.
@@ -166,7 +183,7 @@ que ese evento tenga caras aún más chicas y haya que bajar el piso.
 
 Cuando ya no se suben más fotos y la auditoría pasó:
 
-- `worker`, `worker_fast` y `beat` → **detenidos**.
+- `worker`, `worker_fast`, el worker de OCR (`worker-fast`) y `beat` → **detenidos**.
 - `fotos` (web), `Postgres` y `Redis` → **siguen arriba**: la galería, la
   búsqueda por dorsal y la búsqueda por cara funcionan sin workers.
 
@@ -207,8 +224,8 @@ mutation($s:String!,$e:String!,$c:String){
 Verde en Railway no alcanza como prueba, y el commit tampoco: la forma real de
 saber que están consumiendo la cola es preguntárselo. Con `REDIS_PUBLIC_URL` (proxy público de
 Redis), un `Celery(broker=url).control.ping(timeout=8)` devuelve una respuesta
-**por cada worker** que esté escuchando. Con `worker` y `worker_fast` arriba
-tienen que contestar **dos**.
+**por cada worker** que esté escuchando. Con `worker`, `worker_fast` y el worker
+de OCR arriba tienen que contestar **tres**.
 
 > **Ojo con el orden**: apagalos **después** del último push a `main`. Un push
 > puede revivir el web y, a veces, algún worker.
@@ -217,7 +234,8 @@ tienen que contestar **dos**.
 que sugieren los defaults del entrypoint):
 
 ```
-celery@... colas=['celery', 'fast']   <- el liviano (previews), 4 procesos
+celery@... colas=['fast', 'celery']   <- previews, 10 procesos
+celery@... colas=['ocr']              <- dorsales (Gemini), 10 procesos
 celery@... colas=['faces']            <- el pesado (caras), 1 proceso
 ```
 
@@ -323,7 +341,10 @@ pasa por ahí, no directo de R2.
 | síntoma | causa real |
 |---|---|
 | Fotos eternamente en "Procesando" | `worker_fast` sin desplegar: nadie consumía la cola `fast` |
-| "El OCR no funciona", 0 dorsales | El OCR estaba encolado **detrás** de los previews; no era una falla |
+| "El OCR no funciona", 0 dorsales | El OCR estaba encolado **detrás** de los previews; no era una falla (hoy tiene cola y worker propios) |
+| ~900 fotos sin preview, worker trabado (UTCOM 2026-09-27) | Gemini falló → fallback al OCR local en 4 procesos → se agotaron los hilos. Hoy: `OCR_LOCAL_FALLBACK=false` |
+| Previews frenados con Gemini lento (UTCOM) | OCR y previews compartían procesos. Hoy: worker de OCR aparte |
+| Fotógrafo con miles de fotos en "Error" (UTCOM, Merlos) | Safari dejó de poder leer los archivos (tarjeta/disco desconectado) y mandaba cada foto vacía; fallaban al instante y chocaban con el límite de velocidad, que salía como 403 (error permanente). Hoy: el portal detecta el archivo ilegible y **pausa** la cola con un aviso; el límite responde 429 y se reintenta solo |
 | Foto de grupo con una sola cara clickeable | Umbral de 130 px calibrado para primeros planos; las caras del grupo miden ~59 px |
 | Las caras tapaban la foto en el lightbox | Las tiras se partían en varias filas y la barra crecía sobre la imagen |
 | Marca de agua no deseada | Flag `PREVIEW_WATERMARK_ENABLED`; hay que **regenerar** los previews ya hechos |

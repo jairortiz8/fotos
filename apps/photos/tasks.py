@@ -197,14 +197,19 @@ def _detect_bibs(source: Path, *, exhaustive: bool, photo_id: int) -> list:
     name="photos.run_ocr_on_photo",
     bind=True,
     # Sin fallback local (OCR_LOCAL_FALLBACK=False) el reintento es la única
-    # recuperación: esperas crecientes (60 s → 30 min, con jitter) cubren
-    # caídas de Gemini de ~1 h. El tope de 30 min queda bajo el
-    # visibility_timeout de Redis (1 h) para no duplicar entregas.
+    # recuperación: esperas 60, 120, 240, 480, 960 y 3x1200 s ≈ 1,5 h de
+    # cobertura ante una caída de Gemini. Sin jitter (con jitter cada espera es
+    # un sorteo entre 0 y el tope y muchas fotos se rendían antes). Tope de
+    # 20 min: holgura contra el visibility_timeout de Redis (1 h), que corre
+    # desde que el worker reserva la tarea.
     max_retries=8,
     autoretry_for=(Exception,),
     retry_backoff=60,
-    retry_backoff_max=1800,
-    retry_jitter=True,
+    retry_backoff_max=1200,
+    retry_jitter=False,
+    # Celery re-encola cada retry en la cola de donde vino el mensaje (le gana
+    # a CELERY_TASK_ROUTES): así los reintentos siempre van al worker de OCR.
+    retry_kwargs={"queue": settings.OCR_QUEUE},
 )
 def run_ocr_on_photo(self, photo_id: int, exhaustive: bool = False) -> dict[str, int | list[str]]:
     """OCR sobre el original, crea registros `Bib`, marca `has_bibs_detected`.

@@ -4,7 +4,7 @@
 #
 # El rol se elige con la env var PROCESS_TYPE (default: web):
 #   web         → migraciones + bootstrap del superadmin + gunicorn
-#   worker      → celery worker: colas `celery,faces,fast` (InsightFace ~2GB para
+#   worker      → celery worker: colas `celery,faces,fast,ocr` (InsightFace ~2GB para
 #                 el selfie; con OCR_BACKEND=gemini no carga engines de OCR)
 #   worker_fast → celery worker SÓLO cola `fast` (preview/thumbnail + OCR), SIN
 #                 InsightFace. OPCIONAL: para eventos grandes, corré este servicio
@@ -30,8 +30,12 @@ case "$ROLE" in
     # incidente del 2026-06-09; no repetir).
     # Colas parametrizables: si corrés un `worker_fast` aparte, podés setear
     # WORKER_QUEUES=celery,faces en ESTE servicio para dedicarlo a las caras
-    # (default: las 3, así funciona igual sin el worker_fast).
-    exec celery -A config worker --loglevel=info -Q "${WORKER_QUEUES:-celery,faces,fast}" \
+    # (default: todas, así funciona igual sin el worker_fast). `ocr` va en el
+    # default porque el OCR puede estar ruteado ahí (OCR_QUEUE=ocr): si se vuelve
+    # a un worker único copiando esa variable, sin `ocr` nadie leería dorsales.
+    # En prod (2026-09-27): worker=faces · worker_fast=fast,celery ·
+    # servicio "worker-fast" (con guion) = worker de OCR con WORKER_QUEUES=ocr.
+    exec celery -A config worker --loglevel=info -Q "${WORKER_QUEUES:-celery,faces,fast,ocr}" \
       --concurrency="${CELERY_CONCURRENCY:-1}"
     ;;
   worker_fast)

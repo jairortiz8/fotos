@@ -426,9 +426,9 @@ class RemoveBibView(StaffRequiredMixin, View):
 class RerunOcrView(StaffRequiredMixin, View):
     """Re-corre el OCR en modo EXHAUSTIVO sobre una foto (botón del drawer).
 
-    Async (worker, cola `celery` → la toma el worker liviano): marca un flag en
-    cache para que el dashboard muestre "re-detectando…" y haga polling hasta que
-    aparezcan los dorsales nuevos. Los dorsales se agregan (no se borran los que
+    Async (cola OCR_QUEUE: `ocr` en prod → el worker dedicado de OCR): marca un
+    flag en cache para que el dashboard muestre "re-detectando…" y haga polling
+    hasta que aparezcan los dorsales nuevos. Los dorsales se agregan (no se borran los que
     ya estaban); el admin cura los falsos positivos.
     """
 

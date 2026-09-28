@@ -85,13 +85,32 @@ def test_run_ocr_without_fallback_leaves_photo_intact(gemini, tmp_path: Path) ->
     assert not Bib.objects.filter(photo=photo).exists()
 
 
-def test_ocr_task_retries_for_about_an_hour() -> None:
+def test_ocr_task_retries_for_about_an_hour_and_a_half() -> None:
     """Sin fallback, el reintento es la única recuperación: tiene que cubrir
     caídas largas de Gemini (antes: 2 reintentos fijos de 120 s ≈ 5 min)."""
+    from celery.utils.time import get_exponential_backoff_interval
+
     assert run_ocr_on_photo.max_retries == 8
-    assert run_ocr_on_photo.retry_backoff == 60
-    # Bajo el visibility_timeout de Redis (1 h) para no duplicar entregas.
-    assert run_ocr_on_photo.retry_backoff_max == 1800
+    assert run_ocr_on_photo.retry_jitter is False  # esperas deterministas
+    waits = [
+        get_exponential_backoff_interval(
+            factor=run_ocr_on_photo.retry_backoff,
+            retries=n,
+            maximum=run_ocr_on_photo.retry_backoff_max,
+            full_jitter=run_ocr_on_photo.retry_jitter,
+        )
+        for n in range(run_ocr_on_photo.max_retries)
+    ]
+    assert waits == [60, 120, 240, 480, 960, 1200, 1200, 1200]
+    # Holgura contra el visibility_timeout de Redis (1 h).
+    assert max(waits) <= 1200
+
+
+def test_ocr_retries_stay_in_ocr_queue(settings) -> None:  # type: ignore[no-untyped-def]
+    """Celery re-encola un retry en la cola de ORIGEN (no usa las rutas): el
+    queue explícito hace que siempre vuelvan a la cola del OCR."""
+    # (Celery además escribe "countdown" en este mismo dict en cada retry.)
+    assert run_ocr_on_photo.retry_kwargs["queue"] == settings.OCR_QUEUE
 
 
 def test_ocr_routes_to_configured_queue(settings) -> None:  # type: ignore[no-untyped-def]
