@@ -1,0 +1,127 @@
+name: deploy calidad + regenerar UTCOM (one-off)
+on:
+  workflow_dispatch:
+  push:
+    branches: ["run-deploy"]
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+permissions:
+  contents: write
+jobs:
+  medir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API: https://backboard.railway.app/graphql/v2
+      ENV_ID: b48c37f0-dab0-4627-b95c-a20db2862579
+      PROJECT_ID: 13f846c9-6400-44dc-995f-02a7da9c45b4
+      PG_ID: 17602daf-d2a8-4b4e-99b9-738d2583e624
+      WEB_ID: 5dec515d-7408-46ae-91ac-d2325d6d92ad
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: main }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install --quiet requests "psycopg[binary]" boto3 redis Pillow numpy celery scikit-image
+      - name: Medir (solo lectura)
+        run: |
+          mkdir -p salida
+          python3 - <<'PYX'
+          import os, time, requests, psycopg, pathlib, redis
+          from celery import Celery
+          API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
+          H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
+          P,E=os.environ["PROJECT_ID"],os.environ["ENV_ID"]; SHA="5028e9ba1acd2a8996a5f2fb36e10bb5687f3885"
+          OUT=pathlib.Path("salida"); OUT.mkdir(exist_ok=True); L=[]
+          def log(s):
+              L.append(s); print(s, flush=True); (OUT/"colas.txt").write_text("\n".join(L))
+          def gql(q,v):
+              try: return requests.post(API,headers=H,json={"query":q,"variables":v},timeout=90).json()
+              except Exception as e: return {"errors":[{"message":str(e)}]}
+          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          def vars_de(s): return (gql(V,{"p":P,"e":E,"s":s}).get("data") or {}).get("variables") or {}
+          S={"web":"5dec515d-7408-46ae-91ac-d2325d6d92ad","worker-fast (OCR)":"8ef0f305-d7bf-400f-b6a9-ac510d526b1d","worker_fast":"e4289c40-a254-436a-be02-35ec0e935363","worker":"1846c52a-57c3-4a8b-b4ec-1cc200a8e652","beat":"0a364656-8700-4f69-bac0-b91c50cd722b"}
+          pg=vars_de(os.environ["PG_ID"]); url=vars_de("37559685-4af5-4b9a-851d-84d9424f7424")["REDIS_PUBLIC_URL"]
+          app=Celery(broker=url); rc=redis.Redis.from_url(url)
+          Q='query($i:DeploymentListInput!){ deployments(first:1, input:$i){ edges{ node{ id status createdAt meta } } } }'
+          def ultimo(sid):
+              e=(((gql(Q,{"i":{"projectId":P,"environmentId":E,"serviceId":sid}}).get("data") or {}).get("deployments") or {}).get("edges") or [])
+              return e[0]["node"] if e else {}
+          def esperar(nombre, sid, desde_id=None, tope=1500):
+              t0=time.time()
+              while time.time()-t0<tope:
+                  nd=ultimo(sid)
+                  if nd and nd.get("id")!=desde_id and nd.get("status") in ("SUCCESS","FAILED","CRASHED"):
+                      return nd.get("status"), ((nd.get("meta") or {}).get("commitHash") or "")[:7], int(time.time()-t0)
+                  time.sleep(20)
+              return "TIMEOUT","",int(time.time()-t0)
+          D='mutation($s:String!,$e:String!,$c:String){ serviceInstanceDeployV2(serviceId:$s, environmentId:$e, commitSha:$c) }'
+          # 1) web (lo dispara el push): esperar a que quede en el commit
+          t0=time.time()
+          while time.time()-t0<1500:
+              nd=ultimo(S["web"])
+              if ((nd.get("meta") or {}).get("commitHash") or "").startswith(SHA[:7]) and nd.get("status") in ("SUCCESS","FAILED","CRASHED"): break
+              time.sleep(20)
+          log(f"web: {nd.get('status')} en {((nd.get('meta') or {}).get('commitHash') or '')[:7]} ({int(time.time()-t0)} s)")
+          # 2) workers en orden: OCR primero
+          for nombre in ("worker-fast (OCR)","worker_fast","worker","beat"):
+              antes=ultimo(S[nombre]).get("id")
+              r=gql(D,{"s":S[nombre],"e":E,"c":SHA})
+              st=esperar(nombre,S[nombre],antes)
+              log(f"{nombre}: deploy={bool((r.get('data') or {}).get('serviceInstanceDeployV2'))} -> {st[0]} en {st[1]} ({st[2]} s)")
+              if st[0]!="SUCCESS": log("ABORTO: un deploy no termino bien; no sigo con la regeneracion."); raise SystemExit(0)
+          # 3) los workers contestan y escuchan lo que corresponde
+          time.sleep(40)
+          for i in range(10):
+              aq=app.control.inspect(timeout=10).active_queues() or {}
+              if len(aq)>=3: break
+              time.sleep(20)
+          st=app.control.inspect(timeout=10).stats() or {}
+          for n,qs in aq.items(): log(f"  {n.split('@')[1][:12]} colas={sorted(q['name'] for q in qs)} procesos={len((st.get(n) or {}).get('pool',{}).get('processes',[]))}")
+          liviano=[n for n,qs in aq.items() if {q['name'] for q in qs}=={'fast','celery'}]
+          if len(aq)<3 or len(liviano)!=1: log("ABORTO: no contestan los 3 workers esperados"); raise SystemExit(0)
+          # 4) regenerar UTCOM + procesos extra
+          with psycopg.connect(pg["DATABASE_PUBLIC_URL"],connect_timeout=40) as cx, cx.cursor() as cur:
+              cur.execute("SELECT id FROM events_event WHERE slug='utcom-2026'"); eid=cur.fetchone()[0]
+              cur.execute("SELECT now()"); inicio=cur.fetchone()[0]
+              cur.execute("SELECT count(*) FROM photos_photo WHERE event_id=%s AND status<>'deleted' AND original_key<>''",(eid,)); total=cur.fetchone()[0]
+          r=app.control.pool_grow(6, destination=liviano, reply=True, timeout=10); log(f"pool_grow(6) en worker_fast: {r}")
+          app.send_task("photos.regenerate_event_thumbnails", args=[eid], kwargs={"include_preview": True}, queue="celery")
+          log(f"regeneracion encolada: {total} fotos de UTCOM")
+          t0=time.time(); vacio=0
+          while time.time()-t0<7200:
+              time.sleep(60)
+              with psycopg.connect(pg["DATABASE_PUBLIC_URL"],connect_timeout=40) as cx, cx.cursor() as cur:
+                  cur.execute("""SELECT count(*) FILTER (WHERE updated_at>%s AND branded_key<>''), count(*) FILTER (WHERE branded_key='')
+                                 FROM photos_photo WHERE event_id=%s AND status<>'deleted' AND original_key<>''""",(inicio,eid))
+                  hechas,sin=cur.fetchone()
+              q=rc.llen('celery')
+              log(f"  +{int((time.time()-t0)/60)} min: regeneradas {hechas}/{total} · sin logos {sin} · cola celery={q} fast={rc.llen('fast')} ocr={rc.llen('ocr')}")
+              if q==0:
+                  act=app.control.inspect(timeout=10).active() or {}
+                  if not any(x["name"].endswith("regenerate_thumbnail") for v in act.values() for x in v):
+                      vacio+=1
+                      if vacio>=2: break
+              else: vacio=0
+          r=app.control.pool_shrink(6, destination=liviano, reply=True, timeout=10); log(f"pool_shrink(6): {r}")
+          time.sleep(20)
+          st=app.control.inspect(timeout=10).stats() or {}
+          for n in liviano: log(f"worker_fast de nuevo en {len((st.get(n) or {}).get('pool',{}).get('processes',[]))} procesos")
+          with psycopg.connect(pg["DATABASE_PUBLIC_URL"],connect_timeout=40) as cx, cx.cursor() as cur:
+              cur.execute("SELECT count(*) FILTER (WHERE branded_key=''), count(*) FROM photos_photo WHERE event_id=%s AND status NOT IN ('deleted','rejected') AND original_key<>''",(eid,))
+              a,b=cur.fetchone(); log(f"FINAL: UTCOM {b} fotos, sin version con logos: {a}")
+              cur.execute("SELECT count(*) FROM photos_photo WHERE id IN (52449,52450,52460,52474,52476,52480,52481,52494,52540,52549) AND branded_key<>''")
+              log(f"las de Ani (muestra de 10) ahora con logos: {cur.fetchone()[0]}/10")
+          PYX
+      - name: Publicar
+        if: always()
+        run: |
+          mkdir -p salida && touch salida/colas.txt
+          git init -q pub && cd pub
+          git config user.name "ci"; git config user.email "ci@local"
+          git checkout -q --orphan resultado-deploy
+          cp ../salida/* .
+          git add -A && git commit -q -m "medicion r2"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" resultado-deploy
