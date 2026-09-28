@@ -81,6 +81,34 @@ def test_detect_bibs_gemini_bad_payload(race_jpg: Path, settings) -> None:  # ty
         detect_bibs_gemini(race_jpg)
 
 
+def test_detect_bibs_gemini_ignores_trailing_data(race_jpg: Path, settings) -> None:  # type: ignore[no-untyped-def]
+    """JSON válido + basura detrás ("Extra data") → se usa el primer objeto,
+    en vez de caer al OCR local pesado."""
+    settings.GEMINI_API_KEY = "test-key"
+    text = '{"bibs": ["1203", "88"]}\n{"bibs": []}'
+    body = json.dumps({"candidates": [{"content": {"parts": [{"text": text}]}}]}).encode()
+    with patch(
+        "apps.ml.gemini_ocr.urllib.request.urlopen",
+        return_value=_FakeResponse(body),
+    ):
+        dets = detect_bibs_gemini(race_jpg)
+    assert sorted(d.number for d in dets) == ["1203", "88"]
+
+
+def test_detect_bibs_gemini_rejects_non_list_bibs(race_jpg: Path, settings) -> None:  # type: ignore[no-untyped-def]
+    settings.GEMINI_API_KEY = "test-key"
+    text = '{"bibs": "1203"}'
+    body = json.dumps({"candidates": [{"content": {"parts": [{"text": text}]}}]}).encode()
+    with (
+        patch(
+            "apps.ml.gemini_ocr.urllib.request.urlopen",
+            return_value=_FakeResponse(body),
+        ),
+        pytest.raises(GeminiOCRError),
+    ):
+        detect_bibs_gemini(race_jpg)
+
+
 def test_to_detections_handles_non_strings() -> None:
     """Números como int, None y vacíos no rompen; sólo queda lo bib-like."""
     dets = _to_detections([415, "168", None, ""])

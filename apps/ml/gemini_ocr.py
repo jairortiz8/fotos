@@ -69,8 +69,7 @@ def detect_bibs_gemini(image_path: Path, *, timeout: int = 90) -> list[BibDetect
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 body = json.load(response)
             text = body["candidates"][0]["content"]["parts"][0]["text"]
-            numbers = json.loads(text).get("bibs", [])
-            return _to_detections(numbers)
+            return _to_detections(_parse_bibs(text))
         except urllib.error.HTTPError as exc:
             last_error = exc
             # 429/5xx son transitorios → reintentar; 4xx de config no.
@@ -112,6 +111,23 @@ def _build_request_body(image_path: Path) -> bytes:
             "generationConfig": {"response_mime_type": "application/json", "temperature": 0},
         }
     ).encode()
+
+
+def _parse_bibs(text: str) -> list[object]:
+    """Lee el PRIMER objeto JSON de la respuesta e ignora lo que venga después.
+
+    A veces el modelo devuelve el JSON válido seguido de basura (un segundo
+    objeto, texto suelto). `json.loads` lo rechazaba con "Extra data" → la foto
+    caía al OCR local, y varias cayendo a la vez en el worker de 4 procesos
+    agotaron sus hilos (incidente UTCOM 2026-09-27: ~900 fotos sin preview).
+    """
+    parsed, _end = json.JSONDecoder().raw_decode(text.strip())
+    if not isinstance(parsed, dict):
+        raise ValueError(f"respuesta no es objeto: {type(parsed).__name__}")
+    bibs = parsed.get("bibs", [])
+    if not isinstance(bibs, list):
+        raise ValueError(f"'bibs' no es lista: {type(bibs).__name__}")
+    return bibs
 
 
 def _to_detections(numbers: list[object]) -> list[BibDetection]:
