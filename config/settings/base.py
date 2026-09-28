@@ -107,6 +107,15 @@ OCR_EXHAUSTIVE_ON_UPLOAD = env.bool("OCR_EXHAUSTIVE_ON_UPLOAD", default=True)
 OCR_BACKEND = env("OCR_BACKEND", default="local")
 GEMINI_API_KEY = env("GEMINI_API_KEY", default="")
 GEMINI_OCR_MODEL = env("GEMINI_OCR_MODEL", default="gemini-2.5-flash-lite")
+# Timeout (s) de cada intento contra la API. Gemini hace hasta 3 intentos, así
+# que un cuelgue ocupa un proceso ~3x esto.
+GEMINI_OCR_TIMEOUT = env.int("GEMINI_OCR_TIMEOUT", default=90)
+# Si Gemini falla, ¿caer al OCR local (Paddle+EasyOCR)? Incidente UTCOM
+# 2026-09-27: cada proceso del worker que caía al local cargaba ~2-3 GB de
+# engines y sus pools de hilos → el worker agotó hilos y dejó ~900 fotos sin
+# preview; además el local leyó casi sólo basura (dígitos sueltos). Con False
+# la task de OCR falla y Celery la reintenta más tarde; el preview no se toca.
+OCR_LOCAL_FALLBACK = env.bool("OCR_LOCAL_FALLBACK", default=True)
 
 # Blur automático de caras de menores en el preview público (parte del paso
 # facial). Decisión de Jair: APAGADO en prod (MINOR_BLUR_ENABLED=false) — quiere

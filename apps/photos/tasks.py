@@ -167,9 +167,10 @@ def process_photo(self, photo_id: int) -> dict[str, str | int]:
 def _detect_bibs(source: Path, *, exhaustive: bool, photo_id: int) -> list:
     """Despacha el OCR al backend configurado (OCR_BACKEND).
 
-    "gemini" → API (mejor lectura, sin engines en RAM). Si la API falla por lo
-    que sea, cae AUTOMÁTICO al OCR local: una foto nunca se queda sin intento
-    de OCR por un problema de red/cuota. "local" → PaddleOCR + EasyOCR.
+    "gemini" → API (mejor lectura, sin engines en RAM). Si la API falla, cae al
+    OCR local salvo que OCR_LOCAL_FALLBACK=False: ahí se propaga el error y el
+    autoretry de run_ocr_on_photo lo vuelve a intentar más tarde (en prod se
+    apaga: ver settings). "local" → PaddleOCR + EasyOCR.
     """
     from apps.ml.ocr import detect_bibs  # import local (libs pesadas, carga lazy)
 
@@ -177,8 +178,13 @@ def _detect_bibs(source: Path, *, exhaustive: bool, photo_id: int) -> list:
         from apps.ml.gemini_ocr import GeminiOCRError, detect_bibs_gemini
 
         try:
-            return detect_bibs_gemini(source)
+            return detect_bibs_gemini(source, timeout=settings.GEMINI_OCR_TIMEOUT)
         except GeminiOCRError as exc:
+            if not settings.OCR_LOCAL_FALLBACK:
+                logger.warning(
+                    "Gemini OCR falló (photo=%s): %s — sin fallback, se reintenta", photo_id, exc
+                )
+                raise
             logger.warning("Gemini OCR falló (photo=%s): %s — fallback local", photo_id, exc)
     return detect_bibs(source, exhaustive=exhaustive)
 
