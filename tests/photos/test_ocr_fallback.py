@@ -83,3 +83,73 @@ def test_run_ocr_without_fallback_leaves_photo_intact(gemini, tmp_path: Path) ->
     assert photo.status == PhotoStatus.APPROVED
     assert photo.preview_key == "p.webp"
     assert not Bib.objects.filter(photo=photo).exists()
+
+
+def test_ocr_task_retries_for_about_an_hour() -> None:
+    """Sin fallback, el reintento es la única recuperación: tiene que cubrir
+    caídas largas de Gemini (antes: 2 reintentos fijos de 120 s ≈ 5 min)."""
+    assert run_ocr_on_photo.max_retries == 8
+    assert run_ocr_on_photo.retry_backoff == 60
+    # Bajo el visibility_timeout de Redis (1 h) para no duplicar entregas.
+    assert run_ocr_on_photo.retry_backoff_max == 1800
+
+
+def test_ocr_routes_to_configured_queue(settings) -> None:  # type: ignore[no-untyped-def]
+    assert settings.CELERY_TASK_ROUTES["photos.run_ocr_on_photo"]["queue"] == settings.OCR_QUEUE
+    assert settings.CELERY_TASK_ROUTES["photos.process_photo"]["queue"] == "fast"
+
+
+@pytest.mark.django_db
+def test_redetect_flag_kept_while_retries_remain(gemini, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    """'Re-detectar' del dashboard: si falla pero quedan reintentos, el
+    indicador sigue prendido (antes se apagaba en el primer fallo)."""
+    from django.core.cache import cache
+
+    gemini.OCR_LOCAL_FALLBACK = False
+    photo = PhotoFactory(status=PhotoStatus.APPROVED, preview_key="p.webp")
+    cache.set(f"ocr_rerun:{photo.id}", True, 300)
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch("apps.ml.gemini_ocr.detect_bibs_gemini", side_effect=GeminiOCRError("timeout")),
+        patch.object(run_ocr_on_photo, "retry", side_effect=Retry()),
+        pytest.raises(Retry),
+    ):
+        run_ocr_on_photo.apply(args=[photo.id], kwargs={"exhaustive": True}, retries=0, throw=True)
+    assert cache.get(f"ocr_rerun:{photo.id}") is True
+
+
+@pytest.mark.django_db
+def test_redetect_flag_cleared_on_last_attempt(gemini, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    from django.core.cache import cache
+
+    gemini.OCR_LOCAL_FALLBACK = False
+    photo = PhotoFactory(status=PhotoStatus.APPROVED, preview_key="p.webp")
+    cache.set(f"ocr_rerun:{photo.id}", True, 300)
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch("apps.ml.gemini_ocr.detect_bibs_gemini", side_effect=GeminiOCRError("timeout")),
+        pytest.raises(GeminiOCRError),
+    ):
+        run_ocr_on_photo.apply(
+            args=[photo.id],
+            kwargs={"exhaustive": True},
+            retries=run_ocr_on_photo.max_retries,
+            throw=True,
+        )
+    assert cache.get(f"ocr_rerun:{photo.id}") is None
+
+
+@pytest.mark.django_db
+def test_redetect_flag_cleared_on_success(gemini, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    from django.core.cache import cache
+
+    photo = PhotoFactory(status=PhotoStatus.APPROVED, preview_key="p.webp")
+    cache.set(f"ocr_rerun:{photo.id}", True, 300)
+    dets = [BibDetection(number="415", confidence=0.9, bbox={}, engine="gemini")]
+    with (
+        patch("apps.photos.tasks.download_temp_file", lambda *a, **kw: _stub_download(tmp_path)),
+        patch("apps.ml.gemini_ocr.detect_bibs_gemini", return_value=dets),
+    ):
+        run_ocr_on_photo.apply(args=[photo.id], kwargs={"exhaustive": True}, throw=True)
+    assert cache.get(f"ocr_rerun:{photo.id}") is None
+    assert Bib.objects.filter(photo=photo, number="415").exists()

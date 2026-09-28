@@ -13,6 +13,7 @@ Sin dependencias nuevas: usa urllib de la stdlib (regla §8 de CLAUDE.md).
 from __future__ import annotations
 
 import base64
+import http.client
 import io
 import json
 import logging
@@ -75,7 +76,11 @@ def detect_bibs_gemini(image_path: Path, *, timeout: int = 90) -> list[BibDetect
             # 429/5xx son transitorios → reintentar; 4xx de config no.
             if exc.code not in (429, 500, 502, 503, 504) or attempt == _ATTEMPTS:
                 break
-        except (urllib.error.URLError, TimeoutError) as exc:
+        except (OSError, http.client.HTTPException) as exc:
+            # Red: URLError y TimeoutError son OSError, pero urllib NO envuelve
+            # los cortes al leer la respuesta (ConnectionResetError,
+            # RemoteDisconnected, IncompleteRead, ssl.SSLError): antes se
+            # escapaban sin los reintentos internos ni el GeminiOCRError.
             last_error = exc
             if attempt == _ATTEMPTS:
                 break

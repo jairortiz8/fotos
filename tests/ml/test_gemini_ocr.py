@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import io
 import json
 from pathlib import Path
@@ -113,3 +114,38 @@ def test_to_detections_handles_non_strings() -> None:
     """Números como int, None y vacíos no rompen; sólo queda lo bib-like."""
     dets = _to_detections([415, "168", None, ""])
     assert sorted(d.number for d in dets) == ["168", "415"]
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        ConnectionResetError("reset"),
+        http.client.RemoteDisconnected("closed"),
+        http.client.IncompleteRead(b""),
+        TimeoutError("read timed out"),
+    ],
+)
+def test_detect_bibs_gemini_retries_network_cuts(race_jpg: Path, settings, exc) -> None:  # type: ignore[no-untyped-def]
+    """Los cortes al LEER la respuesta (que urllib no envuelve en URLError)
+    usan los reintentos internos y terminan en GeminiOCRError."""
+    settings.GEMINI_API_KEY = "test-key"
+    with (
+        patch("apps.ml.gemini_ocr.urllib.request.urlopen", side_effect=exc) as call,
+        patch("apps.ml.gemini_ocr.time.sleep"),
+        pytest.raises(GeminiOCRError),
+    ):
+        detect_bibs_gemini(race_jpg)
+    assert call.call_count == 3
+
+
+def test_detect_bibs_gemini_recovers_after_network_cut(race_jpg: Path, settings) -> None:  # type: ignore[no-untyped-def]
+    settings.GEMINI_API_KEY = "test-key"
+    with (
+        patch(
+            "apps.ml.gemini_ocr.urllib.request.urlopen",
+            side_effect=[ConnectionResetError("reset"), _FakeResponse(_gemini_body(["77"]))],
+        ),
+        patch("apps.ml.gemini_ocr.time.sleep"),
+    ):
+        dets = detect_bibs_gemini(race_jpg)
+    assert [d.number for d in dets] == ["77"]

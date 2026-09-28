@@ -293,10 +293,17 @@ CELERY_TASK_TIME_LIMIT = 60 * 30  # 30 min
 # Clave: worker_fast escucha SOLO `fast`, así NUNCA agarra una task de cara (si
 # escuchara `celery` agarraría las de cara viejas encoladas antes del routing y
 # se quedaría sin RAM cargando el modelo). El worker pesado escucha las 3.
+#
+# Cola del OCR de dorsales (OCR_QUEUE, default `fast`). Incidente UTCOM
+# 2026-09-27: con Gemini lento, cada OCR ocupaba un proceso ~100 s y, al
+# compartir procesos con process_photo, frenaba los previews de las subidas en
+# vivo. Con OCR_QUEUE=ocr y un worker aparte que escuche `ocr`, el OCR (y los
+# reprocesos masivos de dorsales) nunca le quitan lugar a los previews.
+OCR_QUEUE = env("OCR_QUEUE", default="fast")
 CELERY_TASK_DEFAULT_QUEUE = "celery"
 CELERY_TASK_ROUTES = {
     "photos.process_photo": {"queue": "fast"},
-    "photos.run_ocr_on_photo": {"queue": "fast"},
+    "photos.run_ocr_on_photo": {"queue": OCR_QUEUE},
     "photos.run_face_recognition_on_photo": {"queue": "faces"},
 }
 

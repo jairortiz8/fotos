@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import sys
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -195,9 +196,15 @@ def _detect_bibs(source: Path, *, exhaustive: bool, photo_id: int) -> list:
 @shared_task(
     name="photos.run_ocr_on_photo",
     bind=True,
-    max_retries=2,
-    default_retry_delay=120,
+    # Sin fallback local (OCR_LOCAL_FALLBACK=False) el reintento es la única
+    # recuperación: esperas crecientes (60 s → 30 min, con jitter) cubren
+    # caídas de Gemini de ~1 h. El tope de 30 min queda bajo el
+    # visibility_timeout de Redis (1 h) para no duplicar entregas.
+    max_retries=8,
     autoretry_for=(Exception,),
+    retry_backoff=60,
+    retry_backoff_max=1800,
+    retry_jitter=True,
 )
 def run_ocr_on_photo(self, photo_id: int, exhaustive: bool = False) -> dict[str, int | list[str]]:
     """OCR sobre el original, crea registros `Bib`, marca `has_bibs_detected`.
@@ -263,9 +270,11 @@ def run_ocr_on_photo(self, photo_id: int, exhaustive: bool = False) -> dict[str,
             "bibs": bib_sources_created,
         }
     finally:
-        # Apaga el indicador "re-detectando…" del dashboard (aunque haya fallado:
-        # así el poller se corta y no queda girando para siempre).
-        if exhaustive:
+        # Apaga el indicador "re-detectando…" del dashboard cuando la task
+        # terminó de verdad: con éxito o en el último intento (así el poller se
+        # corta y no queda girando para siempre). Si todavía quedan reintentos,
+        # lo deja prendido: el admin sigue viendo que se está intentando.
+        if exhaustive and (sys.exc_info()[0] is None or self.request.retries >= self.max_retries):
             cache.delete(f"ocr_rerun:{photo_id}")
 
 
