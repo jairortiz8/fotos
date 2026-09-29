@@ -29,29 +29,37 @@ jobs:
         run: |
           mkdir -p salida
           python3 - <<'PYX'
-          import os, io, requests, psycopg, pathlib, boto3
-          from PIL import Image, JpegImagePlugin
+          import os, re, time, statistics as st, requests, pathlib, datetime as dt, concurrent.futures as cf
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
-          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          def vars_de(s): return (requests.post(API,headers=H,json={"query":V,"variables":{"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":s}},timeout=40).json().get("data") or {}).get("variables") or {}
-          pg=vars_de(os.environ["PG_ID"]); web=vars_de(os.environ["WEB_ID"])
-          s3=boto3.client("s3",endpoint_url=web["R2_ENDPOINT_URL"],aws_access_key_id=web["R2_ACCESS_KEY_ID"],aws_secret_access_key=web["R2_SECRET_ACCESS_KEY"],region_name="auto"); B=web["R2_BUCKET_NAME"]
+          P,E,W=os.environ["PROJECT_ID"],os.environ["ENV_ID"],os.environ["WEB_ID"]
+          UA={"User-Agent":"Mozilla/5.0 (Linux; Android 14; SM-A546E) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"}
           L=[]
-          with psycopg.connect(pg["DATABASE_PUBLIC_URL"],connect_timeout=40) as cx, cx.cursor() as cur:
-              cur.execute("""SELECT count(*), count(*) FILTER (WHERE preview_key<>''), count(*) FILTER (WHERE branded_key<>''),
-                                    count(*) FILTER (WHERE has_bibs_detected), count(*) FILTER (WHERE has_faces_detected), count(*) FILTER (WHERE status IN ('uploading','processing','processing_failed'))
-                             FROM photos_photo WHERE photographer_link_id=43 AND created_at > '2026-09-29 00:00+00'""")
-              t,pv,br,bi,fa,tr=cur.fetchone()
-              L.append(f"tanda de anoche de Merlos: {t} fotos · preview {pv} · con logos {br} · con dorsal {bi} ({100*bi/max(t,1):.0f}%) · con caras {fa} ({100*fa/max(t,1):.0f}%) · trabadas/fallidas {tr}")
-              cur.execute("""SELECT count(*), count(*) FILTER (WHERE has_bibs_detected), count(*) FILTER (WHERE has_faces_detected) FROM photos_photo WHERE photographer_link_id=43 AND created_at < '2026-09-29 00:00+00' AND status<>'deleted'""")
-              a,b,c=cur.fetchone(); L.append(f"referencia, sus fotos anteriores: dorsal {100*b/a:.0f}% · caras {100*c/a:.0f}%")
-              cur.execute("SELECT b.source, count(*) FROM photos_bib b JOIN photos_photo p ON p.id=b.photo_id WHERE p.photographer_link_id=43 AND p.created_at > '2026-09-29 00:00+00' GROUP BY 1")
-              L.append(f"dorsales de la tanda por motor: {dict(cur.fetchall())}")
-              cur.execute("SELECT branded_key FROM photos_photo WHERE photographer_link_id=43 AND created_at > '2026-09-29 00:00+00' AND branded_key<>'' ORDER BY id DESC LIMIT 3")
-              for (k,) in cur.fetchall():
-                  b=io.BytesIO(); s3.download_fileobj(B,k,b); b.seek(0); im=Image.open(b)
-                  L.append(f"  version con logos: {im.size} calidad={'95' if im.quantization[0][0]<=2 else 'vieja'} color={ {0:'4:4:4',1:'4:2:2',2:'4:2:0'}.get(JpegImagePlugin.get_sampling(im)) }")
+          def medir(url, n=5):
+              t=[]; sz=0; code=None; ttfb=[]
+              for _ in range(n):
+                  s=requests.Session(); t0=time.time()
+                  r=s.get(url,headers=UA,timeout=60,stream=True); tf=time.time()-t0; body=r.content; t.append(time.time()-t0); ttfb.append(tf); sz=len(body); code=r.status_code
+              return code, st.median(ttfb), st.median(t), max(t), sz, body
+          B="https://findyourfoto.com"
+          for nombre,url in [("home","/"),("UTCOM (album)","/eventos/utcom-2026/"),("UTCOM por fotografo","/eventos/utcom-2026/?vista=fotografos"),("Surf City (album)","/eventos/surf-city-2026/"),("Septimo (album)","/eventos/septimo-x-cep-social-run/"),("healthz lite","/healthz/lite")]:
+              code,tf,tt,mx,sz,body=medir(B+url)
+              L.append(f"{nombre:<22} HTTP {code} · servidor responde en {tf*1000:.0f} ms · pagina completa {tt*1000:.0f} ms (peor {mx*1000:.0f}) · {sz/1024:.0f} KB")
+              if nombre=="UTCOM (album)": utcom=body.decode("utf-8","ignore")
+          imgs=re.findall(r'src="(https://[^"]+r2\.cloudflarestorage\.com[^"]+)"',utcom)
+          imgs+= [B+x for x in re.findall(r'src="(/eventos/utcom-2026/(?:cara|portada)[^"]+)"',utcom)]
+          L.append(f"\nimagenes en la primera pagina de UTCOM: {len(imgs)} (miniaturas de R2 + retratos/portada)")
+          def get(u):
+              t0=time.time(); r=requests.get(u.replace("&amp;","&"),headers=UA,timeout=60); return time.time()-t0, len(r.content), r.status_code
+          with cf.ThreadPoolExecutor(6) as ex: res=list(ex.map(get, imgs[:60]))
+          if res:
+              ts=[r[0] for r in res]; L.append(f"  cada imagen: mediana {st.median(ts)*1000:.0f} ms, peor {max(ts)*1000:.0f} ms, peso mediano {st.median(r[1] for r in res)/1024:.0f} KB, errores {sum(1 for r in res if r[2]!=200)}")
+              L.append(f"  las 60 en paralelo (6 a la vez, como un navegador): {sum(ts)/6:.1f} s aprox")
+          # carga del servidor web
+          M='query($p:String!,$e:String!,$s:String!,$d:DateTime!){ metrics(projectId:$p, environmentId:$e, serviceId:$s, startDate:$d, sampleRateSeconds:300, measurements:[MEMORY_USAGE_GB, CPU_USAGE]){ measurement values{ ts value } } }'
+          r=requests.post(API,headers=H,json={"query":M,"variables":{"p":P,"e":E,"s":W,"d":(dt.datetime.now(dt.UTC)-dt.timedelta(hours=2)).isoformat()}},timeout=60).json()
+          for x in (r.get("data") or {}).get("metrics") or []:
+              v=[y["value"] for y in x["values"]]; L.append(f"web {x['measurement']}: ahora {v[-1]:.2f}, max 2h {max(v):.2f}")
           pathlib.Path("salida").mkdir(exist_ok=True); pathlib.Path("salida/colas.txt").write_text("\n".join(L)); print("\n".join(L))
           PYX
       - name: Publicar
