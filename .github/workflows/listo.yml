@@ -29,43 +29,43 @@ jobs:
         run: |
           mkdir -p salida
           python3 - <<'PYX'
-          import os, requests, pathlib, redis
-          from celery import Celery
+          import os, re, requests, psycopg, pathlib, collections
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
-          P,E=os.environ["PROJECT_ID"],os.environ["ENV_ID"]
+          P,E,W=os.environ["PROJECT_ID"],os.environ["ENV_ID"],os.environ["WEB_ID"]
           def gql(q,v):
-              try: return requests.post(API,headers=H,json={"query":q,"variables":v},timeout=90).json()
-              except Exception as e: return {"errors":[{"message":str(e)}]}
-          L=[]
-          d=gql('query($id:String!){ project(id:$id){ services{ edges{ node{ id name } } } } }',{"id":P})
-          servs=[(e["node"]["id"],e["node"]["name"]) for e in (((d.get("data") or {}).get("project") or {}).get("services") or {}).get("edges",[])]
+              try: return requests.post(API,headers=H,json={"query":q,"variables":v},timeout=120).json()
+              except Exception: return {}
           V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          Q='query($i:DeploymentListInput!){ deployments(first:1, input:$i){ edges{ node{ status createdAt meta } } } }'
-          redis_url=None
-          for sid,name in servs:
-              v=(gql(V,{"p":P,"e":E,"s":sid}).get("data") or {}).get("variables") or {}
-              if v.get("REDIS_PUBLIC_URL"): redis_url=v["REDIS_PUBLIC_URL"]
-              e=(((gql(Q,{"i":{"projectId":P,"environmentId":E,"serviceId":sid}}).get("data") or {}).get("deployments") or {}).get("edges") or [])
-              nd=e[0]["node"] if e else {}
-              ver={k:v.get(k) for k in ("PROCESS_TYPE","WORKER_QUEUES","CELERY_CONCURRENCY","OCR_QUEUE","OCR_LOCAL_FALLBACK","GEMINI_OCR_TIMEOUT","OCR_BACKEND") if k in v}
-              L.append(f"{name:<12} id={sid} deploy={nd.get('status')} commit={((nd.get('meta') or {}).get('commitHash') or '')[:7]} {nd.get('createdAt','')[:16]} vars={ver}")
-          rc=redis.Redis.from_url(redis_url); app=Celery(broker=redis_url)
-          L.append("colas: "+", ".join(f"{q}={rc.llen(q)}" for q in ("fast","ocr","faces","celery")))
-          aq=app.control.inspect(timeout=10).active_queues() or {}
-          st=app.control.inspect(timeout=10).stats() or {}
-          for n,qs in aq.items(): L.append(f"  {n.split('@')[1][:12]} colas={sorted(q['name'] for q in qs)} procesos={len((st.get(n) or {}).get('pool',{}).get('processes',[]))}")
-          import psycopg
-          V2='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          pgv=(gql(V2,{"p":P,"e":E,"s":"17602daf-d2a8-4b4e-99b9-738d2583e624"}).get("data") or {}).get("variables") or {}
-          with psycopg.connect(pgv["DATABASE_PUBLIC_URL"],connect_timeout=40) as cx, cx.cursor() as cur:
-              cur.execute("""SELECT count(*), count(*) FILTER (WHERE p.updated_at > '2026-09-28 22:52+00' AND p.branded_key<>''), count(*) FILTER (WHERE p.branded_key='')
-                             FROM photos_photo p JOIN events_event e ON e.id=p.event_id WHERE e.slug='utcom-2026' AND p.status<>'deleted' AND p.original_key<>''""")
-              t,h,s=cur.fetchone(); L.append(f"UTCOM: {t} fotos · regeneradas desde el deploy {h} · sin logos {s}")
-              cur.execute("SELECT count(*), max(created_at) FROM photos_photo WHERE created_at > now()-interval '30 minutes'")
-              L.append("subidas en los ultimos 30 min: %s (ultima %s)" % cur.fetchone())
-              cur.execute("SELECT count(*) FROM photos_photo WHERE status IN ('uploading','processing') AND updated_at < now()-interval '10 minutes'")
-              L.append(f"trabadas >10 min: {cur.fetchone()[0]}")
+          pg=(gql(V,{"p":P,"e":E,"s":os.environ["PG_ID"]}).get("data") or {}).get("variables") or {}
+          L=[]
+          with psycopg.connect(pg["DATABASE_PUBLIC_URL"],connect_timeout=40) as cx, cx.cursor() as cur:
+              cur.execute("""SELECT l.id, l.photographer_name, l.is_active, l.photos_uploaded,
+                                    l.last_used_at AT TIME ZONE 'America/El_Salvador',
+                                    (SELECT max(p.created_at) FROM photos_photo p WHERE p.photographer_link_id=l.id) AT TIME ZONE 'America/El_Salvador',
+                                    (SELECT count(*) FROM photos_photo p WHERE p.photographer_link_id=l.id AND p.status NOT IN ('deleted','rejected'))
+                             FROM photographers_photographerlink l JOIN events_event e ON e.id=l.event_id WHERE e.slug='utcom-2026' ORDER BY l.id""")
+              L.append("link | fotografo | activo | fotos | ultima vez que abrio el link (SV) | ultima foto subida (SV)")
+              for r in cur.fetchall(): L.append(f"  {r[0]} | {r[1]} | {r[2]} | {r[6]} | {str(r[4])[:16]} | {str(r[5])[:16]}")
+          Q='query($i:DeploymentListInput!){ deployments(first:3, input:$i){ edges{ node{ id createdAt } } } }'
+          deps=[e["node"] for e in (((gql(Q,{"i":{"projectId":P,"environmentId":E,"serviceId":W}}).get("data") or {}).get("deployments") or {}).get("edges") or [])]
+          LG='query($d:String!,$f:String,$n:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$n){ timestamp message } }'
+          out=collections.Counter(); ult={}
+          for d in deps:
+              for x in (gql(LG,{"d":d["id"],"f":"outcome=","n":5000}).get("data") or {}).get("deploymentLogs") or []:
+                  m=re.search(r"outcome=(\w+) event=(\S+) link=(\d+)",x["message"])
+                  if m and m.group(2)=="utcom-2026" and x["timestamp"]>"2026-09-28T22:50":
+                      out[(m.group(3),m.group(1))]+=1; ult[m.group(3)]=x["timestamp"]
+          L.append("\nintentos de subida a UTCOM desde el deploy (22:50 UTC = 16:50 SV):")
+          L.append("  ninguno" if not out else "  "+", ".join(f"link {k[0]} {k[1]}={c}" for k,c in sorted(out.items())))
+          # aperturas del portal desde el deploy (GET /u/<token>/ -> status), sin mostrar tokens
+          rx=re.compile(r'"GET /u/[^/ ]+/ HTTP[^"]*" (\d{3})')
+          ab=collections.Counter()
+          for d in deps:
+              for x in (gql(LG,{"d":d["id"],"f":"GET /u/","n":5000}).get("data") or {}).get("deploymentLogs") or []:
+                  m=rx.search(x["message"])
+                  if m and x["timestamp"]>"2026-09-28T22:50": ab[(x["timestamp"][:13],m.group(1))]+=1
+          L.append("aperturas del portal desde el deploy (hora UTC, status): " + (", ".join(f"{h[5:]}h[{s}]={c}" for (h,s),c in sorted(ab.items())) or "ninguna"))
           pathlib.Path("salida").mkdir(exist_ok=True); pathlib.Path("salida/colas.txt").write_text("\n".join(L)); print("\n".join(L))
           PYX
       - name: Publicar
