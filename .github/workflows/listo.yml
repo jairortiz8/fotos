@@ -29,58 +29,67 @@ jobs:
         run: |
           mkdir -p salida
           python3 - <<'PYX'
-          import os, time, requests, psycopg, pathlib, redis, collections
+          import os, io, time, requests, psycopg, pathlib, redis
           from celery import Celery
+          from PIL import Image
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
-          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          def vars_de(s): return (requests.post(API,headers=H,json={"query":V,"variables":{"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":s}},timeout=40).json().get("data") or {}).get("variables") or {}
-          pg=vars_de(os.environ["PG_ID"]); url=vars_de("37559685-4af5-4b9a-851d-84d9424f7424")["REDIS_PUBLIC_URL"]
+          P,E=os.environ["PROJECT_ID"],os.environ["ENV_ID"]
           OUT=pathlib.Path("salida"); OUT.mkdir(exist_ok=True); L=[]
           def log(s): L.append(s); print(s,flush=True); (OUT/"colas.txt").write_text("\n".join(L))
-          def q(cur,sql,a=()): cur.execute(sql,a); return cur.fetchall()
-          cx=psycopg.connect(pg["DATABASE_PUBLIC_URL"],connect_timeout=40); cur=cx.cursor()
-          ev=q(cur,"SELECT id,name,date,status,visibility,download_count,search_count FROM events_event WHERE slug='utcom-2026'")[0]; eid=ev[0]
-          log(f"EVENTO: {ev[1]} · fecha {ev[2]} · estado {ev[3]} · visibilidad {ev[4]}")
-          log("== FOTOS por fotografo: total | con dorsal | con caras | descargadas al menos 1 vez | descargas")
-          for r in q(cur,"""SELECT coalesce(l.photographer_name,'-'), count(*), count(*) FILTER (WHERE p.has_bibs_detected), count(*) FILTER (WHERE p.has_faces_detected),
-                            count(*) FILTER (WHERE p.download_count>0), coalesce(sum(p.download_count),0)
-                            FROM photos_photo p LEFT JOIN photographers_photographerlink l ON l.id=p.photographer_link_id
-                            WHERE p.event_id=%s AND p.status='approved' GROUP BY 1 ORDER BY 2 DESC""",(eid,)):
-              log(f"  {r[0]} | {r[1]} | {r[2]} ({100*r[2]/r[1]:.0f}%) | {r[3]} ({100*r[3]/r[1]:.0f}%) | {r[4]} | {r[5]}")
-          t=q(cur,"""SELECT count(*), count(*) FILTER (WHERE has_bibs_detected), count(*) FILTER (WHERE has_faces_detected), count(*) FILTER (WHERE download_count>0), coalesce(sum(download_count),0)
-                     FROM photos_photo WHERE event_id=%s AND status='approved'""",(eid,))[0]
-          log(f"  TOTAL | {t[0]} | {t[1]} ({100*t[1]/t[0]:.0f}%) | {t[2]} ({100*t[2]/t[0]:.0f}%) | {t[3]} | {t[4]}")
-          f=q(cur,"SELECT count(*), count(*) FILTER (WHERE avatar_key<>'') FROM photos_faceembedding fe JOIN photos_photo p ON p.id=fe.photo_id WHERE p.event_id=%s",(eid,))[0]
-          b=q(cur,"SELECT count(*), count(DISTINCT number) FROM photos_bib b JOIN photos_photo p ON p.id=b.photo_id WHERE p.event_id=%s",(eid,))[0]
-          log(f"caras indexadas {f[0]} (retratos {f[1]}) · dorsales leidos {b[0]} ({b[1]} numeros distintos)")
-          log("== USO por dia (hora SV): vistas | busquedas | descargas")
-          for r in q(cur,"""SELECT to_char(bucket AT TIME ZONE 'America/El_Salvador','MM-DD'), sum(count) FILTER (WHERE metric='view'), sum(count) FILTER (WHERE metric='search'), sum(count) FILTER (WHERE metric='download')
-                            FROM events_eventmetric WHERE event_id=%s GROUP BY 1 ORDER BY 1""",(eid,)):
-              log(f"  {r[0]} | {r[1] or 0} | {r[2] or 0} | {r[3] or 0}")
-          log(f"contadores del evento: descargas {ev[5]} · busquedas {ev[6]}")
-          log("== FOTOS SIN DORSAL por franja de subida (SV)")
-          for r in q(cur,"""SELECT to_char(date_trunc('hour', created_at AT TIME ZONE 'America/El_Salvador'),'MM-DD HH24'), count(*), count(*) FILTER (WHERE NOT has_bibs_detected)
-                            FROM photos_photo WHERE event_id=%s AND status='approved' GROUP BY 1 ORDER BY 1""",(eid,)):
-              log(f"  {r[0]}h  {r[1]:>5} fotos · sin dorsal {r[2]:>4} ({100*r[2]/r[1]:.0f}%)")
-          # las de la caida de Gemini: re-leer las que siguen sin dorsal
-          ids=[r[0] for r in q(cur,"""SELECT id FROM photos_photo WHERE event_id=%s AND status='approved' AND NOT has_bibs_detected
-                                      AND created_at >= '2026-09-28 00:40+00' AND created_at < '2026-09-28 02:30+00'""",(eid,))]
-          log(f"\nde la franja de la caida de Gemini (27-09 18:40-20:30 SV) siguen sin dorsal: {len(ids)}")
-          if ids:
-              app=Celery(broker=url); rc=redis.Redis.from_url(url)
-              aq=app.control.inspect(timeout=10).active_queues() or {}
-              if not any("ocr" in {x["name"] for x in qs} for qs in aq.values()):
-                  log("  no hay worker escuchando la cola ocr: no encolo"); raise SystemExit(0)
-              for pid in ids: app.send_task("photos.run_ocr_on_photo", args=[pid], queue="ocr")
-              log(f"  encoladas {len(ids)} en la cola ocr")
-              for i in range(30):
-                  time.sleep(30)
-                  cx2=psycopg.connect(pg["DATABASE_PUBLIC_URL"],connect_timeout=40); c2=cx2.cursor()
-                  c2.execute("SELECT count(*) FILTER (WHERE has_bibs_detected) FROM photos_photo WHERE id = ANY(%s)",(ids,)); ok=c2.fetchone()[0]; cx2.close()
-                  n=rc.llen("ocr"); act=sum(len(v) for v in (app.control.inspect(timeout=8).active() or {}).values())
-                  log(f"  +{(i+1)*30}s cola ocr={n} corriendo={act} · recuperaron dorsal {ok}/{len(ids)}")
-                  if n==0 and act==0 and i>=2: break
+          def gql(q,v):
+              try: return requests.post(API,headers=H,json={"query":q,"variables":v},timeout=90).json()
+              except Exception as e: return {"errors":[{"message":str(e)}]}
+          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          def vars_de(s): return (gql(V,{"p":P,"e":E,"s":s}).get("data") or {}).get("variables") or {}
+          pg=vars_de(os.environ["PG_ID"]); url=vars_de("37559685-4af5-4b9a-851d-84d9424f7424")["REDIS_PUBLIC_URL"]; web=vars_de("5dec515d-7408-46ae-91ac-d2325d6d92ad")
+          rc=redis.Redis.from_url(url); app=Celery(broker=url)
+          # 0) chequeo previo
+          colas={q:rc.llen(q) for q in ("fast","ocr","faces","celery")}
+          with psycopg.connect(pg["DATABASE_PUBLIC_URL"],connect_timeout=40) as cx, cx.cursor() as cur:
+              cur.execute("SELECT count(*) FROM photos_photo WHERE status IN ('uploading','processing')"); proc=cur.fetchone()[0]
+              cur.execute("SELECT count(*) FROM photos_photo WHERE created_at > now()-interval '15 minutes'"); rec=cur.fetchone()[0]
+          act=sum(len(v) for v in (app.control.inspect(timeout=10).active() or {}).values())
+          log(f"antes: colas {colas} · tareas corriendo {act} · en proceso {proc} · subidas ultimos 15 min {rec}")
+          if any(colas.values()) or act or proc or rec:
+              log("NO APAGO: hay trabajo pendiente o alguien subiendo."); raise SystemExit(0)
+          log(f"FACE_SEARCH_ENABLED en el web: {web.get('FACE_SEARCH_ENABLED')}")
+          # 1) apagar (deploymentRemove, lo unico que apaga de verdad)
+          S={"worker-fast (OCR)":"8ef0f305-d7bf-400f-b6a9-ac510d526b1d","worker_fast":"e4289c40-a254-436a-be02-35ec0e935363","worker":"1846c52a-57c3-4a8b-b4ec-1cc200a8e652","beat":"0a364656-8700-4f69-bac0-b91c50cd722b"}
+          Q='query($i:DeploymentListInput!){ deployments(first:5, input:$i){ edges{ node{ id status } } } }'
+          R='mutation($id:String!){ deploymentRemove(id:$id) }'
+          for n,sid in S.items():
+              deps=[e["node"] for e in (((gql(Q,{"i":{"projectId":P,"environmentId":E,"serviceId":sid}}).get("data") or {}).get("deployments") or {}).get("edges") or [])]
+              vivos=[d for d in deps if d["status"] in ("SUCCESS","DEPLOYING","BUILDING","INITIALIZING","SLEEPING")]
+              for d in vivos:
+                  r=gql(R,{"id":d["id"]}); log(f"{n}: deploymentRemove({d['status']}) -> {(r.get('data') or {}).get('deploymentRemove')} {[e.get('message') for e in r.get('errors',[])]}")
+              if not vivos: log(f"{n}: no tenia deploy activo")
+          time.sleep(60)
+          for n,sid in S.items():
+              deps=[e["node"] for e in (((gql(Q,{"i":{"projectId":P,"environmentId":E,"serviceId":sid}}).get("data") or {}).get("deployments") or {}).get("edges") or [])]
+              log(f"{n}: estado del ultimo deploy = {deps[0]['status'] if deps else '-'}")
+          pong=[]
+          for i in range(4):
+              pong=app.control.ping(timeout=8) or []
+              if not pong: break
+              time.sleep(20)
+          log(f"workers que contestan el ping: {len(pong)} (tiene que ser 0)")
+          # 2) el sitio y la selfie siguen andando
+          UA={"User-Agent":"Mozilla/5.0 (Linux; Android 14; SM-A546E) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"}
+          B="https://findyourfoto.com"
+          for nombre,u in (("home","/"),("album UTCOM","/eventos/utcom-2026/"),("pagina de selfie","/eventos/utcom-2026/buscar-selfie/"),("busqueda por dorsal","/eventos/utcom-2026/?dorsal=100")):
+              r=requests.get(B+u,headers=UA,timeout=60); log(f"{nombre}: HTTP {r.status_code}")
+          s=requests.Session(); s.headers.update(UA)
+          pag=s.get(B+"/eventos/utcom-2026/buscar-selfie/",timeout=60)
+          import re
+          tok=re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"',pag.text)
+          img=Image.new("RGB",(640,640),(120,160,200)); buf=io.BytesIO(); img.save(buf,"JPEG"); buf.seek(0)
+          campo=re.search(r'<input[^>]+type="file"[^>]+name="([^"]+)"',pag.text) or re.search(r'name="([^"]+)"[^>]+type="file"',pag.text)
+          t0=time.time()
+          r=s.post(B+"/eventos/utcom-2026/buscar-selfie/",data={"csrfmiddlewaretoken":tok.group(1) if tok else ""},files={(campo.group(1) if campo else "selfie"):("prueba.jpg",buf,"image/jpeg")},headers={"Referer":B+"/eventos/utcom-2026/buscar-selfie/"},timeout=120)
+          txt=r.text.lower()
+          log(f"selfie de prueba (imagen sin cara): HTTP {r.status_code} en {time.time()-t0:.1f}s · "
+              f"{'respondio que no detecto cara (el modelo facial ANDA)' if ('cara' in txt and ('detect' in txt or 'encontr' in txt)) else ('SELFIE NO DISPONIBLE' if 'no disponible' in txt or r.status_code==503 else 'revisar respuesta')}")
           PYX
       - name: Publicar
         if: always()
