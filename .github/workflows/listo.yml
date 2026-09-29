@@ -40,32 +40,41 @@ jobs:
           pg=(gql(V,{"p":P,"e":E,"s":os.environ["PG_ID"]}).get("data") or {}).get("variables") or {}
           L=[]
           with psycopg.connect(pg["DATABASE_PUBLIC_URL"],connect_timeout=40) as cx, cx.cursor() as cur:
-              cur.execute("""SELECT l.id, l.photographer_name, l.is_active, l.photos_uploaded,
-                                    l.last_used_at AT TIME ZONE 'America/El_Salvador',
-                                    (SELECT max(p.created_at) FROM photos_photo p WHERE p.photographer_link_id=l.id) AT TIME ZONE 'America/El_Salvador',
-                                    (SELECT count(*) FROM photos_photo p WHERE p.photographer_link_id=l.id AND p.status NOT IN ('deleted','rejected'))
-                             FROM photographers_photographerlink l JOIN events_event e ON e.id=l.event_id WHERE e.slug='utcom-2026' ORDER BY l.id""")
-              L.append("link | fotografo | activo | fotos | ultima vez que abrio el link (SV) | ultima foto subida (SV)")
-              for r in cur.fetchall(): L.append(f"  {r[0]} | {r[1]} | {r[2]} | {r[6]} | {str(r[4])[:16]} | {str(r[5])[:16]}")
-          Q='query($i:DeploymentListInput!){ deployments(first:3, input:$i){ edges{ node{ id createdAt } } } }'
+              cur.execute("""SELECT to_char(created_at AT TIME ZONE 'America/El_Salvador','MM-DD HH24'), count(*), min(original_filename), max(original_filename)
+                             FROM photos_photo WHERE photographer_link_id=43 AND status<>'deleted' GROUP BY 1 ORDER BY 1""")
+              L.append("Merlos (El Cementerio) fotos por hora de subida (SV):")
+              for r in cur.fetchall(): L.append(f"  {r[0]}h  {r[1]:>5}  {r[2]} .. {r[3]}")
+              cur.execute("SELECT original_filename, status FROM photos_photo WHERE photographer_link_id=43")
+              fotos={f:s for f,s in cur.fetchall()}
+              cur.execute("SELECT status, count(*) FROM photos_photo WHERE photographer_link_id=43 GROUP BY 1")
+              L.append(f"por estado: {dict(cur.fetchall())}")
+          # numeracion de la camara: huecos
+          nums=collections.defaultdict(list)
+          for f in fotos:
+              m=re.match(r"([A-Za-z_]*)(\d+)",f or "")
+              if m: nums[m.group(1)].append(int(m.group(2)))
+          for pref,ns in nums.items():
+              ns=sorted(set(ns)); faltan=[n for n in range(ns[0],ns[-1]+1) if n not in set(ns)]
+              L.append(f"serie '{pref}': {len(ns)} fotos, de {ns[0]} a {ns[-1]} · numeros que faltan en el medio: {len(faltan)}" + (f" (ej. {faltan[:8]})" if faltan else ""))
+          # logs del web: intentos fallidos de Merlos y si despues entraron
+          Q='query($i:DeploymentListInput!){ deployments(first:10, input:$i){ edges{ node{ id createdAt } } } }'
           deps=[e["node"] for e in (((gql(Q,{"i":{"projectId":P,"environmentId":E,"serviceId":W}}).get("data") or {}).get("deployments") or {}).get("edges") or [])]
           LG='query($d:String!,$f:String,$n:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$n){ timestamp message } }'
-          out=collections.Counter(); ult={}
+          res=collections.Counter(); fallidas={}; horas=collections.Counter(); primero=None
           for d in deps:
-              for x in (gql(LG,{"d":d["id"],"f":"outcome=","n":5000}).get("data") or {}).get("deploymentLogs") or []:
-                  m=re.search(r"outcome=(\w+) event=(\S+) link=(\d+)",x["message"])
-                  if m and m.group(2)=="utcom-2026" and x["timestamp"]>"2026-09-28T22:50":
-                      out[(m.group(3),m.group(1))]+=1; ult[m.group(3)]=x["timestamp"]
-          L.append("\nintentos de subida a UTCOM desde el deploy (22:50 UTC = 16:50 SV):")
-          L.append("  ninguno" if not out else "  "+", ".join(f"link {k[0]} {k[1]}={c}" for k,c in sorted(out.items())))
-          # aperturas del portal desde el deploy (GET /u/<token>/ -> status), sin mostrar tokens
-          rx=re.compile(r'"GET /u/[^/ ]+/ HTTP[^"]*" (\d{3})')
-          ab=collections.Counter()
-          for d in deps:
-              for x in (gql(LG,{"d":d["id"],"f":"GET /u/","n":5000}).get("data") or {}).get("deploymentLogs") or []:
-                  m=rx.search(x["message"])
-                  if m and x["timestamp"]>"2026-09-28T22:50": ab[(x["timestamp"][:13],m.group(1))]+=1
-          L.append("aperturas del portal desde el deploy (hora UTC, status): " + (", ".join(f"{h[5:]}h[{s}]={c}" for (h,s),c in sorted(ab.items())) or "ninguna"))
+              for x in (gql(LG,{"d":d["id"],"f":"link=43","n":5000}).get("data") or {}).get("deploymentLogs") or []:
+                  m=re.search(r"outcome=(\w+) event=\S+ link=43 file='([^']*)'",x["message"])
+                  if not m: continue
+                  oc,fn=m.groups(); res[oc]+=1; horas[(x["timestamp"][:13],oc)]+=1
+                  if oc!="ok": fallidas[fn]=oc
+          L.append(f"\nlogs del web (link 43): resultados {dict(res)}")
+          L.append("  por hora UTC: " + ", ".join(f"{h[5:]}h {o}={c}" for (h,o),c in sorted(horas.items())))
+          if fallidas:
+              entraron=[f for f in fallidas if f in fotos]
+              L.append(f"archivos que fallaron alguna vez: {len(fallidas)} · de esos, despues SI entraron: {len(entraron)} · siguen sin entrar: {len(fallidas)-len(entraron)}")
+              no=[f for f in fallidas if f not in fotos]
+              L.append(f"  motivos de los que siguen sin entrar: {dict(collections.Counter(fallidas[f] for f in no))}")
+              L.append(f"  ejemplos: {sorted(no)[:10]}")
           pathlib.Path("salida").mkdir(exist_ok=True); pathlib.Path("salida/colas.txt").write_text("\n".join(L)); print("\n".join(L))
           PYX
       - name: Publicar
