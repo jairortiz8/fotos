@@ -29,38 +29,58 @@ jobs:
         run: |
           mkdir -p salida
           python3 - <<'PYX'
-          import os, re, time, statistics as st, requests, pathlib, datetime as dt, concurrent.futures as cf
+          import os, time, requests, psycopg, pathlib, redis, collections
+          from celery import Celery
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
-          P,E,W=os.environ["PROJECT_ID"],os.environ["ENV_ID"],os.environ["WEB_ID"]
-          UA={"User-Agent":"Mozilla/5.0 (Linux; Android 14; SM-A546E) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"}
-          L=[]
-          def medir(url, n=5):
-              t=[]; sz=0; code=None; ttfb=[]
-              for _ in range(n):
-                  s=requests.Session(); t0=time.time()
-                  r=s.get(url,headers=UA,timeout=60,stream=True); tf=time.time()-t0; body=r.content; t.append(time.time()-t0); ttfb.append(tf); sz=len(body); code=r.status_code
-              return code, st.median(ttfb), st.median(t), max(t), sz, body
-          B="https://findyourfoto.com"
-          for nombre,url in [("home","/"),("UTCOM (album)","/eventos/utcom-2026/"),("UTCOM por fotografo","/eventos/utcom-2026/?vista=fotografos"),("Surf City (album)","/eventos/surf-city-2026/"),("Septimo (album)","/eventos/septimo-x-cep-social-run/"),("healthz lite","/healthz/lite")]:
-              code,tf,tt,mx,sz,body=medir(B+url)
-              L.append(f"{nombre:<22} HTTP {code} · servidor responde en {tf*1000:.0f} ms · pagina completa {tt*1000:.0f} ms (peor {mx*1000:.0f}) · {sz/1024:.0f} KB")
-              if nombre=="UTCOM (album)": utcom=body.decode("utf-8","ignore")
-          imgs=re.findall(r'src="(https://[^"]+r2\.cloudflarestorage\.com[^"]+)"',utcom)
-          imgs+= [B+x for x in re.findall(r'src="(/eventos/utcom-2026/(?:cara|portada)[^"]+)"',utcom)]
-          L.append(f"\nimagenes en la primera pagina de UTCOM: {len(imgs)} (miniaturas de R2 + retratos/portada)")
-          def get(u):
-              t0=time.time(); r=requests.get(u.replace("&amp;","&"),headers=UA,timeout=60); return time.time()-t0, len(r.content), r.status_code
-          with cf.ThreadPoolExecutor(6) as ex: res=list(ex.map(get, imgs[:60]))
-          if res:
-              ts=[r[0] for r in res]; L.append(f"  cada imagen: mediana {st.median(ts)*1000:.0f} ms, peor {max(ts)*1000:.0f} ms, peso mediano {st.median(r[1] for r in res)/1024:.0f} KB, errores {sum(1 for r in res if r[2]!=200)}")
-              L.append(f"  las 60 en paralelo (6 a la vez, como un navegador): {sum(ts)/6:.1f} s aprox")
-          # carga del servidor web
-          M='query($p:String!,$e:String!,$s:String!,$d:DateTime!){ metrics(projectId:$p, environmentId:$e, serviceId:$s, startDate:$d, sampleRateSeconds:300, measurements:[MEMORY_USAGE_GB, CPU_USAGE]){ measurement values{ ts value } } }'
-          r=requests.post(API,headers=H,json={"query":M,"variables":{"p":P,"e":E,"s":W,"d":(dt.datetime.now(dt.UTC)-dt.timedelta(hours=2)).isoformat()}},timeout=60).json()
-          for x in (r.get("data") or {}).get("metrics") or []:
-              v=[y["value"] for y in x["values"]]; L.append(f"web {x['measurement']}: ahora {v[-1]:.2f}, max 2h {max(v):.2f}")
-          pathlib.Path("salida").mkdir(exist_ok=True); pathlib.Path("salida/colas.txt").write_text("\n".join(L)); print("\n".join(L))
+          V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
+          def vars_de(s): return (requests.post(API,headers=H,json={"query":V,"variables":{"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":s}},timeout=40).json().get("data") or {}).get("variables") or {}
+          pg=vars_de(os.environ["PG_ID"]); url=vars_de("37559685-4af5-4b9a-851d-84d9424f7424")["REDIS_PUBLIC_URL"]
+          OUT=pathlib.Path("salida"); OUT.mkdir(exist_ok=True); L=[]
+          def log(s): L.append(s); print(s,flush=True); (OUT/"colas.txt").write_text("\n".join(L))
+          def q(cur,sql,a=()): cur.execute(sql,a); return cur.fetchall()
+          cx=psycopg.connect(pg["DATABASE_PUBLIC_URL"],connect_timeout=40); cur=cx.cursor()
+          ev=q(cur,"SELECT id,name,date,status,visibility,download_count,search_count FROM events_event WHERE slug='utcom-2026'")[0]; eid=ev[0]
+          log(f"EVENTO: {ev[1]} · fecha {ev[2]} · estado {ev[3]} · visibilidad {ev[4]}")
+          log("== FOTOS por fotografo: total | con dorsal | con caras | descargadas al menos 1 vez | descargas")
+          for r in q(cur,"""SELECT coalesce(l.photographer_name,'-'), count(*), count(*) FILTER (WHERE p.has_bibs_detected), count(*) FILTER (WHERE p.has_faces_detected),
+                            count(*) FILTER (WHERE p.download_count>0), coalesce(sum(p.download_count),0)
+                            FROM photos_photo p LEFT JOIN photographers_photographerlink l ON l.id=p.photographer_link_id
+                            WHERE p.event_id=%s AND p.status='approved' GROUP BY 1 ORDER BY 2 DESC""",(eid,)):
+              log(f"  {r[0]} | {r[1]} | {r[2]} ({100*r[2]/r[1]:.0f}%) | {r[3]} ({100*r[3]/r[1]:.0f}%) | {r[4]} | {r[5]}")
+          t=q(cur,"""SELECT count(*), count(*) FILTER (WHERE has_bibs_detected), count(*) FILTER (WHERE has_faces_detected), count(*) FILTER (WHERE download_count>0), coalesce(sum(download_count),0)
+                     FROM photos_photo WHERE event_id=%s AND status='approved'""",(eid,))[0]
+          log(f"  TOTAL | {t[0]} | {t[1]} ({100*t[1]/t[0]:.0f}%) | {t[2]} ({100*t[2]/t[0]:.0f}%) | {t[3]} | {t[4]}")
+          f=q(cur,"SELECT count(*), count(*) FILTER (WHERE avatar_key<>'') FROM photos_faceembedding fe JOIN photos_photo p ON p.id=fe.photo_id WHERE p.event_id=%s",(eid,))[0]
+          b=q(cur,"SELECT count(*), count(DISTINCT number) FROM photos_bib b JOIN photos_photo p ON p.id=b.photo_id WHERE p.event_id=%s",(eid,))[0]
+          log(f"caras indexadas {f[0]} (retratos {f[1]}) · dorsales leidos {b[0]} ({b[1]} numeros distintos)")
+          log("== USO por dia (hora SV): vistas | busquedas | descargas")
+          for r in q(cur,"""SELECT to_char(bucket AT TIME ZONE 'America/El_Salvador','MM-DD'), sum(count) FILTER (WHERE metric='view'), sum(count) FILTER (WHERE metric='search'), sum(count) FILTER (WHERE metric='download')
+                            FROM events_eventmetric WHERE event_id=%s GROUP BY 1 ORDER BY 1""",(eid,)):
+              log(f"  {r[0]} | {r[1] or 0} | {r[2] or 0} | {r[3] or 0}")
+          log(f"contadores del evento: descargas {ev[5]} · busquedas {ev[6]}")
+          log("== FOTOS SIN DORSAL por franja de subida (SV)")
+          for r in q(cur,"""SELECT to_char(date_trunc('hour', created_at AT TIME ZONE 'America/El_Salvador'),'MM-DD HH24'), count(*), count(*) FILTER (WHERE NOT has_bibs_detected)
+                            FROM photos_photo WHERE event_id=%s AND status='approved' GROUP BY 1 ORDER BY 1""",(eid,)):
+              log(f"  {r[0]}h  {r[1]:>5} fotos · sin dorsal {r[2]:>4} ({100*r[2]/r[1]:.0f}%)")
+          # las de la caida de Gemini: re-leer las que siguen sin dorsal
+          ids=[r[0] for r in q(cur,"""SELECT id FROM photos_photo WHERE event_id=%s AND status='approved' AND NOT has_bibs_detected
+                                      AND created_at >= '2026-09-28 00:40+00' AND created_at < '2026-09-28 02:30+00'""",(eid,))]
+          log(f"\nde la franja de la caida de Gemini (27-09 18:40-20:30 SV) siguen sin dorsal: {len(ids)}")
+          if ids:
+              app=Celery(broker=url); rc=redis.Redis.from_url(url)
+              aq=app.control.inspect(timeout=10).active_queues() or {}
+              if not any("ocr" in {x["name"] for x in qs} for qs in aq.values()):
+                  log("  no hay worker escuchando la cola ocr: no encolo"); raise SystemExit(0)
+              for pid in ids: app.send_task("photos.run_ocr_on_photo", args=[pid], queue="ocr")
+              log(f"  encoladas {len(ids)} en la cola ocr")
+              for i in range(30):
+                  time.sleep(30)
+                  cx2=psycopg.connect(pg["DATABASE_PUBLIC_URL"],connect_timeout=40); c2=cx2.cursor()
+                  c2.execute("SELECT count(*) FILTER (WHERE has_bibs_detected) FROM photos_photo WHERE id = ANY(%s)",(ids,)); ok=c2.fetchone()[0]; cx2.close()
+                  n=rc.llen("ocr"); act=sum(len(v) for v in (app.control.inspect(timeout=8).active() or {}).values())
+                  log(f"  +{(i+1)*30}s cola ocr={n} corriendo={act} · recuperaron dorsal {ok}/{len(ids)}")
+                  if n==0 and act==0 and i>=2: break
           PYX
       - name: Publicar
         if: always()
