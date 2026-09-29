@@ -24,57 +24,34 @@ jobs:
         with: { ref: main }
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install --quiet requests "psycopg[binary]" boto3 redis celery
+      - run: pip install --quiet requests "psycopg[binary]" boto3 redis celery Pillow
       - name: Medir (solo lectura)
         run: |
           mkdir -p salida
           python3 - <<'PYX'
-          import os, re, requests, psycopg, pathlib, collections
+          import os, io, requests, psycopg, pathlib, boto3
+          from PIL import Image, JpegImagePlugin
           API=os.environ["API"]; TOK=os.environ["RAILWAY_TOKEN"]
           H={"Authorization":f"Bearer {TOK}","Project-Access-Token":TOK,"Content-Type":"application/json"}
-          P,E,W=os.environ["PROJECT_ID"],os.environ["ENV_ID"],os.environ["WEB_ID"]
-          def gql(q,v):
-              try: return requests.post(API,headers=H,json={"query":q,"variables":v},timeout=120).json()
-              except Exception: return {}
           V='query($p:String!,$e:String!,$s:String!){ variables(projectId:$p,environmentId:$e,serviceId:$s) }'
-          pg=(gql(V,{"p":P,"e":E,"s":os.environ["PG_ID"]}).get("data") or {}).get("variables") or {}
+          def vars_de(s): return (requests.post(API,headers=H,json={"query":V,"variables":{"p":os.environ["PROJECT_ID"],"e":os.environ["ENV_ID"],"s":s}},timeout=40).json().get("data") or {}).get("variables") or {}
+          pg=vars_de(os.environ["PG_ID"]); web=vars_de(os.environ["WEB_ID"])
+          s3=boto3.client("s3",endpoint_url=web["R2_ENDPOINT_URL"],aws_access_key_id=web["R2_ACCESS_KEY_ID"],aws_secret_access_key=web["R2_SECRET_ACCESS_KEY"],region_name="auto"); B=web["R2_BUCKET_NAME"]
           L=[]
           with psycopg.connect(pg["DATABASE_PUBLIC_URL"],connect_timeout=40) as cx, cx.cursor() as cur:
-              cur.execute("""SELECT to_char(created_at AT TIME ZONE 'America/El_Salvador','MM-DD HH24'), count(*), min(original_filename), max(original_filename)
-                             FROM photos_photo WHERE photographer_link_id=43 AND status<>'deleted' GROUP BY 1 ORDER BY 1""")
-              L.append("Merlos (El Cementerio) fotos por hora de subida (SV):")
-              for r in cur.fetchall(): L.append(f"  {r[0]}h  {r[1]:>5}  {r[2]} .. {r[3]}")
-              cur.execute("SELECT original_filename, status FROM photos_photo WHERE photographer_link_id=43")
-              fotos={f:s for f,s in cur.fetchall()}
-              cur.execute("SELECT status, count(*) FROM photos_photo WHERE photographer_link_id=43 GROUP BY 1")
-              L.append(f"por estado: {dict(cur.fetchall())}")
-          # numeracion de la camara: huecos
-          nums=collections.defaultdict(list)
-          for f in fotos:
-              m=re.match(r"([A-Za-z_]*)(\d+)",f or "")
-              if m: nums[m.group(1)].append(int(m.group(2)))
-          for pref,ns in nums.items():
-              ns=sorted(set(ns)); faltan=[n for n in range(ns[0],ns[-1]+1) if n not in set(ns)]
-              L.append(f"serie '{pref}': {len(ns)} fotos, de {ns[0]} a {ns[-1]} · numeros que faltan en el medio: {len(faltan)}" + (f" (ej. {faltan[:8]})" if faltan else ""))
-          # logs del web: intentos fallidos de Merlos y si despues entraron
-          Q='query($i:DeploymentListInput!){ deployments(first:10, input:$i){ edges{ node{ id createdAt } } } }'
-          deps=[e["node"] for e in (((gql(Q,{"i":{"projectId":P,"environmentId":E,"serviceId":W}}).get("data") or {}).get("deployments") or {}).get("edges") or [])]
-          LG='query($d:String!,$f:String,$n:Int){ deploymentLogs(deploymentId:$d, filter:$f, limit:$n){ timestamp message } }'
-          res=collections.Counter(); fallidas={}; horas=collections.Counter(); primero=None
-          for d in deps:
-              for x in (gql(LG,{"d":d["id"],"f":"link=43","n":5000}).get("data") or {}).get("deploymentLogs") or []:
-                  m=re.search(r"outcome=(\w+) event=\S+ link=43 file='([^']*)'",x["message"])
-                  if not m: continue
-                  oc,fn=m.groups(); res[oc]+=1; horas[(x["timestamp"][:13],oc)]+=1
-                  if oc!="ok": fallidas[fn]=oc
-          L.append(f"\nlogs del web (link 43): resultados {dict(res)}")
-          L.append("  por hora UTC: " + ", ".join(f"{h[5:]}h {o}={c}" for (h,o),c in sorted(horas.items())))
-          if fallidas:
-              entraron=[f for f in fallidas if f in fotos]
-              L.append(f"archivos que fallaron alguna vez: {len(fallidas)} · de esos, despues SI entraron: {len(entraron)} · siguen sin entrar: {len(fallidas)-len(entraron)}")
-              no=[f for f in fallidas if f not in fotos]
-              L.append(f"  motivos de los que siguen sin entrar: {dict(collections.Counter(fallidas[f] for f in no))}")
-              L.append(f"  ejemplos: {sorted(no)[:10]}")
+              cur.execute("""SELECT count(*), count(*) FILTER (WHERE preview_key<>''), count(*) FILTER (WHERE branded_key<>''),
+                                    count(*) FILTER (WHERE has_bibs_detected), count(*) FILTER (WHERE has_faces_detected), count(*) FILTER (WHERE status IN ('uploading','processing','processing_failed'))
+                             FROM photos_photo WHERE photographer_link_id=43 AND created_at > '2026-09-29 00:00+00'""")
+              t,pv,br,bi,fa,tr=cur.fetchone()
+              L.append(f"tanda de anoche de Merlos: {t} fotos · preview {pv} · con logos {br} · con dorsal {bi} ({100*bi/max(t,1):.0f}%) · con caras {fa} ({100*fa/max(t,1):.0f}%) · trabadas/fallidas {tr}")
+              cur.execute("""SELECT count(*), count(*) FILTER (WHERE has_bibs_detected), count(*) FILTER (WHERE has_faces_detected) FROM photos_photo WHERE photographer_link_id=43 AND created_at < '2026-09-29 00:00+00' AND status<>'deleted'""")
+              a,b,c=cur.fetchone(); L.append(f"referencia, sus fotos anteriores: dorsal {100*b/a:.0f}% · caras {100*c/a:.0f}%")
+              cur.execute("SELECT b.source, count(*) FROM photos_bib b JOIN photos_photo p ON p.id=b.photo_id WHERE p.photographer_link_id=43 AND p.created_at > '2026-09-29 00:00+00' GROUP BY 1")
+              L.append(f"dorsales de la tanda por motor: {dict(cur.fetchall())}")
+              cur.execute("SELECT branded_key FROM photos_photo WHERE photographer_link_id=43 AND created_at > '2026-09-29 00:00+00' AND branded_key<>'' ORDER BY id DESC LIMIT 3")
+              for (k,) in cur.fetchall():
+                  b=io.BytesIO(); s3.download_fileobj(B,k,b); b.seek(0); im=Image.open(b)
+                  L.append(f"  version con logos: {im.size} calidad={'95' if im.quantization[0][0]<=2 else 'vieja'} color={ {0:'4:4:4',1:'4:2:2',2:'4:2:0'}.get(JpegImagePlugin.get_sampling(im)) }")
           pathlib.Path("salida").mkdir(exist_ok=True); pathlib.Path("salida/colas.txt").write_text("\n".join(L)); print("\n".join(L))
           PYX
       - name: Publicar
