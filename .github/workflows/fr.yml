@@ -1,0 +1,62 @@
+name: mirar sitio (one-off)
+on:
+  push:
+    branches: ["run-fr"]
+permissions: { contents: write }
+jobs:
+  ver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install --quiet playwright && python -m playwright install --with-deps chromium >/dev/null
+      - name: Capturar
+        run: |
+          mkdir -p salida
+          python3 - <<'PYX'
+          import asyncio, json, pathlib, re
+          from playwright.async_api import async_playwright
+          OUT=pathlib.Path("salida")
+          async def main():
+              async with async_playwright() as p:
+                  b=await p.chromium.launch()
+                  res={}
+                  async def cap(nombre,url,mobile):
+                      ctx=await b.new_context(viewport={"width":390,"height":844} if mobile else {"width":1366,"height":900}, is_mobile=mobile, user_agent=("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" if mobile else None))
+                      pg=await ctx.new_page()
+                      try:
+                          await pg.goto(url,wait_until="networkidle",timeout=45000)
+                      except Exception as e:
+                          res[nombre+"_err"]=str(e)[:200]
+                      await pg.wait_for_timeout(2500)
+                      await pg.screenshot(path=str(OUT/f"{nombre}.png"),full_page=True)
+                      txt=await pg.evaluate("document.body.innerText")
+                      links=await pg.evaluate("Array.from(document.querySelectorAll('a')).map(a=>[a.innerText.trim().slice(0,60),a.href]).filter(x=>x[1])")
+                      res[nombre]={"url":pg.url,"title":await pg.title(),"texto":txt[:6000],"links":links[:150]}
+                      await ctx.close()
+                      return links
+                  links=await cap("home_desktop","https://www.fotorun.com.ar/home",False)
+                  await cap("home_mobile","https://www.fotorun.com.ar/home",True)
+                  # entrar a un evento y a otras paginas internas
+                  vistos=set(); n=0
+                  for t,h in links:
+                      if "fotorun.com.ar" not in h or h.rstrip("/").endswith("/home") or h in vistos: continue
+                      vistos.add(h)
+                      if n>=5: break
+                      n+=1
+                      await cap(f"interna{n}",h,True)
+                  (OUT/"sitio.json").write_text(json.dumps(res,indent=1,ensure_ascii=False))
+                  await b.close()
+          asyncio.run(main())
+          PYX
+      - name: Publicar
+        if: always()
+        run: |
+          mkdir -p salida && touch salida/sitio.json
+          git init -q pub && cd pub
+          git config user.name "ci"; git config user.email "ci@local"
+          git checkout -q --orphan resultado-fr
+          cp ../salida/* .
+          git add -A && git commit -q -m "fr"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" resultado-fr
